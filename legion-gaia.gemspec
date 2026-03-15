@@ -26,6 +26,7 @@ Gem::Specification.new do |spec|
     'rubygems_mfa_required' => 'true'
   }
 
+  spec.add_dependency 'base64'
   spec.add_dependency 'legion-json'
   spec.add_dependency 'legion-logging'
 end

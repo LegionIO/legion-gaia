@@ -83,6 +83,43 @@ RSpec.describe Legion::Gaia do
     end
   end
 
+  describe '.boot with router mode' do
+    it 'boots in router mode' do
+      described_class.boot(mode: :router)
+      expect(described_class.router_mode?).to be true
+      expect(described_class.router_bridge).to be_a(Legion::Gaia::Router::RouterBridge)
+      expect(described_class.sensory_buffer).to be_nil
+      expect(described_class.registry).to be_nil
+    end
+
+    it 'boots in agent mode by default' do
+      described_class.boot
+      expect(described_class.router_mode?).to be false
+      expect(described_class.sensory_buffer).to be_a(Legion::Gaia::SensoryBuffer)
+    end
+
+    it 'includes mode in status' do
+      described_class.boot(mode: :router)
+      status = described_class.status
+      expect(status[:mode]).to eq(:router)
+      expect(status[:router_routes]).to eq(0)
+    end
+  end
+
+  describe '.respond with agent_bridge' do
+    it 'publishes through agent_bridge when available' do
+      described_class.boot
+      mock_bridge = instance_double(Legion::Gaia::Router::AgentBridge, started?: true)
+      allow(mock_bridge).to receive(:publish_output).and_return({ published: true })
+      allow(mock_bridge).to receive(:stop)
+      described_class.instance_variable_set(:@agent_bridge, mock_bridge)
+
+      result = described_class.respond(content: 'test', channel_id: :cli)
+      expect(result[:published]).to be true
+      expect(mock_bridge).to have_received(:publish_output)
+    end
+  end
+
   describe 'VERSION' do
     it 'has a version number' do
       expect(Legion::Gaia::VERSION).not_to be_nil

@@ -14,28 +14,35 @@ require 'legion/gaia/channel_aware_renderer'
 require 'legion/gaia/output_router'
 require 'legion/gaia/session_store'
 require 'legion/gaia/channels/cli_adapter'
+require 'legion/gaia/channels/teams_adapter'
+require 'legion/gaia/channels/slack_adapter'
+require 'legion/gaia/router'
 
 module Legion
   module Gaia
     class << self
-      attr_reader :sensory_buffer, :registry, :channel_registry, :output_router, :session_store
+      attr_reader :sensory_buffer, :registry, :channel_registry, :output_router, :session_store,
+                  :router_bridge, :agent_bridge
 
-      def boot
-        log_info 'Legion::Gaia booting'
+      def boot(mode: nil)
+        @mode = mode || (settings&.dig(:router, :mode) ? :router : :agent)
+        log_info "Legion::Gaia booting (mode: #{@mode})"
 
-        @sensory_buffer = SensoryBuffer.new
-        @registry = Registry.new
-        @registry.discover
-
-        boot_channels
+        if router_mode?
+          boot_router
+        else
+          boot_agent
+        end
 
         @started = true
         settings_hash = settings
         settings_hash[:connected] = true if settings_hash
 
-        log_info "Legion::Gaia booted: #{@registry.wired_count} phases wired, " \
-                 "#{@registry.loaded_count}/#{@registry.total_count} extensions loaded, " \
-                 "#{@channel_registry.size} channels"
+        log_info "Legion::Gaia booted (#{@mode}): #{boot_summary}"
+      end
+
+      def router_mode?
+        @mode == :router
       end
 
       def shutdown
@@ -45,12 +52,16 @@ module Legion
         settings_hash = settings
         settings_hash[:connected] = false if settings_hash
 
+        @router_bridge&.stop
+        @agent_bridge&.stop
         @channel_registry&.stop_all
         @sensory_buffer = nil
         @registry = nil
         @channel_registry = nil
         @output_router = nil
         @session_store = nil
+        @router_bridge = nil
+        @agent_bridge = nil
 
         log_info 'Legion::Gaia shut down'
       end
@@ -113,21 +124,59 @@ module Legion
           session_continuity_id: session_continuity_id,
           metadata: metadata
         )
-        @output_router&.route(frame) || { delivered: false, reason: :no_router }
+
+        if @agent_bridge&.started?
+          @agent_bridge.publish_output(frame)
+        else
+          @output_router&.route(frame) || { delivered: false, reason: :no_router }
+        end
       end
 
       def status
         return { started: false } unless started?
 
-        registry_status.merge(
-          started: true,
-          buffer_depth: @sensory_buffer&.size || 0,
-          active_channels: @channel_registry&.active_channels || [],
-          sessions: @session_store&.size || 0
-        )
+        base_status.merge(router_status)
       end
 
       private
+
+      def boot_agent
+        @sensory_buffer = SensoryBuffer.new
+        @registry = Registry.new
+        @registry.discover
+        boot_channels
+        boot_agent_bridge
+      end
+
+      def boot_router
+        boot_channels
+        allowed = settings&.dig(:router, :allowed_worker_ids) || []
+        @router_bridge = Router::RouterBridge.new(
+          channel_registry: @channel_registry,
+          allowed_worker_ids: allowed
+        )
+        @router_bridge.start
+      end
+
+      def boot_agent_bridge
+        return unless settings&.dig(:router, :mode)
+
+        worker_id = settings&.dig(:router, :worker_id)
+        return unless worker_id
+
+        @agent_bridge = Router::AgentBridge.new(worker_id: worker_id)
+        @agent_bridge.start
+      end
+
+      def boot_summary
+        channels = @channel_registry&.size || 0
+        return "#{channels} channels, router active" if router_mode?
+
+        wired = @registry&.wired_count || 0
+        loaded = @registry&.loaded_count || 0
+        total = @registry&.total_count || 0
+        "#{wired} phases wired, #{loaded}/#{total} extensions, #{channels} channels"
+      end
 
       def boot_channels
         @channel_registry = ChannelRegistry.new
@@ -137,11 +186,51 @@ module Legion
         @output_router = OutputRouter.new(channel_registry: @channel_registry, renderer: renderer)
 
         # Register CLI adapter by default
-        return if settings&.dig(:channels, :cli, :enabled) == false
+        unless settings&.dig(:channels, :cli, :enabled) == false
+          cli = Channels::CliAdapter.new
+          cli.start
+          @channel_registry.register(cli)
+        end
 
-        cli = Channels::CliAdapter.new
-        cli.start
-        @channel_registry.register(cli)
+        # Register Teams adapter if enabled
+        return unless settings&.dig(:channels, :teams, :enabled)
+
+        teams = Channels::TeamsAdapter.new(app_id: settings&.dig(:channels, :teams, :app_id))
+        teams.start
+        @channel_registry.register(teams)
+
+        register_slack_adapter
+      end
+
+      def register_slack_adapter
+        return unless settings&.dig(:channels, :slack, :enabled)
+
+        slack = Channels::SlackAdapter.new(
+          signing_secret: settings&.dig(:channels, :slack, :signing_secret),
+          bot_token: settings&.dig(:channels, :slack, :bot_token),
+          default_webhook: settings&.dig(:channels, :slack, :default_webhook)
+        )
+        slack.start
+        @channel_registry.register(slack)
+      end
+
+      def base_status
+        status = {
+          started: true,
+          mode: @mode,
+          buffer_depth: @sensory_buffer&.size || 0,
+          active_channels: @channel_registry&.active_channels || [],
+          sessions: @session_store&.size || 0
+        }
+        status.merge!(registry_status) unless router_mode?
+        status
+      end
+
+      def router_status
+        result = {}
+        result[:router_routes] = @router_bridge.worker_routing.size if @router_bridge
+        result[:agent_bridge] = @agent_bridge&.started? || false if @agent_bridge
+        result
       end
 
       def registry_status

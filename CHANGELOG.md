@@ -1,5 +1,49 @@
 # Changelog
 
+## [0.5.0] - 2026-03-15
+
+### Added
+- `Legion::Gaia::Channels::SlackAdapter` Slack channel adapter with webhook and signing secret support
+- `Legion::Gaia::Channels::Slack::SigningVerifier` HMAC-SHA256 request verification for Slack Events API
+- Slack adapter auto-registration when `channels.slack.enabled` is true in settings
+- Bot mention stripping for Slack events (`<@UBOT>` tags)
+- Thread-aware outbound delivery (preserves `thread_ts` for reply threading)
+- Channel transition suggestions in `ChannelAwareRenderer` when content is truncated
+- Transition suggestion messages point users to richer channels (e.g., "Full response available on cli")
+- 19 new specs (233 total) with full coverage across all Phase 5 components
+
+## [0.4.0] - 2026-03-15
+
+### Added
+- `Legion::Gaia::Router` central router module for hub-and-spoke deployment
+- `Legion::Gaia::Router::RouterBridge` inbound/outbound message routing between channels and agents via RabbitMQ
+- `Legion::Gaia::Router::AgentBridge` agent-side transport: subscribes to inbound queue, publishes OutputFrames
+- `Legion::Gaia::Router::WorkerRouting` thread-safe identity-to-worker routing table with allowlist support
+- `Legion::Gaia::Router::Transport::Exchanges::Gaia` topic exchange for InputFrame/OutputFrame routing
+- `Legion::Gaia::Router::Transport::Queues::Inbound` per-worker inbound queue (router->agent)
+- `Legion::Gaia::Router::Transport::Queues::Outbound` shared outbound queue (agent->router)
+- `Legion::Gaia::Router::Transport::Messages::InputFrameMessage` publishes InputFrames to RabbitMQ
+- `Legion::Gaia::Router::Transport::Messages::OutputFrameMessage` publishes OutputFrames to RabbitMQ
+- Dual boot modes: `Legion::Gaia.boot(mode: :router)` for stateless router, default `:agent` for full GAIA
+- Router mode skips brain (no SensoryBuffer, Registry, or cognitive extensions)
+- Agent bridge auto-starts when `router.mode` and `router.worker_id` configured
+- `Legion::Gaia.respond` publishes through agent bridge when available (agent->router->channel)
+- 31 new specs (214 total) with full coverage across all Phase 4 components
+
+## [0.3.0] - 2026-03-15
+
+### Added
+- `Legion::Gaia::Channels::TeamsAdapter` Teams channel adapter with Bot Framework activity translation
+- `Legion::Gaia::Channels::Teams::BotFrameworkAuth` JWT token validation for Bot Framework and Emulator issuers
+- `Legion::Gaia::Channels::Teams::ConversationStore` thread-safe conversation reference storage for reply delivery
+- `Legion::Gaia::Channels::Teams::WebhookHandler` HTTP webhook handler routing Bot Framework activity types
+- Bot @mention stripping from inbound messages
+- Mobile/desktop device context detection from Teams clientInfo
+- Adaptive card content type support in translate_outbound
+- Teams adapter auto-registration when `channels.teams.enabled` is true in settings
+- `base64` gem dependency (required for Ruby 3.4+ JWT decoding)
+- 54 new specs (183 total) with full coverage across all Phase 3 components
+
 ## [0.2.0] - 2026-03-15
 
 ### Added

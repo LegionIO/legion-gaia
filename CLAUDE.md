@@ -21,10 +21,25 @@ lib/legion/gaia/input_frame.rb          # Data.define — immutable inbound mess
 lib/legion/gaia/output_frame.rb         # Data.define — immutable outbound response to any channel
 lib/legion/gaia/channel_adapter.rb      # Base class for channel adapters (translate in/out, deliver)
 lib/legion/gaia/channel_registry.rb     # Registry of active channel adapters, thread-safe
-lib/legion/gaia/channel_aware_renderer.rb # Adapts output complexity to channel capabilities
+lib/legion/gaia/channel_aware_renderer.rb # Adapts output complexity to channel capabilities + transition suggestions
 lib/legion/gaia/output_router.rb        # Routes OutputFrames through renderer to correct adapter
 lib/legion/gaia/session_store.rb        # Session continuity tracking, keyed by human identity
 lib/legion/gaia/channels/cli_adapter.rb # First concrete adapter — wraps CLI input/output
+lib/legion/gaia/channels/teams_adapter.rb           # Teams adapter — Bot Framework activities to Frames
+lib/legion/gaia/channels/teams/bot_framework_auth.rb # JWT validation for Bot Framework tokens
+lib/legion/gaia/channels/teams/conversation_store.rb # Thread-safe conversation reference storage
+lib/legion/gaia/channels/teams/webhook_handler.rb    # HTTP webhook handler for Bot Framework activities
+lib/legion/gaia/channels/slack_adapter.rb            # Slack adapter — Events API to Frames
+lib/legion/gaia/channels/slack/signing_verifier.rb   # HMAC-SHA256 request verification for Slack Events API
+lib/legion/gaia/router.rb                            # Router module entry point, conditional transport loading
+lib/legion/gaia/router/worker_routing.rb             # Identity-to-worker routing table with allowlist
+lib/legion/gaia/router/router_bridge.rb              # Central router: inbound routing + outbound delivery
+lib/legion/gaia/router/agent_bridge.rb               # Agent-side: subscribe inbound, publish outbound
+lib/legion/gaia/router/transport/exchanges/gaia.rb   # Topic exchange for GAIA frames
+lib/legion/gaia/router/transport/queues/inbound.rb   # Per-worker inbound queue (router->agent)
+lib/legion/gaia/router/transport/queues/outbound.rb  # Shared outbound queue (agent->router)
+lib/legion/gaia/router/transport/messages/input_frame_message.rb  # InputFrame -> RabbitMQ
+lib/legion/gaia/router/transport/messages/output_frame_message.rb # OutputFrame -> RabbitMQ
 ```
 
 ## Architecture
@@ -47,6 +62,36 @@ lib/legion/gaia/channels/cli_adapter.rb # First concrete adapter — wraps CLI i
 - `Legion::Gaia.ingest(input_frame)` pushes to sensory buffer and creates/touches session
 - `Legion::Gaia.respond(content:, channel_id:)` routes output through renderer and adapter
 
+### Phase 3: Teams Channel Adapter
+- `TeamsAdapter` translates Bot Framework activities to InputFrames and OutputFrames to Teams messages
+- `BotFrameworkAuth` validates JWT tokens from Bot Framework and Emulator issuers (claims, expiry, audience)
+- `ConversationStore` holds `service_url` + `conversation_id` references needed for reply delivery (thread-safe)
+- `WebhookHandler` routes inbound activities by type: message, conversationUpdate, invoke, other
+- Bot @mention stripping ensures clean text reaches the cognitive pipeline
+- Mobile/desktop device detection from `channelData.clientInfo.platform`
+- Delivery uses `lex-microsoft_teams` Bot runner (`send_text`/`send_card`) when available
+- Teams adapter auto-registers during `boot_channels` when `channels.teams.enabled` is true
+
+### Phase 4: Central Router (Hub-and-Spoke)
+- Dual boot modes: `Legion::Gaia.boot(mode: :router)` for stateless router, default `:agent` for full GAIA
+- Router mode: boots channels only — no SensoryBuffer, Registry, or cognitive extensions
+- `RouterBridge` handles inbound routing (identity -> worker_id -> RabbitMQ queue) and outbound delivery
+- `AgentBridge` subscribes to per-worker inbound queue, pushes InputFrames into local GAIA SensoryBuffer
+- `AgentBridge` publishes OutputFrames to outbound queue when `respond` is called
+- `WorkerRouting` maps Entra OID / identity to worker_id with allowlist enforcement
+- Transport layer follows standard legion-transport patterns (Exchange, Queue, Message base classes)
+- Transport classes only loaded when `legion-transport` is available (conditional require)
+- Router never sees cognitive state — only InputFrame/OutputFrame envelopes
+
+### Phase 5: Slack Adapter + Cross-Channel Polish
+- `SlackAdapter` translates Slack Events API payloads to InputFrames and OutputFrames to Slack messages
+- `SigningVerifier` validates inbound requests via HMAC-SHA256 (signing secret + timestamp + body)
+- Bot `<@UBOT>` mention stripping for clean text input
+- Thread-aware outbound delivery (preserves `thread_ts` for reply threading)
+- Slack adapter auto-registers during `boot_channels` when `channels.slack.enabled` is true
+- `ChannelAwareRenderer` adds transition suggestions when content is truncated (e.g., "Full response available on cli")
+- Richness hierarchy: voice -> slack -> cli (richer channels suggested when content exceeds limits)
+
 ### Data Flow
 ```
 Human Input -> ChannelAdapter#translate_inbound -> InputFrame -> Gaia.ingest -> SensoryBuffer
@@ -55,13 +100,6 @@ Human Input -> ChannelAdapter#translate_inbound -> InputFrame -> Gaia.ingest -> 
                                                                                     |
 Cognitive Output -> OutputFrame -> OutputRouter -> ChannelAwareRenderer -> ChannelAdapter#deliver
 ```
-
-## Dependencies
-
-- `legion-logging` (optional, guarded by `const_defined?`)
-- `legion-json` (optional)
-- `lex-tick` (runtime, for tick orchestration — not a gem dependency)
-- All agentic LEXs are optional runtime dependencies discovered via `Legion::Extensions`
 
 ## Patterns
 
@@ -81,9 +119,18 @@ Cognitive Output -> OutputFrame -> OutputRouter -> ChannelAwareRenderer -> Chann
 4. Private core protections are channel-independent
 5. Human controls channel availability — any channel can be disabled at any time
 
-## Future (Phase 3-5)
+## Dependencies
 
-- Teams adapter (Bot Framework JWT validation, adaptive cards, proactive messaging)
-- Central router mode (hub-and-spoke via RabbitMQ, stateless router behind load balancer)
-- Slack adapter (Socket Mode)
-- Cross-channel continuity testing and channel transition suggestions
+- `base64` (required, Ruby 3.4+ removed from default gems)
+- `legion-logging` (optional, guarded by `const_defined?`)
+- `legion-json` (optional)
+- `legion-transport` (optional, for router mode — not a gem dependency)
+- `lex-tick` (runtime, for tick orchestration — not a gem dependency)
+- `lex-microsoft_teams` (runtime, for Teams delivery — not a gem dependency)
+- All agentic LEXs are optional runtime dependencies discovered via `Legion::Extensions`
+
+## Future
+
+- `legion gaia status` CLI command (show loaded subordinate functions, active channels, heartbeat health)
+- Quiet hours / notification preferences (via lex-emotion / lex-identity behavioral model)
+- Voice adapter

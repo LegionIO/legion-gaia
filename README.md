@@ -109,14 +109,30 @@ GAIA wires 19 phases across two cycles:
 | Adapter | Status | Capabilities |
 |---------|--------|-------------|
 | CLI | Built | Rich text, inline code, syntax highlighting, file attachment |
-| Teams | Planned | Adaptive cards, proactive messaging, mobile/desktop |
-| Slack | Planned | Rich text, threads, reactions |
+| Teams | Built | Adaptive cards, proactive messaging, mobile/desktop, Bot Framework auth |
+| Slack | Built | Rich text, threads, reactions, mentions, file attachment |
+
+## Central Router (Hub-and-Spoke)
+
+For deployments where agents run behind firewalls (laptops, internal servers), a stateless central router bridges public endpoints to agents via RabbitMQ.
+
+```ruby
+# Router mode — public server, no brain
+Legion::Gaia.boot(mode: :router)
+
+# Agent mode with bridge — laptop behind firewall
+Legion::Gaia.boot  # auto-detects router.mode and router.worker_id from settings
+```
+
+```
+Bot Framework -> Central Router -> RabbitMQ -> Agent (GAIA) -> RabbitMQ -> Central Router -> Teams
+```
 
 ## Development
 
 ```bash
 bundle install
-bundle exec rspec    # 129 specs
+bundle exec rspec    # 233 specs
 bundle exec rubocop  # 0 offenses
 ```
 
