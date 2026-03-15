@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.6.0] - 2026-03-15
+
+### Added
+- `Legion::Gaia::NotificationGate` three-layer notification gate between OutputRouter and channel delivery
+- `Legion::Gaia::NotificationGate::ScheduleEvaluator` config-driven quiet hours with time window, day-of-week, and timezone support
+- `Legion::Gaia::NotificationGate::PresenceEvaluator` Teams presence status gating (Available/Busy/Away/DoNotDisturb/Offline mapped to priority thresholds)
+- `Legion::Gaia::NotificationGate::BehavioralEvaluator` learned signal scoring using arousal and idle time
+- `Legion::Gaia::NotificationGate::DelayQueue` thread-safe delayed message queue with max size eviction and TTL expiration
+- Priority override: critical and urgent messages bypass quiet hours
+- OutputRouter integration: notification gate evaluates frames before delivery, delayed frames re-evaluated on heartbeat
+- Notification settings in `Legion::Gaia::Settings` (enabled, quiet_hours, priority_override, delay_queue_max, max_delay)
+- 63 new specs (296 total) with full coverage across all Phase 6 components
+
 ## [0.5.0] - 2026-03-15
 
 ### Added

@@ -16,7 +16,7 @@ ChannelAdapter (CLI/Teams/Slack)         ChannelAdapter
 InputFrame (Data.define, immutable)      OutputFrame
     |                                        ^
     v                                        |
-Legion::Gaia.ingest                      OutputRouter -> Renderer
+Legion::Gaia.ingest                      OutputRouter -> NotificationGate -> Renderer
     |                                        ^
     v                                        |
 SensoryBuffer -----> Heartbeat (1s) --> Cognitive Pipeline
@@ -128,11 +128,37 @@ Legion::Gaia.boot  # auto-detects router.mode and router.worker_id from settings
 Bot Framework -> Central Router -> RabbitMQ -> Agent (GAIA) -> RabbitMQ -> Central Router -> Teams
 ```
 
+## Notification Gate
+
+Three-layer evaluation pipeline between OutputRouter and channel delivery:
+
+1. **ScheduleEvaluator** — Config-driven quiet hours (time windows with day/time/timezone)
+2. **PresenceEvaluator** — Teams presence status (maps availability to minimum priority thresholds)
+3. **BehavioralEvaluator** — Learned signals (arousal from lex-emotion, idle time from lex-temporal)
+
+Priority override ensures critical/urgent messages always deliver. Delayed messages queue in a thread-safe DelayQueue and re-evaluate each heartbeat tick.
+
+```yaml
+gaia:
+  notifications:
+    enabled: true
+    quiet_hours:
+      enabled: true
+      schedule:
+        - days: [mon, tue, wed, thu, fri]
+          start: "21:00"
+          end: "07:00"
+          timezone: America/Chicago
+    priority_override: urgent
+    delay_queue_max: 100
+    max_delay: 14400
+```
+
 ## Development
 
 ```bash
 bundle install
-bundle exec rspec    # 233 specs
+bundle exec rspec    # 296 specs
 bundle exec rubocop  # 0 offenses
 ```
 

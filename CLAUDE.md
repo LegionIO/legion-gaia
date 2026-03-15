@@ -40,6 +40,11 @@ lib/legion/gaia/router/transport/queues/inbound.rb   # Per-worker inbound queue 
 lib/legion/gaia/router/transport/queues/outbound.rb  # Shared outbound queue (agent->router)
 lib/legion/gaia/router/transport/messages/input_frame_message.rb  # InputFrame -> RabbitMQ
 lib/legion/gaia/router/transport/messages/output_frame_message.rb # OutputFrame -> RabbitMQ
+lib/legion/gaia/notification_gate.rb                        # Three-layer gate between OutputRouter and delivery
+lib/legion/gaia/notification_gate/schedule_evaluator.rb     # Config-driven quiet hours (day/time/timezone windows)
+lib/legion/gaia/notification_gate/presence_evaluator.rb     # Teams presence status -> priority threshold mapping
+lib/legion/gaia/notification_gate/behavioral_evaluator.rb   # Learned signal scoring (arousal, idle time)
+lib/legion/gaia/notification_gate/delay_queue.rb            # Thread-safe delayed message queue (max size, TTL)
 ```
 
 ## Architecture
@@ -92,6 +97,17 @@ lib/legion/gaia/router/transport/messages/output_frame_message.rb # OutputFrame 
 - `ChannelAwareRenderer` adds transition suggestions when content is truncated (e.g., "Full response available on cli")
 - Richness hierarchy: voice -> slack -> cli (richer channels suggested when content exceeds limits)
 
+### Phase 6: Notification Gate
+- `NotificationGate` sits between OutputRouter and channel delivery, evaluating each frame
+- Three evaluation layers in order: schedule (quiet hours) -> presence (Teams status) -> behavioral (learned signals)
+- `ScheduleEvaluator` parses config-driven schedule arrays with day/time/timezone windows, handles overnight wraps
+- `PresenceEvaluator` maps Teams availability states to minimum priority thresholds (Available->ambient, Busy/Away->urgent, DoNotDisturb/Offline->critical)
+- `BehavioralEvaluator` uses arousal (0.0-1.0) and idle_seconds signals to compute notification score
+- Priority override: critical/urgent messages bypass all layers
+- `DelayQueue` is thread-safe with mutex, max_size eviction, TTL-based expiration, flush
+- OutputRouter calls `notification_gate.evaluate(frame)` -> `:deliver` or `:delay`
+- Delayed frames re-evaluated each heartbeat tick via `process_delayed` (drain expired, flush when quiet ends)
+
 ### Data Flow
 ```
 Human Input -> ChannelAdapter#translate_inbound -> InputFrame -> Gaia.ingest -> SensoryBuffer
@@ -131,6 +147,5 @@ Cognitive Output -> OutputFrame -> OutputRouter -> ChannelAwareRenderer -> Chann
 
 ## Future
 
-- `legion gaia status` CLI command (show loaded subordinate functions, active channels, heartbeat health)
-- Quiet hours / notification preferences (via lex-emotion / lex-identity behavioral model)
 - Voice adapter
+- Proactive notification scheduling (agent-initiated messages at optimal delivery times)
