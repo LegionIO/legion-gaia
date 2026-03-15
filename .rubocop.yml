@@ -20,7 +20,16 @@ Metrics/MethodLength:
 Metrics/AbcSize:
   Max: 30
 
+Metrics/CyclomaticComplexity:
+  Max: 10
+
+Metrics/PerceivedComplexity:
+  Max: 10
+
 Metrics/BlockLength:
   Exclude:
     - 'spec/**/*'
     - '*.gemspec'
+
+Style/Documentation:
+  Enabled: false

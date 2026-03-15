@@ -9,6 +9,6 @@ gem 'rspec'
 gem 'rubocop'
 
 group :test do
-  gem 'legion-logging', path: '../legion-logging'
   gem 'legion-json', path: '../legion-json'
+  gem 'legion-logging', path: '../legion-logging'
 end

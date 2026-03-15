@@ -1,0 +1,126 @@
+# frozen_string_literal: true
+
+module Legion
+  module Gaia
+    module PhaseWiring
+      PHASE_MAP = {
+        sensory_processing: { ext: :Attention, runner: :Attention, fn: :filter_signals },
+        emotional_evaluation: { ext: :Emotion, runner: :Valence,       fn: :evaluate_valence },
+        memory_retrieval: { ext: :Memory, runner: :Traces, fn: :retrieve_and_reinforce },
+        identity_entropy_check: { ext: :Identity, runner: :Identity, fn: :check_entropy },
+        working_memory_integration: { ext: :Curiosity, runner: :Curiosity, fn: :detect_gaps },
+        procedural_check: { ext: :Coldstart, runner: :Coldstart, fn: :coldstart_progress },
+        prediction_engine: { ext: :Prediction, runner: :Prediction, fn: :predict },
+        mesh_interface: { ext: :Mesh, runner: :Mesh, fn: :mesh_status },
+        gut_instinct: { ext: :Emotion, runner: :Gut, fn: :gut_instinct },
+        action_selection: { ext: :Volition, runner: :Volition, fn: :form_intentions },
+        memory_consolidation: { ext: :Memory,     runner: :Consolidation, fn: :decay_cycle },
+        post_tick_reflection: { ext: :Reflection, runner: :Reflection,    fn: :reflect },
+
+        # Dream cycle phases
+        memory_audit: { ext: :Memory, runner: :Traces, fn: :retrieve_ranked },
+        association_walk: { ext: :Memory, runner: :Consolidation, fn: :hebbian_link },
+        contradiction_resolution: { ext: :Conflict, runner: :Conflict, fn: :active_conflicts },
+        agenda_formation: { ext: :Curiosity, runner: :Curiosity, fn: :form_agenda },
+        consolidation_commit: { ext: :Memory, runner: :Consolidation, fn: :migrate_tier },
+        dream_reflection: { ext: :Reflection, runner: :Reflection, fn: :reflect },
+        dream_narration: { ext: :Narrator, runner: :Narrator, fn: :narrate }
+      }.freeze
+
+      PHASE_ARGS = {
+        sensory_processing: lambda { |ctx|
+          { signals: ctx[:signals] || [],
+            active_wonders: ctx.dig(:prior_results, :agenda_formation, :agenda) || [] }
+        },
+        emotional_evaluation: ->(ctx) { { signal: ctx[:current_signal] || {}, source_type: :ambient } },
+        memory_retrieval: ->(_ctx) { { limit: 10 } },
+        identity_entropy_check: ->(_ctx) { {} },
+        procedural_check: ->(_ctx) { {} },
+        prediction_engine: ->(ctx) { { mode: :functional_mapping, context: ctx[:prior_results] || {} } },
+        mesh_interface: ->(_ctx) { {} },
+        gut_instinct: ->(ctx) { { valences: ctx[:valences] || [] } },
+        action_selection: ->(ctx) { { tick_results: ctx[:prior_results] || {}, cognitive_state: {} } },
+        working_memory_integration: ->(ctx) { { prior_results: ctx[:prior_results] || {} } },
+        memory_consolidation: ->(_ctx) { {} },
+        post_tick_reflection: ->(ctx) { { tick_results: ctx[:prior_results] || {} } },
+        memory_audit: ->(_ctx) { { limit: 20 } },
+        association_walk: lambda { |ctx|
+          audit = ctx.dig(:prior_results, :memory_audit)
+          traces = audit.is_a?(Hash) ? audit[:traces] : nil
+          traces = [] unless traces.is_a?(Array) && traces.size >= 2
+          { trace_id_a: traces.dig(0, :trace_id), trace_id_b: traces.dig(1, :trace_id) }
+        },
+        contradiction_resolution: ->(_ctx) { {} },
+        agenda_formation: ->(_ctx) { {} },
+        consolidation_commit: ->(_ctx) { {} },
+        dream_reflection: ->(ctx) { { tick_results: ctx[:prior_results] || {} } },
+        dream_narration: lambda { |ctx|
+          { tick_results: ctx[:prior_results] || {}, cognitive_state: { source: :dream } }
+        }
+      }.freeze
+
+      module_function
+
+      def resolve_runner_class(ext_sym, runner_sym)
+        return nil unless Legion::Extensions.const_defined?(ext_sym)
+
+        ext_mod = Legion::Extensions.const_get(ext_sym)
+        return nil unless ext_mod.const_defined?(:Runners)
+
+        runners_mod = ext_mod.const_get(:Runners)
+        return nil unless runners_mod.const_defined?(runner_sym)
+
+        runners_mod.const_get(runner_sym)
+      end
+
+      def build_phase_handlers(runner_instances)
+        handlers = {}
+
+        PHASE_MAP.each do |phase, mapping|
+          next if mapping.nil?
+
+          instance_key = :"#{mapping[:ext]}_#{mapping[:runner]}"
+          instance = runner_instances[instance_key]
+          next unless instance
+
+          fn = mapping[:fn]
+          arg_builder = PHASE_ARGS[phase]
+
+          handlers[phase] = lambda { |state:, signals:, prior_results:|
+            ctx = { state: state, signals: signals, prior_results: prior_results,
+                    current_signal: signals&.last, valences: collect_valences(prior_results) }
+            args = arg_builder ? arg_builder.call(ctx) : {}
+            instance.send(fn, **args)
+          }
+        end
+
+        handlers
+      end
+
+      def discover_available_extensions
+        available = {}
+
+        PHASE_MAP.each_value do |mapping|
+          next if mapping.nil?
+
+          key = :"#{mapping[:ext]}_#{mapping[:runner]}"
+          next if available.key?(key)
+
+          runner_class = resolve_runner_class(mapping[:ext], mapping[:runner])
+          available[key] = { ext: mapping[:ext], runner: mapping[:runner], loaded: !runner_class.nil? }
+        end
+
+        available
+      end
+
+      def collect_valences(prior_results)
+        return [] unless prior_results.is_a?(Hash)
+
+        valence_result = prior_results[:emotional_evaluation]
+        return [] unless valence_result.is_a?(Hash) && valence_result[:valence]
+
+        [valence_result[:valence]]
+      end
+    end
+  end
+end
