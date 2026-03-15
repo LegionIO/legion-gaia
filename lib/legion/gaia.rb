@@ -16,6 +16,8 @@ require 'legion/gaia/session_store'
 require 'legion/gaia/channels/cli_adapter'
 require 'legion/gaia/channels/teams_adapter'
 require 'legion/gaia/channels/slack_adapter'
+require 'legion/gaia/notification_gate'
+require 'legion/gaia/notification_gate/schedule_evaluator'
 require 'legion/gaia/router'
 
 module Legion
