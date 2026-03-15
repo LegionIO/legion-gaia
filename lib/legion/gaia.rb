@@ -185,7 +185,9 @@ module Legion
         @session_store = SessionStore.new(ttl: settings&.dig(:session, :ttl) || 86_400)
 
         renderer = ChannelAwareRenderer.new(settings: settings || {})
-        @output_router = OutputRouter.new(channel_registry: @channel_registry, renderer: renderer)
+        notification_gate = NotificationGate.new(settings: settings || {})
+        @output_router = OutputRouter.new(channel_registry: @channel_registry, renderer: renderer,
+                                          notification_gate: notification_gate)
 
         # Register CLI adapter by default
         unless settings&.dig(:channels, :cli, :enabled) == false
