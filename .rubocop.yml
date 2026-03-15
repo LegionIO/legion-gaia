@@ -26,6 +26,15 @@ Metrics/CyclomaticComplexity:
 Metrics/PerceivedComplexity:
   Max: 10
 
+Metrics/ClassLength:
+  Max: 150
+
+Metrics/ModuleLength:
+  Max: 150
+
+Metrics/ParameterLists:
+  Max: 10
+
 Metrics/BlockLength:
   Exclude:
     - 'spec/**/*'

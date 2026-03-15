@@ -7,17 +7,25 @@ GAIA sits on top of LegionIO's infrastructure and coordinates all agentic subord
 ## Architecture
 
 ```
-             GAIA (legion-gaia)
-              |
-    +---------+---------+
-    |         |         |
- Registry  SensoryBuffer  Heartbeat Actor
-    |                        |
- PhaseWiring              drives tick
-    |                     every 1s
- RunnerHost(s)
-    |
- [lex-tick, lex-emotion, lex-memory, lex-identity, ...]
+Human Input                              Human Output
+    |                                        ^
+    v                                        |
+ChannelAdapter (CLI/Teams/Slack)         ChannelAdapter
+    |                                        ^
+    v                                        |
+InputFrame (Data.define, immutable)      OutputFrame
+    |                                        ^
+    v                                        |
+Legion::Gaia.ingest                      OutputRouter -> Renderer
+    |                                        ^
+    v                                        |
+SensoryBuffer -----> Heartbeat (1s) --> Cognitive Pipeline
+                         |
+                    PhaseWiring (19 phases)
+                         |
+                    Registry -> RunnerHost(s)
+                         |
+                    [lex-tick, lex-emotion, lex-memory, ...]
 ```
 
 **Registry** discovers loaded agentic extensions, resolves their runner modules, and builds phase handlers that map cognitive phases to extension functions.
@@ -25,6 +33,8 @@ GAIA sits on top of LegionIO's infrastructure and coordinates all agentic subord
 **SensoryBuffer** is a thread-safe queue that collects inbound signals (human input, system events, ambient data) between heartbeat ticks.
 
 **Heartbeat** actor drains the buffer and drives the tick cycle once per second, executing all wired cognitive phases in sequence.
+
+**Channel Abstraction** provides multi-interface communication through thin adapters. Each adapter translates format (not content) between channel-native I/O and GAIA's universal InputFrame/OutputFrame format.
 
 ## Installation
 
@@ -39,10 +49,24 @@ GAIA boots automatically when detected by LegionIO. Manual usage:
 ```ruby
 require 'legion/gaia'
 
+# Boot GAIA (creates registry, sensory buffer, channel infrastructure)
 Legion::Gaia.boot
-Legion::Gaia.sensory_buffer.push({ value: 'hello', source_type: :human_direct, salience: 0.9 })
+
+# Ingest input through the channel abstraction
+cli = Legion::Gaia.channel_registry.adapter_for(:cli)
+frame = cli.translate_inbound('hello world')
+Legion::Gaia.ingest(frame)
+
+# Drive the cognitive tick
 result = Legion::Gaia.heartbeat
+
+# Send output through a channel
+Legion::Gaia.respond(content: 'response text', channel_id: :cli)
+
+# Check status
 Legion::Gaia.status
+# => { started: true, extensions_loaded: 0, wired_phases: 0, active_channels: [:cli], ... }
+
 Legion::Gaia.shutdown
 ```
 
@@ -80,12 +104,20 @@ GAIA wires 19 phases across two cycles:
 
 **Dream Cycle (7 phases):** memory audit, association walk, contradiction resolution, agenda formation, consolidation commit, dream reflection, dream narration.
 
+## Channel Adapters
+
+| Adapter | Status | Capabilities |
+|---------|--------|-------------|
+| CLI | Built | Rich text, inline code, syntax highlighting, file attachment |
+| Teams | Planned | Adaptive cards, proactive messaging, mobile/desktop |
+| Slack | Planned | Rich text, threads, reactions |
+
 ## Development
 
 ```bash
 bundle install
-bundle exec rspec
-bundle exec rubocop
+bundle exec rspec    # 129 specs
+bundle exec rubocop  # 0 offenses
 ```
 
 ## License

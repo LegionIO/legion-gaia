@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.2.0] - 2026-03-15
+
+### Added
+- `Legion::Gaia::InputFrame` immutable value object (Data.define) for channel-agnostic inbound messages
+- `Legion::Gaia::OutputFrame` immutable value object (Data.define) for channel-agnostic outbound responses
+- `Legion::Gaia::ChannelAdapter` base class defining the adapter contract (translate_inbound/outbound, deliver)
+- `Legion::Gaia::ChannelRegistry` thread-safe registry for active channel adapters with deliver routing
+- `Legion::Gaia::ChannelAwareRenderer` adapts output complexity to channel capabilities (truncation, switch suggestions)
+- `Legion::Gaia::OutputRouter` chains renderer -> registry -> adapter for output delivery
+- `Legion::Gaia::SessionStore` session continuity tracking keyed by human identity with TTL expiration
+- `Legion::Gaia::Channels::CliAdapter` first concrete adapter for CLI input/output
+- `Legion::Gaia.ingest(input_frame)` pushes signals to sensory buffer and manages session continuity
+- `Legion::Gaia.respond(content:, channel_id:)` routes output through renderer and adapter
+- Channel infrastructure auto-boots during `Legion::Gaia.boot` (CLI adapter registered by default)
+- 129 specs with full coverage across all Phase 1 and Phase 2 components
+
 ## [0.1.0] - 2026-03-15
 
 ### Added

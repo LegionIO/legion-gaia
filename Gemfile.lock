@@ -14,7 +14,7 @@ PATH
 PATH
   remote: .
   specs:
-    legion-gaia (0.1.0)
+    legion-gaia (0.2.0)
       legion-json
       legion-logging
 

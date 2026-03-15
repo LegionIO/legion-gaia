@@ -6,11 +6,19 @@ require 'legion/gaia/runner_host'
 require 'legion/gaia/sensory_buffer'
 require 'legion/gaia/phase_wiring'
 require 'legion/gaia/registry'
+require 'legion/gaia/input_frame'
+require 'legion/gaia/output_frame'
+require 'legion/gaia/channel_adapter'
+require 'legion/gaia/channel_registry'
+require 'legion/gaia/channel_aware_renderer'
+require 'legion/gaia/output_router'
+require 'legion/gaia/session_store'
+require 'legion/gaia/channels/cli_adapter'
 
 module Legion
   module Gaia
     class << self
-      attr_reader :sensory_buffer, :registry
+      attr_reader :sensory_buffer, :registry, :channel_registry, :output_router, :session_store
 
       def boot
         log_info 'Legion::Gaia booting'
@@ -19,12 +27,15 @@ module Legion
         @registry = Registry.new
         @registry.discover
 
+        boot_channels
+
         @started = true
         settings_hash = settings
         settings_hash[:connected] = true if settings_hash
 
         log_info "Legion::Gaia booted: #{@registry.wired_count} phases wired, " \
-                 "#{@registry.loaded_count}/#{@registry.total_count} extensions loaded"
+                 "#{@registry.loaded_count}/#{@registry.total_count} extensions loaded, " \
+                 "#{@channel_registry.size} channels"
       end
 
       def shutdown
@@ -34,8 +45,12 @@ module Legion
         settings_hash = settings
         settings_hash[:connected] = false if settings_hash
 
+        @channel_registry&.stop_all
         @sensory_buffer = nil
         @registry = nil
+        @channel_registry = nil
+        @output_router = nil
+        @session_store = nil
 
         log_info 'Legion::Gaia shut down'
       end
@@ -78,13 +93,56 @@ module Legion
         result
       end
 
+      def ingest(input_frame)
+        return { ingested: false, reason: :not_started } unless started?
+
+        signal = input_frame.to_signal
+        @sensory_buffer.push(signal)
+
+        session = @session_store&.find_or_create(identity: input_frame.auth_context[:identity] || :anonymous)
+        @session_store&.touch(session.id, channel_id: input_frame.channel_id) if session
+
+        { ingested: true, buffer_depth: @sensory_buffer.size, session_id: session&.id }
+      end
+
+      def respond(content:, channel_id:, in_reply_to: nil, session_continuity_id: nil, metadata: {})
+        frame = OutputFrame.new(
+          content: content,
+          channel_id: channel_id,
+          in_reply_to: in_reply_to,
+          session_continuity_id: session_continuity_id,
+          metadata: metadata
+        )
+        @output_router&.route(frame) || { delivered: false, reason: :no_router }
+      end
+
       def status
         return { started: false } unless started?
 
-        registry_status.merge(started: true, buffer_depth: @sensory_buffer&.size || 0)
+        registry_status.merge(
+          started: true,
+          buffer_depth: @sensory_buffer&.size || 0,
+          active_channels: @channel_registry&.active_channels || [],
+          sessions: @session_store&.size || 0
+        )
       end
 
       private
+
+      def boot_channels
+        @channel_registry = ChannelRegistry.new
+        @session_store = SessionStore.new(ttl: settings&.dig(:session, :ttl) || 86_400)
+
+        renderer = ChannelAwareRenderer.new(settings: settings || {})
+        @output_router = OutputRouter.new(channel_registry: @channel_registry, renderer: renderer)
+
+        # Register CLI adapter by default
+        return if settings&.dig(:channels, :cli, :enabled) == false
+
+        cli = Channels::CliAdapter.new
+        cli.start
+        @channel_registry.register(cli)
+      end
 
       def registry_status
         return {} unless @registry
