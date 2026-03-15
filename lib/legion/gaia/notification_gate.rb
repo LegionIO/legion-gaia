@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require_relative 'notification_gate/behavioral_evaluator'
 require_relative 'notification_gate/delay_queue'
 require_relative 'notification_gate/presence_evaluator'
 require_relative 'notification_gate/schedule_evaluator'
@@ -9,7 +10,7 @@ module Legion
     class NotificationGate
       PRIORITY_VALUES = { critical: 1.0, urgent: 0.8, normal: 0.5, low: 0.2, ambient: 0.0 }.freeze
 
-      attr_reader :presence_evaluator, :schedule_evaluator, :delay_queue
+      attr_reader :behavioral_evaluator, :presence_evaluator, :schedule_evaluator, :delay_queue
 
       def initialize(settings: {})
         notification_settings = settings[:notifications] || {}
@@ -24,6 +25,7 @@ module Legion
         max_delay = notification_settings[:max_delay] || 14_400
         @delay_queue = DelayQueue.new(max_size: max_size, max_delay: max_delay)
         @presence_evaluator = PresenceEvaluator.new
+        @behavioral_evaluator = BehavioralEvaluator.new
       end
 
       def evaluate(frame)
@@ -33,8 +35,14 @@ module Legion
 
         priority = frame.metadata[:priority] || :normal
         return :delay unless @presence_evaluator.delivery_allowed?(priority: priority)
+        return :delay unless @behavioral_evaluator.should_deliver?(priority: priority)
 
         :deliver
+      end
+
+      def update_behavioral(arousal: nil, idle_seconds: nil)
+        @behavioral_evaluator.update_arousal(arousal) if arousal
+        @behavioral_evaluator.update_idle_seconds(idle_seconds) if idle_seconds
       end
 
       def update_presence(availability:, activity: nil)
