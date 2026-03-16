@@ -7,6 +7,7 @@ module Legion
         sensory_processing: { ext: :Attention, runner: :Attention, fn: :filter_signals },
         emotional_evaluation: { ext: :Emotion, runner: :Valence,       fn: :evaluate_valence },
         memory_retrieval: { ext: :Memory, runner: :Traces, fn: :retrieve_and_reinforce },
+        knowledge_retrieval: { ext: :Apollo, runner: :Knowledge, fn: :retrieve_relevant },
         identity_entropy_check: { ext: :Identity, runner: :Identity, fn: :check_entropy },
         working_memory_integration: { ext: :Curiosity, runner: :Curiosity, fn: :detect_gaps },
         procedural_check: { ext: :Coldstart, runner: :Coldstart, fn: :coldstart_progress },
@@ -34,6 +35,22 @@ module Legion
         },
         emotional_evaluation: ->(ctx) { { signal: ctx[:current_signal] || {}, source_type: :ambient } },
         memory_retrieval: ->(_ctx) { { limit: 10 } },
+        knowledge_retrieval: lambda { |ctx|
+          current_signal = ctx[:signals]&.last
+          memory_results = ctx.dig(:prior_results, :memory_retrieval)
+
+          if current_signal.nil? || (memory_results.is_a?(Hash) &&
+             memory_results[:traces]&.any? { |t| t[:strength].to_f > 0.8 })
+            return { skip: true }
+          end
+
+          {
+            query: current_signal[:content] || current_signal.to_s,
+            limit: 5,
+            min_confidence: 0.3,
+            tags: current_signal[:tags]
+          }
+        },
         identity_entropy_check: ->(_ctx) { {} },
         procedural_check: ->(_ctx) { {} },
         prediction_engine: ->(ctx) { { mode: :functional_mapping, context: ctx[:prior_results] || {} } },
