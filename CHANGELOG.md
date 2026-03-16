@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.7.0] - 2026-03-15
+
+### Changed
+- Added 242 agentic lex-* gems as runtime dependencies (full cognitive stack meta-package)
+- Installing legion-gaia now pulls in all cognitive extensions
+
 ## [0.6.0] - 2026-03-15
 
 ### Added

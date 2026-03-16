@@ -39,6 +39,7 @@ Metrics/BlockLength:
   Exclude:
     - 'spec/**/*'
     - '*.gemspec'
+    - 'Gemfile'
 
 Style/Documentation:
   Enabled: false
