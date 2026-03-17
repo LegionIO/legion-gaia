@@ -18,6 +18,8 @@ require 'legion/gaia/channels/teams_adapter'
 require 'legion/gaia/channels/slack_adapter'
 require 'legion/gaia/notification_gate'
 require 'legion/gaia/notification_gate/schedule_evaluator'
+require 'legion/gaia/proactive'
+require 'legion/gaia/offline_handler'
 require 'legion/gaia/router'
 
 module Legion

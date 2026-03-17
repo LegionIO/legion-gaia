@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.8.0] - 2026-03-17
+
+### Added
+- `Legion::Gaia::Proactive`: agent-initiated messaging to any channel via channel registry
+- `Legion::Gaia::OfflineHandler`: message queuing and sender notification for offline agents
+- Presence tracking with configurable offline threshold
+- `drain_pending` and `pending_count` for offline message management
+- 14 new specs (310 total)
+
 ## [0.7.0] - 2026-03-15
 
 ### Changed
