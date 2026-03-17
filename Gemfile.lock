@@ -641,7 +641,7 @@ PATH
 PATH
   remote: ../extensions-agentic/lex-consent
   specs:
-    lex-consent (0.1.1)
+    lex-consent (0.2.0)
 
 PATH
   remote: ../extensions-agentic/lex-context
@@ -691,7 +691,7 @@ PATH
 PATH
   remote: ../extensions-agentic/lex-dream
   specs:
-    lex-dream (0.1.0)
+    lex-dream (0.1.1)
 
 PATH
   remote: ../extensions-agentic/lex-dual-process
@@ -756,7 +756,7 @@ PATH
 PATH
   remote: ../extensions-agentic/lex-extinction
   specs:
-    lex-extinction (0.1.1)
+    lex-extinction (0.2.0)
 
 PATH
   remote: ../extensions-agentic/lex-fatigue
@@ -826,7 +826,7 @@ PATH
 PATH
   remote: ../extensions-agentic/lex-identity
   specs:
-    lex-identity (0.1.0)
+    lex-identity (0.2.0)
 
 PATH
   remote: ../extensions-agentic/lex-imagination
@@ -876,7 +876,7 @@ PATH
 PATH
   remote: ../extensions-agentic/lex-memory
   specs:
-    lex-memory (0.1.0)
+    lex-memory (0.1.2)
 
 PATH
   remote: ../extensions-agentic/lex-mental-simulation
@@ -1536,6 +1536,7 @@ GEM
 PLATFORMS
   arm64-darwin-25
   ruby
+  x86_64-linux
 
 DEPENDENCIES
   legion-gaia!
