@@ -3,7 +3,7 @@
 **Repository Level 3 Documentation**
 - **Parent**: `/Users/miverso2/rubymine/legion/CLAUDE.md`
 - **GitHub**: https://github.com/LegionIO/legion-gaia
-- **Version**: 0.9.0
+- **Version**: 0.9.1
 
 ## Purpose
 
