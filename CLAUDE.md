@@ -1,8 +1,11 @@
-# legion-gaia
+# legion-gaia: Cognitive Coordination Layer for LegionIO
 
-**Parent**: `/Users/miverso2/rubymine/legion/CLAUDE.md`
+**Repository Level 3 Documentation**
+- **Parent**: `/Users/miverso2/rubymine/legion/CLAUDE.md`
+- **GitHub**: https://github.com/LegionIO/legion-gaia
+- **Version**: 0.8.0
 
-## What is this?
+## Purpose
 
 Cognitive coordination layer for LegionIO. GAIA absorbs and replaces `lex-cortex`, elevating the cognitive wiring from an extension to a core library. It drives the tick cycle, discovers and wires agentic extensions, and provides channel abstraction for multi-interface communication (CLI, Teams, Slack).
 
@@ -45,6 +48,8 @@ lib/legion/gaia/notification_gate/schedule_evaluator.rb     # Config-driven quie
 lib/legion/gaia/notification_gate/presence_evaluator.rb     # Teams presence status -> priority threshold mapping
 lib/legion/gaia/notification_gate/behavioral_evaluator.rb   # Learned signal scoring (arousal, idle time)
 lib/legion/gaia/notification_gate/delay_queue.rb            # Thread-safe delayed message queue (max size, TTL)
+lib/legion/gaia/proactive.rb                                # Proactive message delivery: send_message, broadcast to channels
+lib/legion/gaia/offline_handler.rb                          # Offline agent handling: queue messages, notify sender, presence tracking
 ```
 
 ## Architecture
@@ -149,3 +154,7 @@ Cognitive Output -> OutputFrame -> OutputRouter -> ChannelAwareRenderer -> Chann
 
 - Voice adapter
 - Proactive notification scheduling (agent-initiated messages at optimal delivery times)
+
+---
+
+**Maintained By**: Matthew Iverson (@Esity)
