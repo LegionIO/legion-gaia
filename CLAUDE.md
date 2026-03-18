@@ -3,7 +3,7 @@
 **Repository Level 3 Documentation**
 - **Parent**: `/Users/miverso2/rubymine/legion/CLAUDE.md`
 - **GitHub**: https://github.com/LegionIO/legion-gaia
-- **Version**: 0.8.0
+- **Version**: 0.9.0
 
 ## Purpose
 
@@ -38,8 +38,8 @@ lib/legion/gaia/router.rb                            # Router module entry point
 lib/legion/gaia/router/worker_routing.rb             # Identity-to-worker routing table with allowlist
 lib/legion/gaia/router/router_bridge.rb              # Central router: inbound routing + outbound delivery
 lib/legion/gaia/router/agent_bridge.rb               # Agent-side: subscribe inbound, publish outbound
-lib/legion/gaia/router/transport/exchanges/gaia.rb   # Topic exchange for GAIA frames
-lib/legion/gaia/router/transport/queues/inbound.rb   # Per-worker inbound queue (router->agent)
+lib/legion/gaia/router/transport/exchanges/gaia.rb   # Topic exchange for GAIA outbound frames
+lib/legion/gaia/router/transport/queues/inbound.rb   # Per-worker inbound queue (subclass of Transport::Queues::Agent)
 lib/legion/gaia/router/transport/queues/outbound.rb  # Shared outbound queue (agent->router)
 lib/legion/gaia/router/transport/messages/input_frame_message.rb  # InputFrame -> RabbitMQ
 lib/legion/gaia/router/transport/messages/output_frame_message.rb # OutputFrame -> RabbitMQ
@@ -90,6 +90,7 @@ lib/legion/gaia/offline_handler.rb                          # Offline agent hand
 - `AgentBridge` publishes OutputFrames to outbound queue when `respond` is called
 - `WorkerRouting` maps Entra OID / identity to worker_id with allowlist enforcement
 - Transport layer follows standard legion-transport patterns (Exchange, Queue, Message base classes)
+- Inbound uses the `agent` exchange (from `legion-transport`): routing key `agent.<worker_id>`, queue `agent.<worker_id>` (via `Transport::Queues::Agent`). Outbound uses the `gaia` exchange (many-to-one fan-in to router).
 - Transport classes only loaded when `legion-transport` is available (conditional require)
 - Router never sees cognitive state — only InputFrame/OutputFrame envelopes
 
