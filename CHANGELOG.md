@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.9.1] - 2026-03-18
+
+### Fixed
+- Remove local path references from Gemfile (legion-json, legion-logging, all commented agentic extensions)
+
 ## [0.9.0] - 2026-03-17
 
 ### Changed
