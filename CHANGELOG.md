@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.8.1] - 2026-03-17
+
+### Added
+- Synapse cognitive routing hooks at tick phase 5 (working_memory_integration) and phase 12 (post_tick_reflection)
+- Multi-handler support in `PhaseWiring::PHASE_MAP` — phases can now have arrays of handlers
+- `PhaseWiring.mappings_for` helper normalizes single-hash and array-valued phase entries
+- 9 new specs (319 total)
+
 ## [0.8.0] - 2026-03-17
 
 ### Added
