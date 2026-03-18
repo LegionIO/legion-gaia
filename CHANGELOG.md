@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.9.0] - 2026-03-17
+
+### Changed
+- **BREAKING**: GAIA inbound queues migrated from `gaia.inbound.<worker_id>` to `agent.<worker_id>` on the agent exchange
+- Inbound queue class now inherits from `Legion::Transport::Queues::Agent`
+- InputFrameMessage publishes to agent exchange instead of gaia exchange
+- Gaia exchange retained for outbound fan-in only (OutputFrameMessage unchanged)
+
+### Added
+- Depends on legion-transport >= 1.2.2 for agent exchange/queue support
+
 ## [0.8.1] - 2026-03-17
 
 ### Added

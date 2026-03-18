@@ -7,12 +7,12 @@ module Legion
         module Messages
           class InputFrameMessage < Legion::Transport::Message
             def exchange
-              Exchanges::Gaia
+              Legion::Transport::Exchanges::Agent
             end
 
             def routing_key
               worker_id = @options[:worker_id] || 'default'
-              "gaia.inbound.#{worker_id}"
+              "agent.#{worker_id}"
             end
 
             def message

@@ -5,18 +5,9 @@ module Legion
     module Router
       module Transport
         module Queues
-          class Inbound < Legion::Transport::Queue
+          class Inbound < Legion::Transport::Queues::Agent
             def initialize(worker_id: nil, **)
-              @worker_id = worker_id
-              super(**)
-            end
-
-            def queue_name
-              if @worker_id
-                "gaia.inbound.#{@worker_id}"
-              else
-                'gaia.inbound'
-              end
+              super(agent_id: worker_id, **)
             end
           end
         end
