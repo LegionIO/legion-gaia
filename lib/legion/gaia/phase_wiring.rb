@@ -9,14 +9,20 @@ module Legion
         memory_retrieval: { ext: :Memory, runner: :Traces, fn: :retrieve_and_reinforce },
         knowledge_retrieval: { ext: :Apollo, runner: :Knowledge, fn: :retrieve_relevant },
         identity_entropy_check: { ext: :Identity, runner: :Identity, fn: :check_entropy },
-        working_memory_integration: { ext: :Curiosity, runner: :Curiosity, fn: :detect_gaps },
+        working_memory_integration: [
+          { ext: :Curiosity, runner: :Curiosity,   fn: :detect_gaps },
+          { ext: :Synapse,   runner: :GaiaReport,  fn: :gaia_summary }
+        ],
         procedural_check: { ext: :Coldstart, runner: :Coldstart, fn: :coldstart_progress },
         prediction_engine: { ext: :Prediction, runner: :Prediction, fn: :predict },
         mesh_interface: { ext: :Mesh, runner: :Mesh, fn: :mesh_status },
         gut_instinct: { ext: :Emotion, runner: :Gut, fn: :gut_instinct },
         action_selection: { ext: :Volition, runner: :Volition, fn: :form_intentions },
-        memory_consolidation: { ext: :Memory,     runner: :Consolidation, fn: :decay_cycle },
-        post_tick_reflection: { ext: :Reflection, runner: :Reflection,    fn: :reflect },
+        memory_consolidation: { ext: :Memory, runner: :Consolidation, fn: :decay_cycle },
+        post_tick_reflection: [
+          { ext: :Reflection, runner: :Reflection,  fn: :reflect },
+          { ext: :Synapse,    runner: :GaiaReport,  fn: :gaia_reflection }
+        ],
 
         # Dream cycle phases
         memory_audit: { ext: :Memory, runner: :Traces, fn: :retrieve_ranked },
@@ -90,24 +96,34 @@ module Legion
         runners_mod.const_get(runner_sym)
       end
 
+      def mappings_for(value)
+        value.is_a?(Array) ? value : [value]
+      end
+
       def build_phase_handlers(runner_instances)
         handlers = {}
 
-        PHASE_MAP.each do |phase, mapping|
-          next if mapping.nil?
+        PHASE_MAP.each do |phase, value|
+          next if value.nil?
 
-          instance_key = :"#{mapping[:ext]}_#{mapping[:runner]}"
-          instance = runner_instances[instance_key]
-          next unless instance
+          maps = mappings_for(value)
+          active = maps.filter_map do |mapping|
+            instance_key = :"#{mapping[:ext]}_#{mapping[:runner]}"
+            instance = runner_instances[instance_key]
+            next unless instance
 
-          fn = mapping[:fn]
+            { instance: instance, fn: mapping[:fn] }
+          end
+          next if active.empty?
+
           arg_builder = PHASE_ARGS[phase]
 
           handlers[phase] = lambda { |state:, signals:, prior_results:|
             ctx = { state: state, signals: signals, prior_results: prior_results,
                     current_signal: signals&.last, valences: collect_valences(prior_results) }
             args = arg_builder ? arg_builder.call(ctx) : {}
-            instance.send(fn, **args)
+            results = active.map { |h| h[:instance].send(h[:fn], **args) }
+            results.size == 1 ? results.first : results
           }
         end
 
@@ -117,14 +133,16 @@ module Legion
       def discover_available_extensions
         available = {}
 
-        PHASE_MAP.each_value do |mapping|
-          next if mapping.nil?
+        PHASE_MAP.each_value do |value|
+          next if value.nil?
 
-          key = :"#{mapping[:ext]}_#{mapping[:runner]}"
-          next if available.key?(key)
+          mappings_for(value).each do |mapping|
+            key = :"#{mapping[:ext]}_#{mapping[:runner]}"
+            next if available.key?(key)
 
-          runner_class = resolve_runner_class(mapping[:ext], mapping[:runner])
-          available[key] = { ext: mapping[:ext], runner: mapping[:runner], loaded: !runner_class.nil? }
+            runner_class = resolve_runner_class(mapping[:ext], mapping[:runner])
+            available[key] = { ext: mapping[:ext], runner: mapping[:runner], loaded: !runner_class.nil? }
+          end
         end
 
         available

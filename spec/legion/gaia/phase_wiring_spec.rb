@@ -30,11 +30,45 @@ RSpec.describe Legion::Gaia::PhaseWiring do
     end
 
     it 'each mapping has ext, runner, and fn keys' do
-      described_class::PHASE_MAP.each_value do |mapping|
-        expect(mapping).to have_key(:ext)
-        expect(mapping).to have_key(:runner)
-        expect(mapping).to have_key(:fn)
+      described_class::PHASE_MAP.each_value do |value|
+        described_class.mappings_for(value).each do |mapping|
+          expect(mapping).to have_key(:ext)
+          expect(mapping).to have_key(:runner)
+          expect(mapping).to have_key(:fn)
+        end
       end
+    end
+
+    it 'wires synapse gaia_summary into working_memory_integration' do
+      value = described_class::PHASE_MAP[:working_memory_integration]
+      maps = described_class.mappings_for(value)
+      synapse_entry = maps.find { |m| m[:ext] == :Synapse && m[:runner] == :GaiaReport }
+      expect(synapse_entry).not_to be_nil
+      expect(synapse_entry[:fn]).to eq(:gaia_summary)
+    end
+
+    it 'wires synapse gaia_reflection into post_tick_reflection' do
+      value = described_class::PHASE_MAP[:post_tick_reflection]
+      maps = described_class.mappings_for(value)
+      synapse_entry = maps.find { |m| m[:ext] == :Synapse && m[:runner] == :GaiaReport }
+      expect(synapse_entry).not_to be_nil
+      expect(synapse_entry[:fn]).to eq(:gaia_reflection)
+    end
+
+    it 'preserves primary handler in working_memory_integration' do
+      value = described_class::PHASE_MAP[:working_memory_integration]
+      maps = described_class.mappings_for(value)
+      primary = maps.find { |m| m[:ext] == :Curiosity }
+      expect(primary).not_to be_nil
+      expect(primary[:fn]).to eq(:detect_gaps)
+    end
+
+    it 'preserves primary handler in post_tick_reflection' do
+      value = described_class::PHASE_MAP[:post_tick_reflection]
+      maps = described_class.mappings_for(value)
+      primary = maps.find { |m| m[:ext] == :Reflection }
+      expect(primary).not_to be_nil
+      expect(primary[:fn]).to eq(:reflect)
     end
   end
 
@@ -71,6 +105,18 @@ RSpec.describe Legion::Gaia::PhaseWiring do
     end
   end
 
+  describe '.mappings_for' do
+    it 'wraps a single hash in an array' do
+      mapping = { ext: :Foo, runner: :Bar, fn: :baz }
+      expect(described_class.mappings_for(mapping)).to eq([mapping])
+    end
+
+    it 'returns an array unchanged' do
+      mappings = [{ ext: :Foo, runner: :Bar, fn: :baz }, { ext: :Qux, runner: :Qux, fn: :qux }]
+      expect(described_class.mappings_for(mappings)).to eq(mappings)
+    end
+  end
+
   describe '.build_phase_handlers' do
     it 'returns empty hash when no runner instances match' do
       handlers = described_class.build_phase_handlers({})
@@ -89,6 +135,55 @@ RSpec.describe Legion::Gaia::PhaseWiring do
       handlers = described_class.build_phase_handlers(instances)
       expect(handlers).to have_key(:sensory_processing)
       expect(handlers[:sensory_processing]).to respond_to(:call)
+    end
+
+    it 'returns single result directly when only one handler matches' do
+      test_module = Module.new do
+        def filter_signals(**)
+          { filtered: true }
+        end
+      end
+      host = Legion::Gaia::RunnerHost.new(test_module)
+      instances = { Attention_Attention: host }
+
+      handlers = described_class.build_phase_handlers(instances)
+      result = handlers[:sensory_processing].call(state: {}, signals: [], prior_results: {})
+      expect(result).to eq({ filtered: true })
+    end
+
+    it 'returns array of results when multiple handlers match for a phase' do
+      mod_a = Module.new do
+        def detect_gaps(**)
+          { gaps: [] }
+        end
+      end
+      mod_b = Module.new do
+        def gaia_summary(**)
+          { health_score: 1.0 }
+        end
+      end
+      host_a = Legion::Gaia::RunnerHost.new(mod_a)
+      host_b = Legion::Gaia::RunnerHost.new(mod_b)
+      instances = { Curiosity_Curiosity: host_a, Synapse_GaiaReport: host_b }
+
+      handlers = described_class.build_phase_handlers(instances)
+      expect(handlers).to have_key(:working_memory_integration)
+      result = handlers[:working_memory_integration].call(state: {}, signals: [], prior_results: {})
+      expect(result).to be_an(Array)
+      expect(result.size).to eq(2)
+    end
+
+    it 'wires a phase when only the synapse handler is present' do
+      test_module = Module.new do
+        def gaia_summary(**)
+          { health_score: 0.9 }
+        end
+      end
+      host = Legion::Gaia::RunnerHost.new(test_module)
+      instances = { Synapse_GaiaReport: host }
+
+      handlers = described_class.build_phase_handlers(instances)
+      expect(handlers).to have_key(:working_memory_integration)
     end
   end
 

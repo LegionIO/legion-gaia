@@ -69,18 +69,20 @@ module Legion
         end
 
         # Wire all phase map entries
-        PhaseWiring::PHASE_MAP.each_value do |mapping|
-          next if mapping.nil?
+        PhaseWiring::PHASE_MAP.each_value do |value|
+          next if value.nil?
 
-          key = :"#{mapping[:ext]}_#{mapping[:runner]}"
-          next if instances.key?(key)
+          PhaseWiring.mappings_for(value).each do |mapping|
+            key = :"#{mapping[:ext]}_#{mapping[:runner]}"
+            next if instances.key?(key)
 
-          runner_class = PhaseWiring.resolve_runner_class(mapping[:ext], mapping[:runner])
-          if runner_class
-            instances[key] = RunnerHost.new(runner_class)
-            log_debug "[gaia:registry] wired: #{mapping[:ext]}::#{mapping[:runner]}"
-          else
-            log_debug "[gaia:registry] skipped: #{mapping[:ext]}::#{mapping[:runner]} (not loaded)"
+            runner_class = PhaseWiring.resolve_runner_class(mapping[:ext], mapping[:runner])
+            if runner_class
+              instances[key] = RunnerHost.new(runner_class)
+              log_debug "[gaia:registry] wired: #{mapping[:ext]}::#{mapping[:runner]}"
+            else
+              log_debug "[gaia:registry] skipped: #{mapping[:ext]}::#{mapping[:runner]} (not loaded)"
+            end
           end
         end
 
