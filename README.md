@@ -2,7 +2,7 @@
 
 Cognitive coordination layer for the LegionIO framework. GAIA is the mind that inhabits the Legion body.
 
-**Version**: 0.9.1
+**Version**: 0.9.2
 
 GAIA sits on top of LegionIO's infrastructure and coordinates all agentic subordinate functions. It drives the tick cycle, manages extension discovery and wiring, and provides the channel abstraction for multi-interface communication.
 
