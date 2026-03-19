@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.9.2] - 2026-03-18
+
+### Changed
+- Replace 242 individual lex-* agentic extension dependencies with 15 consolidated deps
+- Add `lex-tick` (tick orchestrator — GAIA is inoperable without it)
+- Add `lex-privatecore` (privacy enforcement for the cognitive stack)
+- Add 13 `lex-agentic-*` consolidated domain gems (affect, attention, defense, executive, homeostasis, imagination, inference, integration, language, learning, memory, self, social)
+- Runtime-discovered extensions (lex-apollo, lex-coldstart, lex-mesh, lex-mind-growth) remain optional
+
 ## [0.9.1] - 2026-03-18
 
 ### Fixed
