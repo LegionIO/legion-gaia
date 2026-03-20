@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.9.3] - 2026-03-20
+
+### Changed
+- Extract logging and teams auth methods into `Legion::Gaia::Logging` and `Legion::Gaia::TeamsAuth` modules to fix rubocop ModuleLength/ClassLength offenses
+
 ## [0.9.2] - 2026-03-18
 
 ### Changed
