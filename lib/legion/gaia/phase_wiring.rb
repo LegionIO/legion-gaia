@@ -21,7 +21,8 @@ module Legion
         memory_consolidation: { ext: :Memory, runner: :Consolidation, fn: :decay_cycle },
         post_tick_reflection: [
           { ext: :Reflection, runner: :Reflection,  fn: :reflect },
-          { ext: :Synapse,    runner: :GaiaReport,  fn: :gaia_reflection }
+          { ext: :Synapse,    runner: :GaiaReport,  fn: :gaia_reflection },
+          { ext: :Detect,     runner: :TaskObserver, fn: :observe }
         ],
 
         # Dream cycle phases
@@ -65,7 +66,9 @@ module Legion
         action_selection: ->(ctx) { { tick_results: ctx[:prior_results] || {}, cognitive_state: {} } },
         working_memory_integration: ->(ctx) { { prior_results: ctx[:prior_results] || {} } },
         memory_consolidation: ->(_ctx) { {} },
-        post_tick_reflection: ->(ctx) { { tick_results: ctx[:prior_results] || {} } },
+        post_tick_reflection: lambda { |ctx|
+          { tick_results: ctx[:prior_results] || {}, since: ctx.dig(:state, :last_observer_tick) }
+        },
         memory_audit: ->(_ctx) { { limit: 20 } },
         association_walk: lambda { |ctx|
           audit = ctx.dig(:prior_results, :memory_audit)

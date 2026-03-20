@@ -2,6 +2,10 @@
 
 ## [0.9.3] - 2026-03-20
 
+### Added
+- Register `Detect::TaskObserver#observe` in `post_tick_reflection` phase for incremental task anomaly detection on every tick cycle
+- `post_tick_reflection` PHASE_ARGS now includes `since: ctx.dig(:state, :last_observer_tick)` for incremental DB observation scans
+
 ### Changed
 - Extract logging and teams auth methods into `Legion::Gaia::Logging` and `Legion::Gaia::TeamsAuth` modules to fix rubocop ModuleLength/ClassLength offenses
 
