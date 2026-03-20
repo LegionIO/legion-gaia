@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.9.5] - 2026-03-20
+
+### Fixed
+- Use `::Data.define` instead of `Data.define` in `InputFrame` and `OutputFrame` to avoid constant resolution collision with `Legion::Data` within the `Legion` namespace
+
 ## [0.9.4] - 2026-03-20
 
 ### Changed

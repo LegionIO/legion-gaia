@@ -4,7 +4,7 @@ require 'securerandom'
 
 module Legion
   module Gaia
-    InputFrame = Data.define(
+    InputFrame = ::Data.define(
       :id,
       :content,
       :content_type,

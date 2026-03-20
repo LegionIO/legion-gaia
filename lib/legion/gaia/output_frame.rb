@@ -4,7 +4,7 @@ require 'securerandom'
 
 module Legion
   module Gaia
-    OutputFrame = Data.define(
+    OutputFrame = ::Data.define(
       :id,
       :in_reply_to,
       :content,
