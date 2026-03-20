@@ -44,6 +44,8 @@ SensoryBuffer -----> Heartbeat (1s) --> Cognitive Pipeline
 gem 'legion-gaia'
 ```
 
+`legion-gaia` brings in its full cognitive dependency tree: `lex-tick` (tick orchestrator), `lex-privatecore` (privacy enforcement), and 13 `lex-agentic-*` consolidated domain gems (affect, attention, defense, executive, homeostasis, imagination, inference, integration, language, learning, memory, self, social). These replace the previous approach of individually declaring 242 cognitive extensions.
+
 ## Usage
 
 GAIA boots automatically when detected by LegionIO. Manual usage:
@@ -160,8 +162,8 @@ gaia:
 
 ```bash
 bundle install
-bundle exec rspec    # 319 specs
-bundle exec rubocop  # 0 offenses
+bundle exec rspec
+bundle exec rubocop
 ```
 
 ## License

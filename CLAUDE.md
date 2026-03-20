@@ -59,7 +59,7 @@ lib/legion/gaia/offline_handler.rb                          # Offline agent hand
 - `Registry#discover` walks `PHASE_MAP`, resolves runner classes via `Legion::Extensions`, wraps in `RunnerHost`
 - `Legion::Gaia.heartbeat` drains buffer, calls `tick_host.execute_tick(signals:, phase_handlers:)`
 - Heartbeat actor calls `heartbeat` every 1s (configurable via settings)
-- Graceful degradation: if lex-tick not loaded, heartbeat returns `{ error: :no_tick_extension }` and retries next tick
+- Graceful degradation: if lex-tick runner is not discoverable at runtime, heartbeat returns `{ error: :no_tick_extension }` and retries next tick (lex-tick is a gemspec dependency but runner wiring is dynamic)
 
 ### Phase 2: Channel Abstraction
 - `InputFrame` and `OutputFrame` are immutable `Data.define` value objects — the universal message format
@@ -143,13 +143,34 @@ Cognitive Output -> OutputFrame -> OutputRouter -> ChannelAwareRenderer -> Chann
 
 ## Dependencies
 
-- `base64` (required, Ruby 3.4+ removed from default gems)
-- `legion-logging` (optional, guarded by `const_defined?`)
-- `legion-json` (optional)
-- `legion-transport` (optional, for router mode — not a gem dependency)
-- `lex-tick` (runtime, for tick orchestration — not a gem dependency)
-- `lex-microsoft_teams` (runtime, for Teams delivery — not a gem dependency)
-- All agentic LEXs are optional runtime dependencies discovered via `Legion::Extensions`
+### Declared gem dependencies
+
+| Gem | Purpose |
+|-----|---------|
+| `base64` | Required (Ruby 3.4+ removed from default gems) |
+| `legion-json` | JSON serialization |
+| `legion-logging` | Logging (guarded by `const_defined?`) |
+| `lex-tick` | Tick orchestrator — GAIA is inoperable without this |
+| `lex-privatecore` | Privacy enforcement — safety layer for the cognitive stack |
+| `lex-agentic-affect` | Affective processing domain |
+| `lex-agentic-attention` | Attention management domain |
+| `lex-agentic-defense` | Defense and threat response domain |
+| `lex-agentic-executive` | Executive function and goal management |
+| `lex-agentic-homeostasis` | Internal state regulation |
+| `lex-agentic-imagination` | Creative and hypothetical reasoning |
+| `lex-agentic-inference` | Probabilistic inference domain |
+| `lex-agentic-integration` | Sensory integration domain |
+| `lex-agentic-language` | Language processing domain |
+| `lex-agentic-learning` | Learning and adaptation domain |
+| `lex-agentic-memory` | Memory management domain |
+| `lex-agentic-self` | Self-model and identity domain |
+| `lex-agentic-social` | Social cognition domain |
+
+### Optional at runtime (not declared in gemspec)
+
+- `legion-transport` — required for router mode (hub-and-spoke), conditional require
+- `lex-microsoft_teams` — required for Teams delivery, guarded
+- Other agentic LEXs are discovered via `Legion::Extensions`
 
 ## Future
 
