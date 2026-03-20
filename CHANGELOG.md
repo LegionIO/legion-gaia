@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.9.4] - 2026-03-20
+
+### Changed
+- Version bump for deployment (0.9.3 was released before observer and module extraction changes landed)
+
 ## [0.9.3] - 2026-03-20
 
 ### Added
