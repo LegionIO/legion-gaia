@@ -2,6 +2,8 @@
 
 require 'legion/gaia/version'
 require 'legion/gaia/settings'
+require 'legion/gaia/logging'
+require 'legion/gaia/teams_auth'
 require 'legion/gaia/runner_host'
 require 'legion/gaia/sensory_buffer'
 require 'legion/gaia/phase_wiring'
@@ -25,6 +27,9 @@ require 'legion/gaia/router'
 module Legion
   module Gaia
     class << self
+      include Legion::Gaia::Logging
+      include Legion::Gaia::TeamsAuth
+
       attr_reader :sensory_buffer, :registry, :channel_registry, :output_router, :session_store,
                   :router_bridge, :agent_bridge
 
@@ -250,52 +255,6 @@ module Legion
           wired_phases: @registry.wired_count,
           phase_list: @registry.phase_list
         }
-      end
-
-      def check_teams_auth
-        return unless teams_channel_enabled?
-        return if teams_authenticated?
-        return if teams_nudge_sent?
-
-        Proactive.send_message(
-          content: 'Teams is configured but not connected. Run `legion auth teams` when you\'re ready.',
-          channel_id: :cli,
-          content_type: :text
-        )
-        @teams_nudge_sent = true
-      rescue StandardError
-        nil
-      end
-
-      def teams_nudge_sent?
-        @teams_nudge_sent == true
-      end
-
-      def teams_channel_enabled?
-        s = settings
-        return false unless s
-
-        s.dig(:channels, :teams, :enabled) == true
-      end
-
-      def teams_authenticated?
-        return false unless defined?(Legion::Extensions::MicrosoftTeams::Helpers::TokenCache)
-
-        Legion::Extensions::MicrosoftTeams::Helpers::TokenCache.new.authenticated?
-      rescue StandardError
-        false
-      end
-
-      def log_debug(msg)
-        Legion::Logging.debug(msg) if Legion.const_defined?('Logging')
-      end
-
-      def log_info(msg)
-        Legion::Logging.info(msg) if Legion.const_defined?('Logging')
-      end
-
-      def log_warn(msg)
-        Legion::Logging.warn(msg) if Legion.const_defined?('Logging')
       end
     end
   end
