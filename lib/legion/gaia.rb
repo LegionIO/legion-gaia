@@ -42,6 +42,8 @@ module Legion
         settings_hash = settings
         settings_hash[:connected] = true if settings_hash
 
+        check_teams_auth
+
         log_info "Legion::Gaia booted (#{@mode}): #{boot_summary}"
       end
 
@@ -248,6 +250,40 @@ module Legion
           wired_phases: @registry.wired_count,
           phase_list: @registry.phase_list
         }
+      end
+
+      def check_teams_auth
+        return unless teams_channel_enabled?
+        return if teams_authenticated?
+        return if teams_nudge_sent?
+
+        Proactive.send_message(
+          content: 'Teams is configured but not connected. Run `legion auth teams` when you\'re ready.',
+          channel_id: :cli,
+          content_type: :text
+        )
+        @teams_nudge_sent = true
+      rescue StandardError
+        nil
+      end
+
+      def teams_nudge_sent?
+        @teams_nudge_sent == true
+      end
+
+      def teams_channel_enabled?
+        s = settings
+        return false unless s
+
+        s.dig(:channels, :teams, :enabled) == true
+      end
+
+      def teams_authenticated?
+        return false unless defined?(Legion::Extensions::MicrosoftTeams::Helpers::TokenCache)
+
+        Legion::Extensions::MicrosoftTeams::Helpers::TokenCache.new.authenticated?
+      rescue StandardError
+        false
       end
 
       def log_debug(msg)
