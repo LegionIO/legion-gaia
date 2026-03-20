@@ -13,8 +13,15 @@ module Legion
             end
           end
 
+          UserProfile = Data.define(:user_id, :service_url, :tenant_id, :updated_at) do
+            def initialize(user_id:, service_url:, tenant_id: nil, updated_at: Time.now.utc)
+              super
+            end
+          end
+
           def initialize
             @references = {}
+            @user_profiles = {}
             @mutex = Mutex.new
           end
 
@@ -30,19 +37,40 @@ module Legion
             end
           end
 
+          def store_user_profile(user_id:, service_url:, tenant_id: nil)
+            return unless user_id && service_url
+
+            @mutex.synchronize do
+              @user_profiles[user_id] = UserProfile.new(
+                user_id: user_id,
+                service_url: service_url,
+                tenant_id: tenant_id
+              )
+            end
+          end
+
           def store_from_activity(activity)
-            conversation = activity['conversation'] || activity[:conversation] || {}
-            store(
-              conversation_id: conversation['id'] || conversation[:id],
-              service_url: activity['serviceUrl'] || activity[:serviceUrl],
-              tenant_id: conversation['tenantId'] || conversation[:tenantId],
-              bot_id: (activity['recipient'] || activity[:recipient] || {})['id'],
-              activity_id: activity['id'] || activity[:id]
+            parsed = parse_activity(activity)
+            store(**parsed.slice(:conversation_id, :service_url, :tenant_id, :bot_id, :activity_id))
+            store_user_profile(
+              user_id: parsed[:user_id],
+              service_url: parsed[:service_url],
+              tenant_id: parsed[:tenant_id]
             )
           end
 
           def lookup(conversation_id)
             @mutex.synchronize { @references[conversation_id] }
+          end
+
+          def lookup_user_profile(user_id)
+            @mutex.synchronize { @user_profiles[user_id] }
+          end
+
+          def conversations_for_user(user_id)
+            @mutex.synchronize do
+              @references.values.select { |ref| ref.tenant_id && user_related?(ref, user_id) }
+            end
           end
 
           def remove(conversation_id)
@@ -58,7 +86,37 @@ module Legion
           end
 
           def clear
-            @mutex.synchronize { @references.clear }
+            @mutex.synchronize do
+              @references.clear
+              @user_profiles.clear
+            end
+          end
+
+          private
+
+          def user_related?(ref, user_id)
+            profile = @user_profiles[user_id]
+            return false unless profile
+
+            profile.tenant_id == ref.tenant_id
+          end
+
+          def parse_activity(activity)
+            conversation = fetch(activity, 'conversation') || {}
+            recipient = fetch(activity, 'recipient') || {}
+            from = fetch(activity, 'from') || {}
+            {
+              conversation_id: fetch(conversation, 'id'),
+              service_url: fetch(activity, 'serviceUrl'),
+              tenant_id: fetch(conversation, 'tenantId'),
+              bot_id: recipient['id'],
+              activity_id: fetch(activity, 'id'),
+              user_id: from['id']
+            }
+          end
+
+          def fetch(hash, string_key)
+            hash[string_key] || hash[string_key.to_sym]
           end
         end
       end

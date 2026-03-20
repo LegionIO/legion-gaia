@@ -141,4 +141,59 @@ RSpec.describe Legion::Gaia::Channels::TeamsAdapter do
       expect(result[:error]).to eq(:no_app_id)
     end
   end
+
+  describe '#create_proactive_conversation' do
+    it 'returns error when no user profile (no service_url)' do
+      result = adapter.create_proactive_conversation(user_id: 'unknown-user')
+      expect(result[:error]).to eq(:no_service_url)
+    end
+
+    it 'returns error when bot runner not available' do
+      adapter.translate_inbound(base_activity)
+      result = adapter.create_proactive_conversation(user_id: 'user-1')
+      expect(result[:error]).to eq(:bot_runner_not_available)
+    end
+
+    it 'uses provided tenant_id when no profile tenant exists' do
+      # store profile without tenant
+      adapter.conversation_store.store_user_profile(
+        user_id: 'u-no-tenant',
+        service_url: 'https://smba.trafficmanager.net/teams/'
+      )
+      result = adapter.create_proactive_conversation(user_id: 'u-no-tenant', tenant_id: 'tid-override')
+      # bot runner not available in test context
+      expect(result[:error]).to eq(:bot_runner_not_available)
+    end
+  end
+
+  describe '#deliver_proactive' do
+    it 'returns error when no target_user in frame metadata' do
+      frame = Legion::Gaia::OutputFrame.new(content: 'hi', channel_id: :teams)
+      result = adapter.deliver_proactive(frame)
+      expect(result[:error]).to eq(:no_target_user)
+    end
+
+    it 'returns error when no service_url for user' do
+      frame = Legion::Gaia::OutputFrame.new(
+        content: 'hi',
+        channel_id: :teams,
+        metadata: { proactive: true, target_user: 'unknown-user' }
+      )
+      result = adapter.deliver_proactive(frame)
+      expect(result[:error]).to eq(:no_service_url)
+    end
+
+    it 'resolves from existing conversation when user has prior conversation' do
+      adapter.translate_inbound(base_activity)
+      frame = Legion::Gaia::OutputFrame.new(
+        content: 'hi',
+        channel_id: :teams,
+        metadata: { proactive: true, target_user: 'user-1' }
+      )
+      # Bot runner not available — falls through to conversation lookup then delivery error
+      result = adapter.deliver_proactive(frame)
+      # conv-1 exists for tid-1, user-1 profile has tenant tid-1 so conv found
+      expect(result[:error]).to eq(:bot_runner_not_available)
+    end
+  end
 end

@@ -50,6 +50,33 @@ module Legion
           deliver_via_webhook(rendered_content, target_webhook)
         end
 
+        def deliver_proactive(output_frame)
+          user_id = output_frame.metadata[:target_user]
+          return { error: :no_target_user } unless user_id
+
+          dm_result = open_dm(user_id: user_id)
+          return dm_result if dm_result.is_a?(Hash) && dm_result[:error]
+
+          channel = dm_result[:channel_id]
+          rendered = translate_outbound(output_frame).merge(channel: channel)
+          deliver_via_api_to_channel(rendered)
+        end
+
+        def open_dm(user_id:)
+          return { error: :no_bot_token } unless @bot_token
+          return { error: :slack_runner_not_available } unless slack_runner_available?
+
+          result = Legion::Extensions::Slack::Runners::Chat.open_dm(
+            user_id: user_id,
+            token: @bot_token
+          )
+          return result if result.is_a?(Hash) && result[:error]
+
+          { channel_id: result[:channel_id] || result['channel']&.dig('id') || result['channel'] }
+        rescue StandardError => e
+          { error: :open_dm_failed, message: e.message }
+        end
+
         def verify_request(signing_secret: nil, timestamp: nil, body: nil, signature: nil)
           secret = signing_secret || @signing_secret
           return { valid: false, error: :no_signing_secret } unless secret
@@ -91,6 +118,21 @@ module Legion
 
         def deliver_via_api(_content)
           { error: :not_implemented, message: 'Bot token API delivery not yet implemented' }
+        end
+
+        def deliver_via_api_to_channel(content)
+          unless slack_runner_available?
+            return { error: :slack_runner_not_available,
+                     message: 'lex-slack Chat runner not loaded' }
+          end
+
+          message = content.is_a?(Hash) ? content[:text] : content.to_s
+          channel = content.is_a?(Hash) ? content[:channel] : nil
+          Legion::Extensions::Slack::Runners::Chat.send(
+            message: message,
+            channel: channel,
+            token: @bot_token
+          )
         end
 
         def slack_runner_available?

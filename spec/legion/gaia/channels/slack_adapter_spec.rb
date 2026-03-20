@@ -114,4 +114,75 @@ RSpec.describe Legion::Gaia::Channels::SlackAdapter do
       expect(result[:error]).to eq(:signature_mismatch)
     end
   end
+
+  describe '#open_dm' do
+    it 'returns error when no bot_token configured' do
+      result = adapter.open_dm(user_id: 'U12345')
+      expect(result[:error]).to eq(:no_bot_token)
+    end
+
+    it 'returns error when slack runner not available' do
+      adapter_with_token = described_class.new(bot_token: 'xoxb-test')
+      result = adapter_with_token.open_dm(user_id: 'U12345')
+      expect(result[:error]).to eq(:slack_runner_not_available)
+    end
+
+    context 'with bot_token and runner available' do
+      subject(:adapter_with_token) { described_class.new(bot_token: 'xoxb-test') }
+
+      before do
+        chat_stub = double('Chat')
+        stub_const('Legion::Extensions::Slack::Runners::Chat', chat_stub)
+        allow(chat_stub).to receive(:open_dm).with(user_id: 'U12345', token: 'xoxb-test')
+                                             .and_return({ channel_id: 'D12345' })
+      end
+
+      it 'returns channel_id on success' do
+        result = adapter_with_token.open_dm(user_id: 'U12345')
+        expect(result[:channel_id]).to eq('D12345')
+      end
+    end
+  end
+
+  describe '#deliver_proactive' do
+    it 'returns error when no target_user in frame metadata' do
+      frame = Legion::Gaia::OutputFrame.new(content: 'hi', channel_id: :slack)
+      result = adapter.deliver_proactive(frame)
+      expect(result[:error]).to eq(:no_target_user)
+    end
+
+    it 'returns error when no bot_token (open_dm fails)' do
+      frame = Legion::Gaia::OutputFrame.new(
+        content: 'hi',
+        channel_id: :slack,
+        metadata: { proactive: true, target_user: 'U12345' }
+      )
+      result = adapter.deliver_proactive(frame)
+      expect(result[:error]).to eq(:no_bot_token)
+    end
+
+    context 'with bot_token and runner available' do
+      subject(:adapter_with_token) do
+        described_class.new(bot_token: 'xoxb-test', signing_secret: 'test-secret')
+      end
+
+      before do
+        chat_stub = double('Chat')
+        stub_const('Legion::Extensions::Slack::Runners::Chat', chat_stub)
+        allow(chat_stub).to receive(:open_dm).with(user_id: 'U12345', token: 'xoxb-test')
+                                             .and_return({ channel_id: 'D12345' })
+        allow(chat_stub).to receive(:send).and_return({ ok: true })
+      end
+
+      it 'opens DM and delivers message' do
+        frame = Legion::Gaia::OutputFrame.new(
+          content: 'hello user',
+          channel_id: :slack,
+          metadata: { proactive: true, target_user: 'U12345' }
+        )
+        result = adapter_with_token.deliver_proactive(frame)
+        expect(result).to eq({ ok: true })
+      end
+    end
+  end
 end

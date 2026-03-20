@@ -63,6 +63,44 @@ module Legion
           deliver_via_bot(rendered_content, ref)
         end
 
+        def deliver_proactive(output_frame)
+          user_id = output_frame.metadata[:target_user]
+          return { error: :no_target_user } unless user_id
+
+          conversation_id = resolve_proactive_conversation(user_id)
+          return conversation_id if conversation_id.is_a?(Hash) && conversation_id[:error]
+
+          rendered = translate_outbound(output_frame)
+          deliver(rendered, conversation_id: conversation_id)
+        end
+
+        def create_proactive_conversation(user_id:, tenant_id: nil)
+          profile = conversation_store.lookup_user_profile(user_id)
+          service_url = profile&.service_url
+          resolved_tenant = tenant_id || profile&.tenant_id
+          return { error: :no_service_url } unless service_url
+          return { error: :bot_runner_not_available } unless bot_runner_available?
+
+          bot = Legion::Extensions::MicrosoftTeams::Client.new
+          result = bot.create_conversation(
+            service_url: service_url,
+            bot_id: app_id,
+            user_id: user_id,
+            tenant_id: resolved_tenant
+          )
+          return result if result.is_a?(Hash) && result[:error]
+
+          conversation_id = result[:conversation_id] || result['id']
+          conversation_store.store(
+            conversation_id: conversation_id,
+            service_url: service_url,
+            tenant_id: resolved_tenant
+          )
+          conversation_id
+        rescue StandardError => e
+          { error: :create_conversation_failed, message: e.message }
+        end
+
         def validate_inbound(token, allow_emulator: false)
           return { valid: false, error: :no_app_id } unless app_id
 
@@ -146,6 +184,13 @@ module Legion
 
         def bot_runner_available?
           defined?(Legion::Extensions::MicrosoftTeams::Client)
+        end
+
+        def resolve_proactive_conversation(user_id)
+          existing = conversation_store.conversations_for_user(user_id)
+          return existing.first.conversation_id unless existing.empty?
+
+          create_proactive_conversation(user_id: user_id)
         end
       end
     end

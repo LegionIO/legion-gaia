@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.9.6] - 2026-03-19
+
+### Added
+- `Legion::Gaia::Proactive.send_to_user` — delivers a proactive message to a user across one channel or all known channels, using `deliver_proactive` when the adapter supports it
+- `Legion::Gaia::Proactive.send_notification` — routes a notification through the OutputRouter (respects NotificationGate quiet hours, presence, and behavioral scoring); supports :ambient/:normal/:urgent/:critical priority
+- `Legion::Gaia::Proactive.start_conversation` — initiates an agent-started conversation with a user who has not messaged first; delegates to `deliver_proactive` on adapters that support it
+- `TeamsAdapter#deliver_proactive` — resolves an existing conversation reference by user (via tenant match) or creates a new one via Bot Framework `POST /v3/conversations`; delivers the OutputFrame proactively
+- `TeamsAdapter#create_proactive_conversation` — creates a new Bot Framework conversation and stores the resulting reference in ConversationStore
+- `ConversationStore::UserProfile` — new `Data.define` value object storing `user_id`, `service_url`, `tenant_id` at the user level
+- `ConversationStore#store_user_profile` / `#lookup_user_profile` — store and retrieve user-level service URL and tenant from any prior activity
+- `ConversationStore#conversations_for_user` — returns all conversation references whose tenant matches the user's stored profile (enables cross-conversation proactive targeting)
+- `ConversationStore#store_from_activity` now also populates the user profile from the `from.id` field
+- `SlackAdapter#open_dm` — opens a Slack DM channel via `conversations.open` API (requires `im:write` scope and `bot_token`)
+- `SlackAdapter#deliver_proactive` — opens a DM for the target user then delivers the OutputFrame via bot token API
+- 22 new specs (366 total) covering all new proactive methods across Proactive module, TeamsAdapter, SlackAdapter, and ConversationStore
+
 ## [0.9.5] - 2026-03-20
 
 ### Fixed
