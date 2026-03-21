@@ -88,15 +88,37 @@ module Legion
       module_function
 
       def resolve_runner_class(ext_sym, runner_sym)
-        return nil unless Legion::Extensions.const_defined?(ext_sym)
+        ext_mod = locate_ext_mod(ext_sym)
+        return nil unless ext_mod
 
-        ext_mod = Legion::Extensions.const_get(ext_sym)
-        return nil unless ext_mod.const_defined?(:Runners)
+        flat_runner(ext_mod, runner_sym) || subdomain_runner(ext_mod, runner_sym)
+      end
 
-        runners_mod = ext_mod.const_get(:Runners)
-        return nil unless runners_mod.const_defined?(runner_sym)
+      def locate_ext_mod(ext_sym)
+        if Legion::Extensions.const_defined?(ext_sym, false)
+          Legion::Extensions.const_get(ext_sym, false)
+        elsif Legion::Extensions.const_defined?(:Agentic, false) &&
+              Legion::Extensions::Agentic.const_defined?(ext_sym, false)
+          Legion::Extensions::Agentic.const_get(ext_sym, false)
+        end
+      end
 
-        runners_mod.const_get(runner_sym)
+      def flat_runner(ext_mod, runner_sym)
+        return nil unless ext_mod.const_defined?(:Runners, false)
+
+        runners_mod = ext_mod.const_get(:Runners, false)
+        runners_mod.const_get(runner_sym, false) if runners_mod.const_defined?(runner_sym, false)
+      end
+
+      def subdomain_runner(ext_mod, runner_sym)
+        ext_mod.constants(false).each do |sub_const|
+          sub_mod = ext_mod.const_get(sub_const, false)
+          next unless sub_mod.is_a?(Module) && sub_mod.const_defined?(:Runners, false)
+
+          runners_mod = sub_mod.const_get(:Runners, false)
+          return runners_mod.const_get(runner_sym, false) if runners_mod.const_defined?(runner_sym, false)
+        end
+        nil
       end
 
       def mappings_for(value)

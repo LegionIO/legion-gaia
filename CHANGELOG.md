@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.8] - 2026-03-21
+
+### Fixed
+- `PhaseWiring#resolve_runner_class` now searches `Legion::Extensions::Agentic::` sub-namespace when the extension constant is not found directly under `Legion::Extensions`
+- Added sub-domain runner lookup (one level deep) so agentic extensions that nest runners under `Extension::SubDomain::Runners::Runner` are resolved correctly
+- All `const_defined?` and `const_get` calls now pass `inherit: false` to prevent incorrect constant resolution through `Object`
+
 ## [0.9.7] - 2026-03-20
 
 ### Fixed
