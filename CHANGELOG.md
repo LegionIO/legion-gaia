@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.9.7] - 2026-03-20
+
+### Fixed
+- Use `::Data.define` instead of `Data.define` in `SessionStore`, `ConversationStore::Reference`, and `ConversationStore::UserProfile` to avoid constant resolution collision with `Legion::Data`
+
 ## [0.9.6] - 2026-03-19
 
 ### Added

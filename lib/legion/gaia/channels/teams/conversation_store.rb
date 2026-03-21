@@ -5,15 +5,15 @@ module Legion
     module Channels
       module Teams
         class ConversationStore
-          Reference = Data.define(:conversation_id, :service_url, :tenant_id, :bot_id,
-                                  :last_activity_id, :updated_at) do
+          Reference = ::Data.define(:conversation_id, :service_url, :tenant_id, :bot_id,
+                                    :last_activity_id, :updated_at) do
             def initialize(conversation_id:, service_url:, tenant_id: nil, bot_id: nil,
                            last_activity_id: nil, updated_at: Time.now.utc)
               super
             end
           end
 
-          UserProfile = Data.define(:user_id, :service_url, :tenant_id, :updated_at) do
+          UserProfile = ::Data.define(:user_id, :service_url, :tenant_id, :updated_at) do
             def initialize(user_id:, service_url:, tenant_id: nil, updated_at: Time.now.utc)
               super
             end

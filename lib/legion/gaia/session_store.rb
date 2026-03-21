@@ -5,7 +5,7 @@ require 'securerandom'
 module Legion
   module Gaia
     class SessionStore
-      Session = Data.define(:id, :identity, :channel_history, :created_at, :last_active_at) do
+      Session = ::Data.define(:id, :identity, :channel_history, :created_at, :last_active_at) do
         def initialize(identity:, id: SecureRandom.uuid, channel_history: [],
                        created_at: Time.now.utc, last_active_at: Time.now.utc)
           super
