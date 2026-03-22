@@ -1,1 +1,39 @@
+# Default owner — all files
 * @Esity
+
+# Core library code
+# lib/ @Esity @future-ai-team
+
+# Tick cycle phases
+# lib/legion/gaia/phases/ @Esity
+
+# Channel abstraction
+# lib/legion/gaia/channels/ @Esity
+
+# Actors (heartbeat tick driver)
+# lib/legion/gaia/actors/ @Esity @future-ai-team
+
+# Router (hub-and-spoke, transport)
+# lib/legion/gaia/router/ @Esity @future-infra-team
+
+# Notification gate (schedule, presence, behavioral evaluators)
+# lib/legion/gaia/notification_gate/ @Esity @future-ai-team
+# lib/legion/gaia/notification_gate.rb @Esity @future-ai-team
+
+# Session and registry
+# lib/legion/gaia/registry.rb @Esity @future-ai-team
+# lib/legion/gaia/session_store.rb @Esity @future-ai-team
+
+# Sensory buffer and frame types
+# lib/legion/gaia/sensory_buffer.rb @Esity @future-ai-team
+# lib/legion/gaia/input_frame.rb @Esity @future-ai-team
+# lib/legion/gaia/output_frame.rb @Esity @future-ai-team
+
+# Specs
+# spec/ @Esity @future-contributors
+
+# Documentation
+# *.md @Esity @future-docs-team
+
+# CI/CD
+# .github/ @Esity
