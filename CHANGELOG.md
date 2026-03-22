@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.9.9] - 2026-03-22
+
+### Changed
+- Added `Legion::Logging` calls to all silent rescue blocks (16 total) so no exception is swallowed without a trace
+- `channels/slack_adapter.rb`: `.warn` on open_dm failure
+- `channels/teams/bot_framework_auth.rb`: `.debug` on JWT segment decode failure (expected for malformed tokens)
+- `channels/teams/webhook_handler.rb`: `.debug` on activity parse failure
+- `channels/teams_adapter.rb`: `.warn` on create_proactive_conversation failure
+- `offline_handler.rb`: `.warn` on notify_sender failure, `.debug` on offline_threshold settings failure
+- `proactive.rb`: `.warn` on send_message, send_to_user, send_notification, and start_conversation failures
+- `router/agent_bridge.rb`: `.warn` on reconstruct_input_frame and decode_payload failures
+- `router/router_bridge.rb`: `.warn` on reconstruct_output_frame failure
+- `teams_auth.rb`: `.warn` on check_teams_auth and teams_authenticated? failures
+
 ## [0.9.8] - 2026-03-21
 
 ### Fixed

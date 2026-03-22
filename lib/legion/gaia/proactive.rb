@@ -21,6 +21,9 @@ module Legion
           registry.deliver(output)
           { sent: true, frame_id: output.id, channel: channel_id }
         rescue StandardError => e
+          if defined?(Legion::Logging)
+            Legion::Logging.warn("Proactive.send_message failed channel=#{channel_id}: #{e.message}")
+          end
           { error: e.message }
         end
 
@@ -45,6 +48,9 @@ module Legion
             )
           end
         rescue StandardError => e
+          if defined?(Legion::Logging)
+            Legion::Logging.warn("Proactive.send_to_user failed user=#{user_id}: #{e.message}")
+          end
           { error: e.message }
         end
 
@@ -72,6 +78,7 @@ module Legion
 
           results
         rescue StandardError => e
+          Legion::Logging.warn("Proactive.send_notification failed: #{e.message}") if defined?(Legion::Logging)
           { error: e.message }
         end
 
@@ -97,6 +104,9 @@ module Legion
           end
           { started: true, channel: channel_id, user_id: user_id }
         rescue StandardError => e
+          if defined?(Legion::Logging)
+            Legion::Logging.warn("Proactive.start_conversation failed ch=#{channel_id} user=#{user_id}: #{e.message}")
+          end
           { error: e.message }
         end
 

@@ -16,7 +16,8 @@ module Legion
           content_type: :text
         )
         @teams_nudge_sent = true
-      rescue StandardError
+      rescue StandardError => e
+        Legion::Logging.warn("TeamsAuth check_teams_auth failed: #{e.message}") if defined?(Legion::Logging)
         nil
       end
 
@@ -35,7 +36,8 @@ module Legion
         return false unless defined?(Legion::Extensions::MicrosoftTeams::Helpers::TokenCache)
 
         Legion::Extensions::MicrosoftTeams::Helpers::TokenCache.new.authenticated?
-      rescue StandardError
+      rescue StandardError => e
+        Legion::Logging.warn("TeamsAuth teams_authenticated? failed: #{e.message}") if defined?(Legion::Logging)
         false
       end
     end

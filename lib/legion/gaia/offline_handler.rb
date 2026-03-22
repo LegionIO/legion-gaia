@@ -56,7 +56,8 @@ module Legion
             session_continuity_id: frame.respond_to?(:session_continuity_id) ? frame.session_continuity_id : nil
           )
           registry.deliver(output)
-        rescue StandardError
+        rescue StandardError => e
+          Legion::Logging.warn("OfflineHandler notify_sender failed: #{e.message}") if defined?(Legion::Logging)
           nil
         end
 
@@ -66,7 +67,10 @@ module Legion
           else
             60
           end
-        rescue StandardError
+        rescue StandardError => e
+          if defined?(Legion::Logging)
+            Legion::Logging.debug("OfflineHandler offline_threshold settings unavailable, using default: #{e.message}")
+          end
           60
         end
 

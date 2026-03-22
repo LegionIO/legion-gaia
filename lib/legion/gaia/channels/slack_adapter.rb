@@ -74,6 +74,7 @@ module Legion
 
           { channel_id: result[:channel_id] || result['channel']&.dig('id') || result['channel'] }
         rescue StandardError => e
+          Legion::Logging.warn("SlackAdapter open_dm failed: #{e.message}") if defined?(Legion::Logging)
           { error: :open_dm_failed, message: e.message }
         end
 

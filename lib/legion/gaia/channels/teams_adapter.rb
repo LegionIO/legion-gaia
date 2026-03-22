@@ -98,6 +98,9 @@ module Legion
           )
           conversation_id
         rescue StandardError => e
+          if defined?(Legion::Logging)
+            Legion::Logging.warn("TeamsAdapter create_proactive_conversation failed: #{e.message}")
+          end
           { error: :create_conversation_failed, message: e.message }
         end
 

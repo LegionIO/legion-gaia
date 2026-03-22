@@ -93,7 +93,10 @@ module Legion
             channel_hints: payload[:channel_hints] || {},
             metadata: payload[:metadata] || {}
           )
-        rescue StandardError
+        rescue StandardError => e
+          if defined?(Legion::Logging)
+            Legion::Logging.warn("RouterBridge reconstruct_output_frame failed: #{e.message}")
+          end
           nil
         end
 

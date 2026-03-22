@@ -73,14 +73,16 @@ module Legion
             auth_context: payload[:auth_context] || {},
             metadata: payload[:metadata] || {}
           )
-        rescue StandardError
+        rescue StandardError => e
+          Legion::Logging.warn("AgentBridge reconstruct_input_frame failed: #{e.message}") if defined?(Legion::Logging)
           nil
         end
 
         def decode_payload(raw)
           parsed = Legion::JSON.load(raw)
           parsed.is_a?(Hash) ? parsed : nil
-        rescue StandardError
+        rescue StandardError => e
+          Legion::Logging.warn("AgentBridge decode_payload failed: #{e.message}") if defined?(Legion::Logging)
           nil
         end
 

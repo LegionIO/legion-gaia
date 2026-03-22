@@ -67,7 +67,8 @@ module Legion
             return body if body.is_a?(Hash)
 
             ::JSON.parse(body)
-          rescue StandardError
+          rescue StandardError => e
+            Legion::Logging.debug("WebhookHandler activity parse failed: #{e.message}") if defined?(Legion::Logging)
             nil
           end
 

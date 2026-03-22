@@ -65,7 +65,10 @@ module Legion
             padded = remainder.zero? ? segment : segment + ('=' * (4 - remainder))
             decoded = Base64.urlsafe_decode64(padded)
             ::JSON.parse(decoded)
-          rescue StandardError
+          rescue StandardError => e
+            if defined?(Legion::Logging)
+              Legion::Logging.debug("BotFrameworkAuth JWT segment decode failed: #{e.message}")
+            end
             nil
           end
 
