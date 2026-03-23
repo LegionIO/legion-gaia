@@ -25,8 +25,8 @@ RSpec.describe Legion::Gaia::PhaseWiring do
       end
     end
 
-    it 'has 20 total phases' do
-      expect(described_class::PHASE_MAP.size).to eq(20)
+    it 'has 21 total phases' do
+      expect(described_class::PHASE_MAP.size).to eq(21)
     end
 
     it 'each mapping has ext, runner, and fn keys' do

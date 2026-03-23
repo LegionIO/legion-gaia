@@ -31,6 +31,7 @@ module Legion
         contradiction_resolution: { ext: :Conflict, runner: :Conflict, fn: :active_conflicts },
         agenda_formation: { ext: :Curiosity, runner: :Curiosity, fn: :form_agenda },
         consolidation_commit: { ext: :Memory, runner: :Consolidation, fn: :migrate_tier },
+        knowledge_promotion: { ext: :Apollo, runner: :Knowledge, fn: :handle_ingest },
         dream_reflection: { ext: :Reflection, runner: :Reflection, fn: :reflect },
         dream_narration: { ext: :Narrator, runner: :Narrator, fn: :narrate }
       }.freeze
@@ -79,6 +80,9 @@ module Legion
         contradiction_resolution: ->(_ctx) { {} },
         agenda_formation: ->(_ctx) { {} },
         consolidation_commit: ->(_ctx) { {} },
+        knowledge_promotion: lambda { |_ctx|
+          { content: 'dream_cycle_promotion', content_type: :observation, tags: ['dream_cycle'], source_agent: 'gaia' }
+        },
         dream_reflection: ->(ctx) { { tick_results: ctx[:prior_results] || {} } },
         dream_narration: lambda { |ctx|
           { tick_results: ctx[:prior_results] || {}, cognitive_state: { source: :dream } }

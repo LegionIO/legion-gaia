@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.9.11] - 2026-03-23
+
+### Added
+- `knowledge_promotion` phase wiring: maps to `Apollo::Knowledge.handle_ingest` for dream cycle Apollo integration
+
 ## [0.9.10] - 2026-03-22
 
 ### Changed
