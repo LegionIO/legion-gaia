@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.12] - 2026-03-23
+
+### Changed
+- `knowledge_promotion` PHASE_ARGS now synthesizes actual dream cycle insights from prior phase results instead of sending a static placeholder string to Apollo
+- Extracted `build_promotion_content` with per-phase helpers: `extract_association`, `extract_conflicts`, `extract_consolidation`, `extract_reflection`, `extract_agenda`
+- Returns `{ skip: true }` when no dream phases produced meaningful results
+
 ## [0.9.11] - 2026-03-23
 
 ### Added

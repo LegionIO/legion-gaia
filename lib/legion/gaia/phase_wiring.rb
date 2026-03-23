@@ -80,8 +80,12 @@ module Legion
         contradiction_resolution: ->(_ctx) { {} },
         agenda_formation: ->(_ctx) { {} },
         consolidation_commit: ->(_ctx) { {} },
-        knowledge_promotion: lambda { |_ctx|
-          { content: 'dream_cycle_promotion', content_type: :observation, tags: ['dream_cycle'], source_agent: 'gaia' }
+        knowledge_promotion: lambda { |ctx|
+          content = build_promotion_content(ctx[:prior_results] || {})
+          return { skip: true } if content.nil?
+
+          { content: content, content_type: :observation, tags: %w[dream_cycle promoted],
+            source_agent: 'gaia', source_channel: 'dream_cycle' }
         },
         dream_reflection: ->(ctx) { { tick_results: ctx[:prior_results] || {} } },
         dream_narration: lambda { |ctx|
@@ -175,6 +179,51 @@ module Legion
         end
 
         available
+      end
+
+      def build_promotion_content(prior_results)
+        parts = [
+          extract_association(prior_results[:association_walk]),
+          extract_conflicts(prior_results[:contradiction_resolution]),
+          extract_consolidation(prior_results[:consolidation_commit]),
+          extract_reflection(prior_results[:dream_reflection]),
+          extract_agenda(prior_results[:agenda_formation])
+        ].compact
+
+        return nil if parts.empty?
+
+        "Dream cycle synthesis: #{parts.join('. ')}"
+      end
+
+      def extract_association(assoc)
+        return unless assoc.is_a?(Hash) && assoc[:linked]
+
+        "Association: linked trace #{assoc[:trace_id_a]} to #{assoc[:trace_id_b]}"
+      end
+
+      def extract_conflicts(conflicts)
+        return unless conflicts.is_a?(Hash) && conflicts[:resolved].to_i.positive?
+
+        "Resolved #{conflicts[:resolved]} contradiction(s)"
+      end
+
+      def extract_consolidation(consol)
+        return unless consol.is_a?(Hash) && consol[:migrated].to_i.positive?
+
+        "Consolidated #{consol[:migrated]} memory trace(s) to long-term storage"
+      end
+
+      def extract_reflection(reflection)
+        return unless reflection.is_a?(Hash) && reflection[:insight].is_a?(String) && !reflection[:insight].empty?
+
+        "Insight: #{reflection[:insight][0, 500]}"
+      end
+
+      def extract_agenda(agenda)
+        return unless agenda.is_a?(Hash) && agenda[:agenda].is_a?(Array) && agenda[:agenda].any?
+
+        items = agenda[:agenda].first(3).map { |a| a.is_a?(Hash) ? (a[:question] || a[:topic]) : a.to_s }
+        "Agenda: #{items.compact.join('; ')}" if items.compact.any?
       end
 
       def collect_valences(prior_results)

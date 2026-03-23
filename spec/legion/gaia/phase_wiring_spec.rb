@@ -16,10 +16,10 @@ RSpec.describe Legion::Gaia::PhaseWiring do
       end
     end
 
-    it 'contains all 7 dream cycle phases' do
+    it 'contains all 8 dream cycle phases' do
       dream_phases = %i[memory_audit association_walk contradiction_resolution
-                        agenda_formation consolidation_commit dream_reflection
-                        dream_narration]
+                        agenda_formation consolidation_commit knowledge_promotion
+                        dream_reflection dream_narration]
       dream_phases.each do |phase|
         expect(described_class::PHASE_MAP).to have_key(phase)
       end
@@ -200,6 +200,79 @@ RSpec.describe Legion::Gaia::PhaseWiring do
       valence = { urgency: 0.5, importance: 0.3, novelty: 0.2, familiarity: 0.8 }
       results = { emotional_evaluation: { valence: valence } }
       expect(described_class.collect_valences(results)).to eq([valence])
+    end
+  end
+
+  describe '.build_promotion_content' do
+    it 'returns nil when no dream phases produced results' do
+      expect(described_class.build_promotion_content({})).to be_nil
+    end
+
+    it 'extracts association walk results' do
+      results = { association_walk: { linked: true, trace_id_a: 'a1', trace_id_b: 'b2' } }
+      content = described_class.build_promotion_content(results)
+      expect(content).to include('Association: linked trace a1 to b2')
+    end
+
+    it 'extracts contradiction resolution counts' do
+      results = { contradiction_resolution: { resolved: 3 } }
+      content = described_class.build_promotion_content(results)
+      expect(content).to include('Resolved 3 contradiction(s)')
+    end
+
+    it 'extracts consolidation migration counts' do
+      results = { consolidation_commit: { migrated: 5 } }
+      content = described_class.build_promotion_content(results)
+      expect(content).to include('Consolidated 5 memory trace(s)')
+    end
+
+    it 'extracts dream reflection insights' do
+      results = { dream_reflection: { insight: 'Pattern detected in deployment failures' } }
+      content = described_class.build_promotion_content(results)
+      expect(content).to include('Insight: Pattern detected in deployment failures')
+    end
+
+    it 'extracts agenda formation items' do
+      results = { agenda_formation: { agenda: [{ question: 'Why did deploy fail?' }, { topic: 'scaling' }] } }
+      content = described_class.build_promotion_content(results)
+      expect(content).to include('Agenda: Why did deploy fail?; scaling')
+    end
+
+    it 'combines multiple dream phase results' do
+      results = {
+        association_walk: { linked: true, trace_id_a: 'x', trace_id_b: 'y' },
+        contradiction_resolution: { resolved: 1 },
+        dream_reflection: { insight: 'Systems are correlated' }
+      }
+      content = described_class.build_promotion_content(results)
+      expect(content).to start_with('Dream cycle synthesis:')
+      expect(content).to include('Association:')
+      expect(content).to include('Resolved 1')
+      expect(content).to include('Insight:')
+    end
+
+    it 'skips phases with zero or missing counts' do
+      results = { contradiction_resolution: { resolved: 0 }, consolidation_commit: {} }
+      expect(described_class.build_promotion_content(results)).to be_nil
+    end
+  end
+
+  describe 'PHASE_ARGS knowledge_promotion' do
+    let(:builder) { described_class::PHASE_ARGS[:knowledge_promotion] }
+
+    it 'returns skip when no dream insights exist' do
+      ctx = { prior_results: {} }
+      result = builder.call(ctx)
+      expect(result).to eq({ skip: true })
+    end
+
+    it 'builds content from prior dream results' do
+      ctx = { prior_results: { dream_reflection: { insight: 'test insight' } } }
+      result = builder.call(ctx)
+      expect(result[:content]).to include('test insight')
+      expect(result[:content_type]).to eq(:observation)
+      expect(result[:tags]).to include('dream_cycle')
+      expect(result[:source_agent]).to eq('gaia')
     end
   end
 end
