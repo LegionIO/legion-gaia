@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.9.17] - 2026-03-23
+
+### Fixed
+- Pass `false` inherit parameter to `Legion.const_defined?` in `settings` method to prevent incorrect constant resolution through `Object`
+
 ## [0.9.16] - 2026-03-23
 
 ### Changed
