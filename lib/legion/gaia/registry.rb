@@ -1,11 +1,19 @@
 # frozen_string_literal: true
 
+require 'singleton'
+
 module Legion
   module Gaia
     class Registry
+      include Singleton
+
       attr_reader :runner_instances, :phase_handlers, :discovery
 
       def initialize
+        reset!
+      end
+
+      def reset!
         @runner_instances = {}
         @phase_handlers = {}
         @discovery = {}

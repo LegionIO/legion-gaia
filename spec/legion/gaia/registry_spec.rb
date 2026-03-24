@@ -10,7 +10,7 @@ RSpec.describe Legion::Gaia::Registry do
     end)
   end
 
-  subject(:registry) { described_class.new }
+  subject(:registry) { described_class.instance.tap(&:reset!) }
 
   describe '#initialize' do
     it 'starts with empty state' do

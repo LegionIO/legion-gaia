@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.9.14] - 2026-03-23
+
+### Fixed
+- Convert Registry to singleton pattern to satisfy constant safety lint
+
+## [0.9.13] - 2026-03-23
+
+### Added
+- GAIA advisory layer for pre-flight LLM request enrichment
+- Audit observer for learning from LLM interaction patterns
+
 ## [0.9.12] - 2026-03-23
 
 ### Changed

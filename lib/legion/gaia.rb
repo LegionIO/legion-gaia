@@ -160,7 +160,8 @@ module Legion
 
       def boot_agent
         @sensory_buffer = SensoryBuffer.new
-        @registry = Registry.new
+        @registry = Registry.instance
+        @registry.reset!
         @registry.discover
         boot_channels
         boot_agent_bridge
