@@ -6,6 +6,8 @@ module Legion
   module Gaia
     module Actors
       class Heartbeat < Legion::Extensions::Actors::Every
+        include Legion::Extensions::Actors::Singleton if defined?(Legion::Extensions::Actors::Singleton)
+
         def runner_class
           Legion::Gaia
         end

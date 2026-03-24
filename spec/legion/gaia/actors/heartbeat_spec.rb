@@ -5,11 +5,25 @@ module Legion
     module Actors
       class Every # rubocop:disable Lint/EmptyClass
       end
+
+      module Singleton
+        def self.included(base)
+          base.prepend(ExecutionGuard)
+        end
+
+        def singleton_role
+          self.class.name&.gsub('::', '_')&.downcase || 'unknown'
+        end
+
+        module ExecutionGuard
+        end
+      end
     end
   end
 end
 
 $LOADED_FEATURES << 'legion/extensions/actors/every'
+$LOADED_FEATURES << 'legion/extensions/actors/singleton'
 
 require 'legion/gaia/actors/heartbeat'
 
@@ -66,6 +80,16 @@ RSpec.describe Legion::Gaia::Actors::Heartbeat do
   describe '#generate_task?' do
     it 'returns false' do
       expect(actor.generate_task?).to be false
+    end
+  end
+
+  describe 'singleton enforcement' do
+    it 'includes Singleton mixin when available' do
+      expect(described_class.ancestors).to include(Legion::Extensions::Actors::Singleton)
+    end
+
+    it 'has a singleton_role of legion_gaia_actors_heartbeat' do
+      expect(actor.singleton_role).to eq('legion_gaia_actors_heartbeat')
     end
   end
 end
