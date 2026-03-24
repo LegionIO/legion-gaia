@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.9.19] - 2026-03-24
+
+### Added
+- Declare 5 PHASE_MAP operational dependencies: lex-apollo, lex-coldstart, lex-detect, lex-mesh, lex-synapse
+- All 19 PHASE_MAP phases now resolve out of the box on `gem install legion-gaia`
+
 ## [0.9.18] - 2026-03-24
 
 ### Added

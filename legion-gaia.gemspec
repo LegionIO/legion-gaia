@@ -38,6 +38,13 @@ Gem::Specification.new do |spec|
   # Privacy enforcement — safety layer for the cognitive stack
   spec.add_dependency 'lex-privatecore'
 
+  # PHASE_MAP operational extensions (required for full tick cycle)
+  spec.add_dependency 'lex-apollo'
+  spec.add_dependency 'lex-coldstart'
+  spec.add_dependency 'lex-detect'
+  spec.add_dependency 'lex-mesh'
+  spec.add_dependency 'lex-synapse'
+
   # Consolidated cognitive domain gems (13 pillars of the mind)
   spec.add_dependency 'lex-agentic-affect'
   spec.add_dependency 'lex-agentic-attention'
