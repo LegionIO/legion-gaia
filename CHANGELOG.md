@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.9.21] - 2026-03-24
+
+### Added
+- Wire `social_cognition` phase (lex-agentic-social Social runner, `update_social`) after `mesh_interface`
+- Wire `theory_of_mind` phase (lex-agentic-social TheoryOfMind runner, `update_theory_of_mind`) after `social_cognition`
+- Wire `homeostasis_regulation` phase (lex-agentic-homeostasis Homeostasis runner, `regulate`) after `memory_consolidation`
+- PHASE_MAP grows from 21 to 24 entries (16 active + 8 dream)
+
 ## [0.9.20] - 2026-03-24
 
 ### Changed

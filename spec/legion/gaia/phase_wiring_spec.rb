@@ -6,11 +6,13 @@ RSpec.describe Legion::Gaia::PhaseWiring do
       expect(described_class::PHASE_MAP).to be_frozen
     end
 
-    it 'contains all 13 active tick phases' do
+    it 'contains all 16 active tick phases' do
       active_phases = %i[sensory_processing emotional_evaluation memory_retrieval
                          knowledge_retrieval identity_entropy_check working_memory_integration
-                         procedural_check prediction_engine mesh_interface gut_instinct
-                         action_selection memory_consolidation post_tick_reflection]
+                         procedural_check prediction_engine mesh_interface
+                         social_cognition theory_of_mind gut_instinct
+                         action_selection memory_consolidation homeostasis_regulation
+                         post_tick_reflection]
       active_phases.each do |phase|
         expect(described_class::PHASE_MAP).to have_key(phase)
       end
@@ -25,8 +27,8 @@ RSpec.describe Legion::Gaia::PhaseWiring do
       end
     end
 
-    it 'has 21 total phases' do
-      expect(described_class::PHASE_MAP.size).to eq(21)
+    it 'has 24 total phases' do
+      expect(described_class::PHASE_MAP.size).to eq(24)
     end
 
     it 'each mapping has ext, runner, and fn keys' do

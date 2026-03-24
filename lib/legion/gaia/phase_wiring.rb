@@ -2,7 +2,7 @@
 
 module Legion
   module Gaia
-    module PhaseWiring
+    module PhaseWiring # rubocop:disable Metrics/ModuleLength
       PHASE_MAP = {
         sensory_processing: { ext: :Attention, runner: :Attention, fn: :filter_signals },
         emotional_evaluation: { ext: :Emotion, runner: :Valence,       fn: :evaluate_valence },
@@ -16,9 +16,12 @@ module Legion
         procedural_check: { ext: :Coldstart, runner: :Coldstart, fn: :coldstart_progress },
         prediction_engine: { ext: :Prediction, runner: :Prediction, fn: :predict },
         mesh_interface: { ext: :Mesh, runner: :Mesh, fn: :mesh_status },
+        social_cognition: { ext: :Social, runner: :Social, fn: :update_social },
+        theory_of_mind: { ext: :Social, runner: :TheoryOfMind, fn: :update_theory_of_mind },
         gut_instinct: { ext: :Emotion, runner: :Gut, fn: :gut_instinct },
         action_selection: { ext: :Volition, runner: :Volition, fn: :form_intentions },
         memory_consolidation: { ext: :Memory, runner: :Consolidation, fn: :decay_cycle },
+        homeostasis_regulation: { ext: :Homeostasis, runner: :Homeostasis, fn: :regulate },
         post_tick_reflection: [
           { ext: :Reflection, runner: :Reflection,  fn: :reflect },
           { ext: :Synapse,    runner: :GaiaReport,  fn: :gaia_reflection },
@@ -64,10 +67,13 @@ module Legion
         procedural_check: ->(_ctx) { {} },
         prediction_engine: ->(ctx) { { mode: :functional_mapping, context: ctx[:prior_results] || {} } },
         mesh_interface: ->(_ctx) { {} },
+        social_cognition: ->(ctx) { { tick_results: ctx[:prior_results] || {} } },
+        theory_of_mind: ->(ctx) { { tick_results: ctx[:prior_results] || {} } },
         gut_instinct: ->(ctx) { { valences: ctx[:valences] || [] } },
         action_selection: ->(ctx) { { tick_results: ctx[:prior_results] || {}, cognitive_state: {} } },
         working_memory_integration: ->(ctx) { { prior_results: ctx[:prior_results] || {} } },
         memory_consolidation: ->(_ctx) { {} },
+        homeostasis_regulation: ->(ctx) { { tick_results: ctx[:prior_results] || {} } },
         post_tick_reflection: lambda { |ctx|
           { tick_results: ctx[:prior_results] || {}, since: ctx.dig(:state, :last_observer_tick) }
         },
