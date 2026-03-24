@@ -5,10 +5,29 @@ module Legion
     class ChannelAdapter
       attr_reader :channel_id, :capabilities
 
+      @adapter_classes = []
+
+      class << self
+        attr_reader :adapter_classes
+
+        def register_adapter(klass)
+          @adapter_classes << klass unless @adapter_classes.include?(klass)
+        end
+
+        def inherited(subclass)
+          super
+          register_adapter(subclass)
+        end
+      end
+
       def initialize(channel_id:, capabilities: [])
         @channel_id = channel_id
         @capabilities = capabilities
         @started = false
+      end
+
+      def self.from_settings(_settings)
+        nil
       end
 
       def start

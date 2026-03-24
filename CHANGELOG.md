@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.9.22] - 2026-03-24
+
+### Changed
+- Channel adapter auto-discovery: `boot_channels` now iterates `ChannelAdapter.adapter_classes` instead of hard-coding Teams/Slack/CLI
+- Each adapter implements `self.from_settings(settings)` factory method for self-registration
+- `ChannelAdapter.inherited` hook auto-registers subclasses — new adapters need zero changes to `gaia.rb`
+- Removed `register_slack_adapter` private method (absorbed into auto-discovery loop)
+
 ## [0.9.21] - 2026-03-24
 
 ### Added

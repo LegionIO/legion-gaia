@@ -10,6 +10,16 @@ module Legion
 
         attr_reader :signing_secret, :bot_token
 
+        def self.from_settings(settings)
+          return nil unless settings&.dig(:channels, :slack, :enabled)
+
+          new(
+            signing_secret: settings.dig(:channels, :slack, :signing_secret),
+            bot_token: settings.dig(:channels, :slack, :bot_token),
+            default_webhook: settings.dig(:channels, :slack, :default_webhook)
+          )
+        end
+
         def initialize(signing_secret: nil, bot_token: nil, default_webhook: nil)
           super(channel_id: :slack, capabilities: CAPABILITIES)
           @signing_secret = signing_secret

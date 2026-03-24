@@ -14,6 +14,12 @@ module Legion
 
         attr_reader :conversation_store, :app_id
 
+        def self.from_settings(settings)
+          return nil unless settings&.dig(:channels, :teams, :enabled)
+
+          new(app_id: settings.dig(:channels, :teams, :app_id))
+        end
+
         def initialize(app_id: nil)
           super(channel_id: :teams, capabilities: CAPABILITIES)
           @app_id = app_id

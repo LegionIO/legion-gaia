@@ -6,6 +6,12 @@ module Legion
       class CliAdapter < ChannelAdapter
         CAPABILITIES = %i[rich_text inline_code file_attachment syntax_highlighting].freeze
 
+        def self.from_settings(settings)
+          return nil if settings&.dig(:channels, :cli, :enabled) == false
+
+          new
+        end
+
         def initialize
           super(channel_id: :cli, capabilities: CAPABILITIES)
           @output_buffer = []

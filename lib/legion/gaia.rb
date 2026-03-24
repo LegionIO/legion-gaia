@@ -206,33 +206,13 @@ module Legion
         @output_router = OutputRouter.new(channel_registry: @channel_registry, renderer: renderer,
                                           notification_gate: notification_gate)
 
-        # Register CLI adapter by default
-        unless settings&.dig(:channels, :cli, :enabled) == false
-          cli = Channels::CliAdapter.new
-          cli.start
-          @channel_registry.register(cli)
+        ChannelAdapter.adapter_classes.each do |klass|
+          adapter = klass.from_settings(settings)
+          next unless adapter
+
+          adapter.start
+          @channel_registry.register(adapter)
         end
-
-        # Register Teams adapter if enabled
-        return unless settings&.dig(:channels, :teams, :enabled)
-
-        teams = Channels::TeamsAdapter.new(app_id: settings&.dig(:channels, :teams, :app_id))
-        teams.start
-        @channel_registry.register(teams)
-
-        register_slack_adapter
-      end
-
-      def register_slack_adapter
-        return unless settings&.dig(:channels, :slack, :enabled)
-
-        slack = Channels::SlackAdapter.new(
-          signing_secret: settings&.dig(:channels, :slack, :signing_secret),
-          bot_token: settings&.dig(:channels, :slack, :bot_token),
-          default_webhook: settings&.dig(:channels, :slack, :default_webhook)
-        )
-        slack.start
-        @channel_registry.register(slack)
       end
 
       def base_status
