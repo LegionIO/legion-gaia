@@ -1,14 +1,18 @@
 # frozen_string_literal: true
 
+require 'singleton'
+
 module Legion
   module Gaia
-    module AuditObserver
-      @user_prefs = {}
-      @tool_patterns = {}
-      @quality_log  = []
-      @mutex        = Mutex.new
+    class AuditObserver
+      include Singleton
 
-      module_function
+      def initialize
+        @user_prefs = {}
+        @tool_patterns = {}
+        @quality_log  = []
+        @mutex        = Mutex.new
+      end
 
       def process_event(event)
         return unless event.is_a?(Hash)
@@ -49,53 +53,51 @@ module Legion
         end
       end
 
-      class << self
-        private
+      private
 
-        def record_routing_preference(event)
-          identity = event.dig(:caller, :requested_by, :identity)
-          return unless identity
+      def record_routing_preference(event)
+        identity = event.dig(:caller, :requested_by, :identity)
+        return unless identity
 
-          provider = event.dig(:routing, :provider)
-          return unless provider
+        provider = event.dig(:routing, :provider)
+        return unless provider
 
-          @user_prefs[identity] ||= { routing: {}, count: 0 }
-          @user_prefs[identity][:routing] = {
-            provider: provider,
-            model: event.dig(:routing, :model),
-            last_used: event[:timestamp]
-          }
-          @user_prefs[identity][:count] += 1
+        @user_prefs[identity] ||= { routing: {}, count: 0 }
+        @user_prefs[identity][:routing] = {
+          provider: provider,
+          model: event.dig(:routing, :model),
+          last_used: event[:timestamp]
+        }
+        @user_prefs[identity][:count] += 1
+      end
+
+      def record_tool_patterns(event)
+        tools = event[:tools_used] || []
+        tools.each do |tool|
+          name = tool[:name] || tool['name']
+          next unless name
+
+          @tool_patterns[name] ||= { count: 0, last_used: nil }
+          @tool_patterns[name][:count] += 1
+          @tool_patterns[name][:last_used] = event[:timestamp]
         end
+      end
 
-        def record_tool_patterns(event)
-          tools = event[:tools_used] || []
-          tools.each do |tool|
-            name = tool[:name] || tool['name']
-            next unless name
+      def record_quality(event)
+        @quality_log << {
+          provider: event.dig(:routing, :provider),
+          tokens: event[:tokens],
+          timestamp: event[:timestamp]
+        }
+        @quality_log.shift if @quality_log.length > 100
+      end
 
-            @tool_patterns[name] ||= { count: 0, last_used: nil }
-            @tool_patterns[name][:count] += 1
-            @tool_patterns[name][:last_used] = event[:timestamp]
-          end
-        end
+      def top_tools_for_patterns
+        @tool_patterns.sort_by { |_, v| -v[:count] }.first(10).to_h
+      end
 
-        def record_quality(event)
-          @quality_log << {
-            provider: event.dig(:routing, :provider),
-            tokens: event[:tokens],
-            timestamp: event[:timestamp]
-          }
-          @quality_log.shift if @quality_log.length > 100
-        end
-
-        def top_tools_for_patterns
-          @tool_patterns.sort_by { |_, v| -v[:count] }.first(10).to_h
-        end
-
-        def recent_quality
-          @quality_log.last(10)
-        end
+      def recent_quality
+        @quality_log.last(10)
       end
     end
   end

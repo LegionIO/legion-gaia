@@ -62,7 +62,7 @@ module Legion
         end
 
         def offline_threshold
-          if Legion.const_defined?('Settings')
+          if Legion.const_defined?(:Settings, false)
             Legion::Settings.dig(:gaia, :offline_threshold) || 60
           else
             60

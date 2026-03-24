@@ -6,15 +6,15 @@ module Legion
       private
 
       def log_debug(msg)
-        Legion::Logging.debug(msg) if Legion.const_defined?('Logging')
+        Legion::Logging.debug(msg) if Legion.const_defined?(:Logging, false)
       end
 
       def log_info(msg)
-        Legion::Logging.info(msg) if Legion.const_defined?('Logging')
+        Legion::Logging.info(msg) if Legion.const_defined?(:Logging, false)
       end
 
       def log_warn(msg)
-        Legion::Logging.warn(msg) if Legion.const_defined?('Logging')
+        Legion::Logging.warn(msg) if Legion.const_defined?(:Logging, false)
       end
     end
   end

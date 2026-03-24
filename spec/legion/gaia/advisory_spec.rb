@@ -66,8 +66,8 @@ RSpec.describe Legion::Gaia::Advisory do
           double(tick_host: double(last_tick_result: nil))
         )
 
-        Legion::Gaia::AuditObserver.reset!
-        Legion::Gaia::AuditObserver.process_event(
+        Legion::Gaia::AuditObserver.instance.reset!
+        Legion::Gaia::AuditObserver.instance.process_event(
           caller: { requested_by: { identity: 'user:matt', type: :user } },
           routing: { provider: :claude, model: 'opus' },
           tokens: {}, tools_used: [], timestamp: Time.now
@@ -89,9 +89,9 @@ RSpec.describe Legion::Gaia::Advisory do
           double(tick_host: double(last_tick_result: nil))
         )
 
-        Legion::Gaia::AuditObserver.reset!
+        Legion::Gaia::AuditObserver.instance.reset!
         3.times do
-          Legion::Gaia::AuditObserver.process_event(
+          Legion::Gaia::AuditObserver.instance.process_event(
             caller: { requested_by: { identity: 'user:matt', type: :user } },
             routing: { provider: :anthropic },
             tokens: {}, tools_used: [{ name: 'read_file' }], timestamp: Time.now

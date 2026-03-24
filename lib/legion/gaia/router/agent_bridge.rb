@@ -91,7 +91,7 @@ module Legion
         end
 
         def log_error(msg)
-          Legion::Logging.error(msg) if Legion.const_defined?('Logging')
+          Legion::Logging.error(msg) if Legion.const_defined?(:Logging, false)
         end
       end
     end

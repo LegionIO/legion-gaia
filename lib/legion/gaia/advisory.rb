@@ -51,7 +51,7 @@ module Legion
         identity = caller&.dig(:requested_by, :identity)
         return unless identity
 
-        learned = AuditObserver.learned_data_for(identity)
+        learned = AuditObserver.instance.learned_data_for(identity)
         advisory[:routing_hint] ||= learned[:routing_preference] if learned[:routing_preference]
         advisory[:tool_hint] ||= learned[:tool_predictions].keys.first(5) if learned[:tool_predictions]&.any?
       end
