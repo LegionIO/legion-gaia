@@ -3,7 +3,7 @@
 module Legion
   module Gaia
     module AuditObserver
-      @user_prefs   = {}
+      @user_prefs = {}
       @tool_patterns = {}
       @quality_log  = []
       @mutex        = Mutex.new
@@ -35,8 +35,8 @@ module Legion
           prefs = @user_prefs[identity] || {}
           {
             routing_preference: prefs[:routing],
-            tool_predictions:   top_tools_for_patterns,
-            quality_signals:    recent_quality
+            tool_predictions: top_tools_for_patterns,
+            quality_signals: recent_quality
           }
         end
       end
@@ -62,7 +62,7 @@ module Legion
           @user_prefs[identity] ||= { routing: {}, count: 0 }
           @user_prefs[identity][:routing] = {
             provider: provider,
-            model:    event.dig(:routing, :model),
+            model: event.dig(:routing, :model),
             last_used: event[:timestamp]
           }
           @user_prefs[identity][:count] += 1
@@ -82,8 +82,8 @@ module Legion
 
         def record_quality(event)
           @quality_log << {
-            provider:  event.dig(:routing, :provider),
-            tokens:    event[:tokens],
+            provider: event.dig(:routing, :provider),
+            tokens: event[:tokens],
             timestamp: event[:timestamp]
           }
           @quality_log.shift if @quality_log.length > 100
