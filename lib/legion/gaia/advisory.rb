@@ -44,6 +44,16 @@ module Legion
           end
         end
 
+        # Learned data from audit observer
+        identity = caller&.dig(:requested_by, :identity)
+        if identity
+          learned = AuditObserver.learned_data_for(identity)
+          advisory[:routing_hint] ||= learned[:routing_preference] if learned[:routing_preference]
+          if learned[:tool_predictions]&.any?
+            advisory[:tool_hint] ||= learned[:tool_predictions].keys.first(5)
+          end
+        end
+
         advisory.compact
       rescue StandardError => e
         Legion::Logging.warn("GAIA advisory failed: #{e.message}") if defined?(Legion::Logging)

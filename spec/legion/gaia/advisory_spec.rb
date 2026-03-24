@@ -57,5 +57,55 @@ RSpec.describe Legion::Gaia::Advisory do
       result = described_class.advise(conversation_id: 'c', messages: [], caller: {})
       expect(result).to be_nil
     end
+
+    describe 'with observer data' do
+      it 'includes learned routing preference' do
+        allow(Legion::Gaia).to receive(:started?).and_return(true)
+        allow(Legion::Gaia).to receive(:last_valences).and_return(nil)
+        allow(Legion::Gaia).to receive(:registry).and_return(
+          double(tick_host: double(last_tick_result: nil))
+        )
+
+        Legion::Gaia::AuditObserver.reset!
+        Legion::Gaia::AuditObserver.process_event(
+          caller: { requested_by: { identity: 'user:matt', type: :user } },
+          routing: { provider: :claude, model: 'opus' },
+          tokens: {}, tools_used: [], timestamp: Time.now
+        )
+
+        result = described_class.advise(
+          conversation_id: 'conv_1',
+          messages: [],
+          caller: { requested_by: { identity: 'user:matt', type: :user } }
+        )
+
+        expect(result[:routing_hint]).to include(provider: :claude)
+      end
+
+      it 'includes learned tool predictions from observer' do
+        allow(Legion::Gaia).to receive(:started?).and_return(true)
+        allow(Legion::Gaia).to receive(:last_valences).and_return(nil)
+        allow(Legion::Gaia).to receive(:registry).and_return(
+          double(tick_host: double(last_tick_result: nil))
+        )
+
+        Legion::Gaia::AuditObserver.reset!
+        3.times do
+          Legion::Gaia::AuditObserver.process_event(
+            caller: { requested_by: { identity: 'user:matt', type: :user } },
+            routing: { provider: :anthropic },
+            tokens: {}, tools_used: [{ name: 'read_file' }], timestamp: Time.now
+          )
+        end
+
+        result = described_class.advise(
+          conversation_id: 'conv_1',
+          messages: [],
+          caller: { requested_by: { identity: 'user:matt', type: :user } }
+        )
+
+        expect(result[:tool_hint]).to include('read_file')
+      end
+    end
   end
 end
