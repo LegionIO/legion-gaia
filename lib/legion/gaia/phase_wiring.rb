@@ -42,20 +42,21 @@ module Legion
             active_wonders: ctx.dig(:prior_results, :agenda_formation, :agenda) || [] }
         },
         emotional_evaluation: ->(ctx) { { signal: ctx[:current_signal] || {}, source_type: :ambient } },
-        memory_retrieval: ->(_ctx) { { limit: 10 } },
+        memory_retrieval: ->(_ctx) { { limit: knowledge_setting(:memory_retrieval_limit, 10) } },
         knowledge_retrieval: lambda { |ctx|
           current_signal = ctx[:signals]&.last
           memory_results = ctx.dig(:prior_results, :memory_retrieval)
+          skip_threshold = knowledge_setting(:memory_skip_threshold, 0.8)
 
           if current_signal.nil? || (memory_results.is_a?(Hash) &&
-             memory_results[:traces]&.any? { |t| t[:strength].to_f > 0.8 })
+             memory_results[:traces]&.any? { |t| t[:strength].to_f > skip_threshold })
             return { skip: true }
           end
 
           {
             query: current_signal[:content] || current_signal.to_s,
-            limit: 5,
-            min_confidence: 0.3,
+            limit: knowledge_setting(:retrieval_limit, 5),
+            min_confidence: knowledge_setting(:retrieval_min_confidence, 0.3),
             tags: current_signal[:tags]
           }
         },
@@ -70,7 +71,7 @@ module Legion
         post_tick_reflection: lambda { |ctx|
           { tick_results: ctx[:prior_results] || {}, since: ctx.dig(:state, :last_observer_tick) }
         },
-        memory_audit: ->(_ctx) { { limit: 20 } },
+        memory_audit: ->(_ctx) { { limit: knowledge_setting(:memory_audit_limit, 20) } },
         association_walk: lambda { |ctx|
           audit = ctx.dig(:prior_results, :memory_audit)
           traces = audit.is_a?(Hash) ? audit[:traces] : nil
@@ -94,6 +95,14 @@ module Legion
       }.freeze
 
       module_function
+
+      def knowledge_setting(key, default)
+        return default unless defined?(Legion::Settings) && !Legion::Settings[:gaia].nil?
+
+        Legion::Settings[:gaia].dig(:knowledge, key) || default
+      rescue StandardError
+        default
+      end
 
       def resolve_runner_class(ext_sym, runner_sym)
         ext_mod = locate_ext_mod(ext_sym)

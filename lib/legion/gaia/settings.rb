@@ -14,7 +14,8 @@ module Legion
           router: { mode: false, allowed_worker_ids: [] },
           session: { persistence: 'auto', ttl: 86_400 },
           output: { mobile_max_length: 500, suggest_channel_switch: true },
-          notifications: default_notifications
+          notifications: default_notifications,
+          knowledge: default_knowledge
         }
       end
 
@@ -23,6 +24,16 @@ module Legion
           cli: { enabled: true },
           teams: { enabled: false },
           slack: { enabled: false }
+        }
+      end
+
+      def default_knowledge
+        {
+          retrieval_limit: 5,
+          retrieval_min_confidence: 0.3,
+          memory_retrieval_limit: 10,
+          memory_audit_limit: 20,
+          memory_skip_threshold: 0.8
         }
       end
 

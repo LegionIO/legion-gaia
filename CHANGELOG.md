@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.9.20] - 2026-03-24
+
+### Changed
+- Phase wiring knowledge retrieval, memory retrieval, and memory audit limits now read from `Legion::Settings[:gaia][:knowledge]` instead of hardcoded values
+- Configurable keys: `retrieval_limit`, `retrieval_min_confidence`, `memory_retrieval_limit`, `memory_audit_limit`, `memory_skip_threshold`
+
 ## [0.9.19] - 2026-03-24
 
 ### Added
