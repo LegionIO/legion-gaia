@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.9.23] - 2026-03-24
+
+### Added
+- `Singleton` mixin on `Gaia::Actors::Heartbeat` — only leader node runs the cognitive tick cycle when `cluster.singleton_enabled` is true (default: off, every node ticks as before)
+
 ## [0.9.22] - 2026-03-24
 
 ### Changed
