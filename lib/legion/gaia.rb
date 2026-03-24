@@ -2,6 +2,7 @@
 
 require 'legion/gaia/version'
 require 'legion/gaia/advisory'
+require 'legion/gaia/audit_observer'
 require 'legion/gaia/settings'
 require 'legion/gaia/logging'
 require 'legion/gaia/teams_auth'
