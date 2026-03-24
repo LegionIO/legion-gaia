@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.9.18] - 2026-03-24
+
+### Added
+- Declare `legion-settings` as explicit dependency (used at runtime for config)
+- Declare `openssl` as explicit dependency (required for Teams/Slack auth, Ruby 3.4+ bundled gem)
+
 ## [0.9.17] - 2026-03-23
 
 ### Fixed
