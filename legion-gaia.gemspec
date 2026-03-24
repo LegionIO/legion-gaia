@@ -48,6 +48,6 @@ Gem::Specification.new do |spec|
   spec.add_dependency 'lex-agentic-language'
   spec.add_dependency 'lex-agentic-learning'
   spec.add_dependency 'lex-agentic-memory'
-  spec.add_dependency 'lex-agentic-self'
+  spec.add_dependency 'lex-agentic-self', '>= 0.1.4'
   spec.add_dependency 'lex-agentic-social'
 end

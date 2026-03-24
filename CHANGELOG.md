@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.9.16] - 2026-03-23
+
+### Changed
+- Bump lex-agentic-self dependency to >= 0.1.4
+
 ## [0.9.14] - 2026-03-23
 
 ### Fixed
