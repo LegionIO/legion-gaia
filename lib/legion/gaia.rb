@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require 'legion/gaia/version'
+require 'legion/gaia/advisory'
 require 'legion/gaia/settings'
 require 'legion/gaia/logging'
 require 'legion/gaia/teams_auth'
@@ -31,7 +32,11 @@ module Legion
       include Legion::Gaia::TeamsAuth
 
       attr_reader :sensory_buffer, :registry, :channel_registry, :output_router, :session_store,
-                  :router_bridge, :agent_bridge
+                  :router_bridge, :agent_bridge, :last_valences
+
+      def advise(conversation_id:, messages:, caller:)
+        Advisory.advise(conversation_id: conversation_id, messages: messages, caller: caller)
+      end
 
       def boot(mode: nil)
         @mode = mode || (settings&.dig(:router, :mode) ? :router : :agent)
@@ -110,6 +115,7 @@ module Legion
         if result.is_a?(Hash) && result[:results]
           valence_result = result[:results][:emotional_evaluation]
           @last_valences = [valence_result[:valence]] if valence_result.is_a?(Hash) && valence_result[:valence]
+          tick_host.last_tick_result = result
         end
 
         result

@@ -3,6 +3,8 @@
 module Legion
   module Gaia
     class RunnerHost
+      attr_accessor :last_tick_result
+
       def initialize(runner_module)
         @runner_module = runner_module
         extend runner_module
