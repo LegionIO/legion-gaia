@@ -7,7 +7,7 @@ module Legion
         sensory_processing: { ext: :Attention, runner: :Attention, fn: :filter_signals },
         emotional_evaluation: { ext: :Emotion, runner: :Valence,       fn: :evaluate_valence },
         memory_retrieval: { ext: :Memory, runner: :Traces, fn: :retrieve_and_reinforce },
-        knowledge_retrieval: { ext: :Apollo, runner: :Knowledge, fn: :retrieve_relevant },
+        knowledge_retrieval: { ext: :Apollo, runner: :Request, fn: :retrieve },
         identity_entropy_check: { ext: :Identity, runner: :Identity, fn: :check_entropy },
         working_memory_integration: [
           { ext: :Curiosity, runner: :Curiosity,   fn: :detect_gaps },
@@ -57,7 +57,7 @@ module Legion
           end
 
           {
-            query: current_signal[:content] || current_signal.to_s,
+            text: current_signal[:content] || current_signal.to_s,
             limit: knowledge_setting(:retrieval_limit, 5),
             min_confidence: knowledge_setting(:retrieval_min_confidence, 0.3),
             tags: current_signal[:tags]

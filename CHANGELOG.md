@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.9.24] - 2026-03-25
+
+### Changed
+- GAIA phase wiring: `knowledge_retrieval` now targets `Apollo::Request#retrieve` instead of `Apollo::Knowledge#retrieve_relevant`, enabling knowledge queries from agent nodes without direct DB access
+
 ## [0.9.23] - 2026-03-24
 
 ### Added
