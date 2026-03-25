@@ -39,6 +39,7 @@ Gem::Specification.new do |spec|
   spec.add_dependency 'lex-privatecore'
 
   # PHASE_MAP operational extensions (required for full tick cycle)
+  spec.add_dependency 'legion-apollo', '>= 0.2.1'
   spec.add_dependency 'lex-apollo'
   spec.add_dependency 'lex-coldstart'
   spec.add_dependency 'lex-detect'

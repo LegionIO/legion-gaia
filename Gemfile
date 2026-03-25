@@ -4,6 +4,8 @@ source 'https://rubygems.org'
 
 gemspec
 
+gem 'legion-apollo', path: '../legion-apollo'
+
 gem 'rake'
 gem 'rspec'
 gem 'rubocop'

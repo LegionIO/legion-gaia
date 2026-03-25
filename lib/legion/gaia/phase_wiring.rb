@@ -111,10 +111,32 @@ module Legion
       end
 
       def resolve_runner_class(ext_sym, runner_sym)
+        # Check core library namespace first (e.g., Legion::Apollo)
+        core = core_library_runner(ext_sym, runner_sym)
+        return core if core
+
+        # Then check extensions namespace
         ext_mod = locate_ext_mod(ext_sym)
         return flat_runner(ext_mod, runner_sym) || subdomain_runner(ext_mod, runner_sym) if ext_mod
 
         deep_agentic_runner(ext_sym, runner_sym)
+      end
+
+      def core_library_runner(ext_sym, runner_sym)
+        return nil unless Legion.const_defined?(ext_sym, false)
+
+        mod = Legion.const_get(ext_sym, false)
+        return nil unless mod.is_a?(Module)
+
+        # Check flat runners (e.g., Legion::Apollo::Runners::Request)
+        if mod.const_defined?(:Runners, false)
+          runners_mod = mod.const_get(:Runners, false)
+          return runners_mod.const_get(runner_sym, false) if runners_mod.const_defined?(runner_sym, false)
+        end
+
+        nil
+      rescue StandardError
+        nil
       end
 
       def deep_agentic_runner(ext_sym, runner_sym)
