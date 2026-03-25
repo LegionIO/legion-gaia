@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.26] - 2026-03-25
+
+### Added
+- `core_library_runner` private method in `PhaseWiring` — checks `Legion::` namespace directly before falling through to `Legion::Extensions`
+- `resolve_runner_class` now resolves core library runners (e.g., `Legion::Apollo::Runners::Request`) first, enabling GAIA phases to wire against the `legion-apollo` core gem without requiring `lex-apollo` to be co-located
+- Added `legion-apollo >= 0.2.1` to gemspec dependencies alongside existing `lex-apollo` dep
+
 ## [0.9.25] - 2026-03-25
 
 ### Fixed

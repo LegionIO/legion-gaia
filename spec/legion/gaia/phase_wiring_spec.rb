@@ -97,6 +97,31 @@ RSpec.describe Legion::Gaia::PhaseWiring do
     it 'returns nil for missing extensions' do
       expect(described_class.resolve_runner_class(:Nonexistent, :Foo)).to be_nil
     end
+
+    context 'when core library module exists at Legion:: namespace' do
+      before do
+        stub_const('Legion::Apollo', Module.new)
+        stub_const('Legion::Apollo::Runners', Module.new)
+        stub_const('Legion::Apollo::Runners::Request', Class.new)
+      end
+
+      it 'resolves from core namespace first' do
+        result = described_class.resolve_runner_class(:Apollo, :Request)
+        expect(result).to eq(Legion::Apollo::Runners::Request)
+      end
+    end
+
+    context 'when core library exists but requested runner does not' do
+      before do
+        stub_const('Legion::Apollo', Module.new)
+        stub_const('Legion::Apollo::Runners', Module.new)
+      end
+
+      it 'falls through to extensions namespace' do
+        result = described_class.resolve_runner_class(:Apollo, :Nonexistent)
+        expect(result).to be_nil
+      end
+    end
   end
 
   describe '.discover_available_extensions' do
