@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.9.25] - 2026-03-25
+
+### Fixed
+- `PhaseWiring#resolve_runner_class` now performs a deep search through `Extensions::Agentic::Domain::ext_sym::Runners::runner_sym` when the extension constant is not found at the flat or one-level-deep Agentic paths
+- Added `deep_agentic_runner` helper that walks each domain gem under `Extensions::Agentic` to find the runner nested two levels deep (e.g., `Agentic::Affect::Emotion::Runners::Valence`)
+- All 9 previously missing phases now wire correctly: `emotional_evaluation`, `identity_entropy_check`, `prediction_engine`, `gut_instinct`, `action_selection`, `contradiction_resolution`, `agenda_formation`, `dream_narration`, and the Curiosity step in `working_memory_integration`
+- Phase wiring coverage increases from 15/24 to 24/24
+
 ## [0.9.24] - 2026-03-25
 
 ### Changed

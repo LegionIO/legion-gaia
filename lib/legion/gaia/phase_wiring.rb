@@ -112,9 +112,26 @@ module Legion
 
       def resolve_runner_class(ext_sym, runner_sym)
         ext_mod = locate_ext_mod(ext_sym)
-        return nil unless ext_mod
+        return flat_runner(ext_mod, runner_sym) || subdomain_runner(ext_mod, runner_sym) if ext_mod
 
-        flat_runner(ext_mod, runner_sym) || subdomain_runner(ext_mod, runner_sym)
+        deep_agentic_runner(ext_sym, runner_sym)
+      end
+
+      def deep_agentic_runner(ext_sym, runner_sym)
+        return nil unless Legion::Extensions.const_defined?(:Agentic, false)
+
+        agentic = Legion::Extensions::Agentic
+        agentic.constants(false).each do |domain_const|
+          domain_mod = agentic.const_get(domain_const, false)
+          next unless domain_mod.is_a?(Module) && domain_mod.const_defined?(ext_sym, false)
+
+          sub_mod = domain_mod.const_get(ext_sym, false)
+          next unless sub_mod.is_a?(Module) && sub_mod.const_defined?(:Runners, false)
+
+          runners_mod = sub_mod.const_get(:Runners, false)
+          return runners_mod.const_get(runner_sym, false) if runners_mod.const_defined?(runner_sym, false)
+        end
+        nil
       end
 
       def locate_ext_mod(ext_sym)
