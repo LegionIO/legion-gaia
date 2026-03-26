@@ -4,7 +4,7 @@ source 'https://rubygems.org'
 
 gemspec
 
-gem 'legion-apollo', path: '../legion-apollo'
+gem 'legion-apollo', path: '../legion-apollo' if File.exist?(File.expand_path('../legion-apollo', __dir__))
 
 gem 'rake'
 gem 'rspec'
