@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require 'legion/gaia/version'
+require 'legion/gaia/routes'
 require 'legion/gaia/advisory'
 require 'legion/gaia/audit_observer'
 require 'legion/gaia/settings'
@@ -53,6 +54,7 @@ module Legion
         settings_hash = settings
         settings_hash[:connected] = true if settings_hash
 
+        register_routes
         check_teams_auth
 
         log_info "Legion::Gaia booted (#{@mode}): #{boot_summary}"
@@ -157,6 +159,15 @@ module Legion
       end
 
       private
+
+      def register_routes
+        return unless defined?(Legion::API) && Legion::API.respond_to?(:register_library_routes)
+
+        Legion::API.register_library_routes('gaia', Legion::Gaia::Routes)
+        Legion::Logging.debug 'Legion::Gaia routes registered with API' if defined?(Legion::Logging)
+      rescue StandardError => e
+        Legion::Logging.warn "Legion::Gaia route registration failed: #{e.message}" if defined?(Legion::Logging)
+      end
 
       def boot_agent
         @sensory_buffer = SensoryBuffer.new
