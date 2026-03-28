@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.9.27] - 2026-03-28
+
+### Added
+- `Legion::Gaia::Routes` self-registering Sinatra route module (`lib/legion/gaia/routes.rb`): extracts all `/api/gaia/*` route handlers from LegionIO. Self-registers with `Legion::API.register_library_routes('gaia', Routes)` during boot. Includes fallback helpers for standalone mounting.
+
 ## [0.9.26] - 2026-03-25
 
 ### Added
