@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.9.28] - 2026-03-28
+
+### Added
+- Generic state machine DSL for workflow orchestration (`lib/legion/gaia/workflow.rb` and `lib/legion/gaia/workflow/`)
+- `Legion::Gaia::Workflow` module — include into any class to get the `workflow` DSL class method and `create_workflow` factory
+- `Legion::Gaia::Workflow.define` — standalone factory for building a Definition without a host class
+- `Legion::Gaia::Workflow::Definition` — DSL class: `state`, `transition` (with `guard:`/`guard_name:`), `checkpoint`, `on_enter`, `on_exit`
+- `Legion::Gaia::Workflow::Instance` — runtime instance with `transition!`, `transition`, `in_state?`, `can_transition_to?`, `available_transitions`, `status`, and transition history; mutex-protected for thread safety
+- `Legion::Gaia::Workflow::Checkpoint` — `Data.define` value object, evaluated at exit time with configurable condition lambda
+- Error hierarchy: `Workflow::Error`, `InvalidTransition`, `GuardRejected`, `CheckpointBlocked`, `UnknownState`, `NotInitialized`
+- 106 specs covering DSL, transitions, guards, checkpoints, callbacks, thread safety, and end-to-end scenarios
+
 ## [0.9.27] - 2026-03-28
 
 ### Added

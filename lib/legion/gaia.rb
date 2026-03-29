@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require 'legion/gaia/version'
+require 'legion/gaia/workflow'
 require 'legion/gaia/routes'
 require 'legion/gaia/advisory'
 require 'legion/gaia/audit_observer'
