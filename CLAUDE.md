@@ -3,7 +3,7 @@
 **Repository Level 3 Documentation**
 - **Parent**: `/Users/miverso2/rubymine/legion/CLAUDE.md`
 - **GitHub**: https://github.com/LegionIO/legion-gaia
-- **Version**: 0.9.17
+- **Version**: 0.9.26
 
 ## Purpose
 
@@ -16,7 +16,7 @@ lib/legion/gaia.rb                      # Entry point: boot, shutdown, heartbeat
 lib/legion/gaia/version.rb              # VERSION constant
 lib/legion/gaia/settings.rb             # Default config hash (channels, router, session, output)
 lib/legion/gaia/registry.rb             # Extension discovery, runner wiring, phase handler management
-lib/legion/gaia/phase_wiring.rb         # PHASE_MAP (19 phases), PHASE_ARGS, resolve/build helpers
+lib/legion/gaia/phase_wiring.rb         # PHASE_MAP (24 phases: 16 active + 8 dream), PHASE_ARGS, resolve/build helpers
 lib/legion/gaia/runner_host.rb          # Wraps runner modules with isolated instance state via extend
 lib/legion/gaia/sensory_buffer.rb       # Thread-safe signal queue (max 1000, normalized)
 lib/legion/gaia/actors/heartbeat.rb     # Every-1s actor, drains buffer and drives tick
@@ -148,23 +148,31 @@ Cognitive Output -> OutputFrame -> OutputRouter -> ChannelAwareRenderer -> Chann
 | Gem | Purpose |
 |-----|---------|
 | `base64` | Required (Ruby 3.4+ removed from default gems) |
+| `openssl` | Required for TLS/JWT operations |
+| `legion-apollo` (>= 0.2.1) | Apollo knowledge client library (knowledge_retrieval phase) |
 | `legion-json` | JSON serialization |
 | `legion-logging` | Logging (guarded by `const_defined?`) |
+| `legion-settings` | Configuration |
 | `lex-tick` | Tick orchestrator — GAIA is inoperable without this |
 | `lex-privatecore` | Privacy enforcement — safety layer for the cognitive stack |
-| `lex-agentic-affect` | Affective processing domain |
-| `lex-agentic-attention` | Attention management domain |
+| `lex-apollo` | Apollo knowledge service (knowledge_retrieval + knowledge_promotion phases) |
+| `lex-coldstart` | Cold-start progress tracking (procedural_check phase) |
+| `lex-detect` | Task observation (post_tick_reflection phase) |
+| `lex-mesh` | Mesh interface and topology (mesh_interface phase) |
+| `lex-synapse` | GAIA report and reflection (working_memory_integration, post_tick_reflection phases) |
+| `lex-agentic-affect` | Affective processing domain (emotional_evaluation, gut_instinct phases) |
+| `lex-agentic-attention` | Attention management domain (sensory_processing phase) |
 | `lex-agentic-defense` | Defense and threat response domain |
-| `lex-agentic-executive` | Executive function and goal management |
-| `lex-agentic-homeostasis` | Internal state regulation |
+| `lex-agentic-executive` | Executive function and goal management (action_selection phase) |
+| `lex-agentic-homeostasis` | Internal state regulation (homeostasis_regulation phase) |
 | `lex-agentic-imagination` | Creative and hypothetical reasoning |
-| `lex-agentic-inference` | Probabilistic inference domain |
+| `lex-agentic-inference` | Probabilistic inference domain (prediction_engine phase) |
 | `lex-agentic-integration` | Sensory integration domain |
-| `lex-agentic-language` | Language processing domain |
+| `lex-agentic-language` | Language processing domain (dream_narration phase) |
 | `lex-agentic-learning` | Learning and adaptation domain |
-| `lex-agentic-memory` | Memory management domain |
-| `lex-agentic-self` | Self-model and identity domain |
-| `lex-agentic-social` | Social cognition domain |
+| `lex-agentic-memory` | Memory management domain (memory_retrieval, memory_consolidation, dream cycle phases) |
+| `lex-agentic-self` | Self-model and identity domain (identity_entropy_check phase) |
+| `lex-agentic-social` | Social cognition domain (social_cognition, theory_of_mind phases) |
 
 ### Optional at runtime (not declared in gemspec)
 

@@ -2,7 +2,7 @@
 
 Cognitive coordination layer for the LegionIO framework. GAIA is the mind that inhabits the Legion body.
 
-**Version**: 0.9.17
+**Version**: 0.9.26
 
 GAIA sits on top of LegionIO's infrastructure and coordinates all agentic subordinate functions. It drives the tick cycle, manages extension discovery and wiring, and provides the channel abstraction for multi-interface communication.
 
@@ -23,7 +23,7 @@ Legion::Gaia.ingest                      OutputRouter -> NotificationGate -> Ren
     v                                        |
 SensoryBuffer -----> Heartbeat (1s) --> Cognitive Pipeline
                          |
-                    PhaseWiring (19 phases)
+                    PhaseWiring (24 phases)
                          |
                     Registry -> RunnerHost(s)
                          |
@@ -44,7 +44,7 @@ SensoryBuffer -----> Heartbeat (1s) --> Cognitive Pipeline
 gem 'legion-gaia'
 ```
 
-`legion-gaia` brings in its full cognitive dependency tree: `lex-tick` (tick orchestrator), `lex-privatecore` (privacy enforcement), and 13 `lex-agentic-*` consolidated domain gems (affect, attention, defense, executive, homeostasis, imagination, inference, integration, language, learning, memory, self, social). These replace the previous approach of individually declaring 242 cognitive extensions.
+`legion-gaia` brings in its full cognitive dependency tree: `lex-tick` (tick orchestrator), `lex-privatecore` (privacy enforcement), 5 operational extensions (`lex-apollo`, `lex-coldstart`, `lex-detect`, `lex-mesh`, `lex-synapse`), and 13 `lex-agentic-*` consolidated domain gems (affect, attention, defense, executive, homeostasis, imagination, inference, integration, language, learning, memory, self, social). It also declares a direct dependency on `legion-apollo` for the knowledge retrieval phase.
 
 ## Usage
 
@@ -102,11 +102,11 @@ gaia:
 
 ## Cognitive Phases
 
-GAIA wires 19 phases across two cycles:
+GAIA wires 24 phases across two cycles:
 
-**Active Tick (12 phases):** sensory processing, emotional evaluation, memory retrieval, identity entropy check, working memory integration, procedural check, prediction engine, mesh interface, gut instinct, action selection, memory consolidation, post-tick reflection.
+**Active Tick (16 phases):** sensory processing, emotional evaluation, memory retrieval, knowledge retrieval, identity entropy check, working memory integration, procedural check, prediction engine, mesh interface, social cognition, theory of mind, gut instinct, action selection, memory consolidation, homeostasis regulation, post-tick reflection.
 
-**Dream Cycle (7 phases):** memory audit, association walk, contradiction resolution, agenda formation, consolidation commit, dream reflection, dream narration.
+**Dream Cycle (8 phases):** memory audit, association walk, contradiction resolution, agenda formation, consolidation commit, knowledge promotion, dream reflection, dream narration.
 
 ## Channel Adapters
 
