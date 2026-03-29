@@ -57,6 +57,45 @@ RSpec.describe Legion::Gaia do
       result = described_class.heartbeat
       expect(result[:error]).to eq(:no_tick_extension)
     end
+
+    context 'when lex-tick is unavailable' do
+      before { described_class.boot }
+
+      it 'logs the warning on the first heartbeat' do
+        msg = '[gaia] lex-tick not available, will retry next heartbeat'
+        expect(described_class).to receive(:log_warn).with(msg).once
+        described_class.heartbeat
+      end
+
+      it 'does not log the warning on subsequent heartbeats' do
+        described_class.heartbeat
+        expect(described_class).not_to receive(:log_warn)
+        described_class.heartbeat
+        described_class.heartbeat
+      end
+
+      it 'logs the warning again after tick becomes available then unavailable again' do
+        registry = described_class.registry
+        mock_tick = instance_double('TickHost')
+        allow(mock_tick).to receive(:execute_tick).and_return({ results: {} })
+        allow(mock_tick).to receive(:last_tick_result=)
+
+        # First unavailability: warning fires once
+        expect(described_class).to receive(:log_warn).once
+        described_class.heartbeat
+
+        # Tick becomes available: resets the warned flag
+        allow(registry).to receive(:tick_host).and_return(mock_tick)
+        allow(registry).to receive(:phase_handlers).and_return({})
+        described_class.heartbeat
+
+        # Tick goes unavailable again: warning fires again
+        allow(registry).to receive(:tick_host).and_return(nil)
+        msg = '[gaia] lex-tick not available, will retry next heartbeat'
+        expect(described_class).to receive(:log_warn).with(msg).once
+        described_class.heartbeat
+      end
+    end
   end
 
   describe '.status' do

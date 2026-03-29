@@ -69,6 +69,7 @@ module Legion
         log_info 'Legion::Gaia shutting down'
 
         @started = false
+        @tick_unavailable_warned = false
         settings_hash = settings
         settings_hash[:connected] = false if settings_hash
 
@@ -106,9 +107,13 @@ module Legion
 
         tick_host = @registry.tick_host
         unless tick_host
-          log_warn '[gaia] lex-tick not available, will retry next heartbeat'
+          unless @tick_unavailable_warned
+            log_warn '[gaia] lex-tick not available, will retry next heartbeat'
+            @tick_unavailable_warned = true
+          end
           return { error: :no_tick_extension }
         end
+        @tick_unavailable_warned = false if @tick_unavailable_warned
 
         phase_handlers = @registry.phase_handlers
 
@@ -171,6 +176,7 @@ module Legion
       end
 
       def boot_agent
+        @tick_unavailable_warned = false
         @sensory_buffer = SensoryBuffer.new
         @registry = Registry.instance
         @registry.reset!

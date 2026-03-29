@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.9.29] - 2026-03-28
+
+### Fixed
+- Rate-limit the `[gaia] lex-tick not available` warning in `heartbeat` so it logs only once per unavailability window instead of every second; resets when tick becomes available again or on boot/shutdown
+
 ## [0.9.28] - 2026-03-28
 
 ### Added
