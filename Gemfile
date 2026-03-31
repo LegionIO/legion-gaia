@@ -9,6 +9,7 @@ gem 'legion-apollo', path: '../legion-apollo' if File.exist?(File.expand_path('.
 gem 'rake'
 gem 'rspec'
 gem 'rubocop'
+gem 'rubocop-legion'
 
 group :test do
   gem 'simplecov'
