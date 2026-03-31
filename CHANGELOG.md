@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.9.30] - 2026-03-31
+
+### Added
+- `BondRegistry` — partner identity management, hydrates from Apollo Local seed data
+- `TrackerPersistence` — flush/hydrate lifecycle for Apollo Local, 5-min interval dirty flush, flush-all on shutdown
+- `observe_interlocutor` in `Gaia.ingest` — extracts identity from auth_context, builds observation hash for tick phases
+- `human_observations` kwarg in PHASE_ARGS for social_cognition, theory_of_mind, emotional_evaluation
+- `direct_address` detection in channel adapters via `/\bgaia\b/i` pattern
+- Episodic memory traces for partner interactions (guarded by lex-agentic-memory)
+- `partner_observations` attr_reader on Gaia singleton, drained into tick state each heartbeat
+
 ## [0.9.29] - 2026-03-28
 
 ### Fixed

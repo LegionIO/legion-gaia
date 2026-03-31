@@ -26,16 +26,18 @@ require 'legion/gaia/notification_gate'
 require 'legion/gaia/notification_gate/schedule_evaluator'
 require 'legion/gaia/proactive'
 require 'legion/gaia/offline_handler'
+require 'legion/gaia/bond_registry'
+require 'legion/gaia/tracker_persistence'
 require 'legion/gaia/router'
 
 module Legion
-  module Gaia
-    class << self
+  module Gaia # rubocop:disable Metrics/ModuleLength
+    class << self # rubocop:disable Metrics/ClassLength
       include Legion::Gaia::Logging
       include Legion::Gaia::TeamsAuth
 
       attr_reader :sensory_buffer, :registry, :channel_registry, :output_router, :session_store,
-                  :router_bridge, :agent_bridge, :last_valences
+                  :router_bridge, :agent_bridge, :last_valences, :partner_observations
 
       def advise(conversation_id:, messages:, caller:)
         Advisory.advise(conversation_id: conversation_id, messages: messages, caller: caller)
@@ -73,6 +75,7 @@ module Legion
         settings_hash = settings
         settings_hash[:connected] = false if settings_hash
 
+        flush_trackers_on_shutdown
         @router_bridge&.stop
         @agent_bridge&.stop
         @channel_registry&.stop_all
@@ -83,6 +86,7 @@ module Legion
         @session_store = nil
         @router_bridge = nil
         @agent_bridge = nil
+        @partner_observations = nil
 
         log_info 'Legion::Gaia shut down'
       end
@@ -119,13 +123,19 @@ module Legion
 
         log_debug "[gaia] heartbeat: signals=#{signals.size} wired_phases=#{phase_handlers.size}"
 
-        result = tick_host.execute_tick(signals: signals, phase_handlers: phase_handlers)
+        observations = @partner_observations.dup
+        @partner_observations = []
+
+        result = tick_host.execute_tick(signals: signals, phase_handlers: phase_handlers,
+                                        partner_observations: observations)
 
         if result.is_a?(Hash) && result[:results]
           valence_result = result[:results][:emotional_evaluation]
           @last_valences = [valence_result[:valence]] if valence_result.is_a?(Hash) && valence_result[:valence]
           tick_host.last_tick_result = result
         end
+
+        maybe_flush_trackers
 
         result
       end
@@ -136,8 +146,11 @@ module Legion
         signal = input_frame.to_signal
         @sensory_buffer.push(signal)
 
-        session = @session_store&.find_or_create(identity: input_frame.auth_context[:identity] || :anonymous)
+        identity = extract_identity(input_frame)
+        session = @session_store&.find_or_create(identity: identity || :anonymous)
         @session_store&.touch(session.id, channel_id: input_frame.channel_id) if session
+
+        observe_interlocutor(input_frame, identity) if identity && identity != :anonymous
 
         { ingested: true, buffer_depth: @sensory_buffer.size, session_id: session&.id }
       end
@@ -177,6 +190,7 @@ module Legion
 
       def boot_agent
         @tick_unavailable_warned = false
+        @partner_observations = []
         @sensory_buffer = SensoryBuffer.new
         @registry = Registry.instance
         @registry.reset!
@@ -261,6 +275,81 @@ module Legion
           wired_phases: @registry.wired_count,
           phase_list: @registry.phase_list
         }
+      end
+
+      def extract_identity(input_frame)
+        ctx = input_frame.auth_context
+        return nil if ctx.nil? || ctx.empty?
+
+        ctx[:aad_object_id] || ctx[:identity] || ctx[:user_id]
+      end
+
+      def observe_interlocutor(input_frame, identity)
+        role = BondRegistry.role(identity.to_s)
+
+        observation = {
+          identity: identity.to_s,
+          bond_role: role,
+          channel: input_frame.channel_id,
+          content_type: input_frame.content_type,
+          content_length: input_frame.content.to_s.length,
+          direct_address: input_frame.metadata[:direct_address] || false,
+          timestamp: input_frame.received_at
+        }
+
+        @partner_observations ||= []
+        @partner_observations.push(observation)
+
+        record_interaction_trace(observation) if role == :partner
+      rescue StandardError => e
+        log_warn "observe_interlocutor error: #{e.message}"
+      end
+
+      def record_interaction_trace(observation)
+        return unless defined?(Legion::Extensions::Agentic::Memory::Trace::Runners::Traces)
+
+        runner = Object.new
+        runner.extend(Legion::Extensions::Agentic::Memory::Trace::Runners::Traces)
+        runner.store_trace(
+          type: :episodic,
+          content_payload: {
+            interaction_type: observation[:content_type],
+            channel: observation[:channel],
+            direct_address: observation[:direct_address],
+            bond_role: observation[:bond_role]
+          },
+          domain_tags: ['partner_interaction', observation[:channel].to_s],
+          origin: :direct_experience,
+          emotional_valence: @last_valences&.dig(0, :urgency).to_s,
+          emotional_intensity: 0.5,
+          confidence: 0.8
+        )
+      rescue StandardError => e
+        log_debug "Interaction trace error: #{e.message}"
+      end
+
+      def apollo_local_store
+        return nil unless defined?(Legion::Apollo::Local) && Legion::Apollo::Local.started?
+
+        Legion::Apollo::Local
+      rescue StandardError
+        nil
+      end
+
+      def maybe_flush_trackers
+        return unless TrackerPersistence.should_flush?
+
+        store = apollo_local_store
+        TrackerPersistence.flush_dirty(store: store) if store
+      rescue StandardError => e
+        log_debug "TrackerPersistence flush error: #{e.message}"
+      end
+
+      def flush_trackers_on_shutdown
+        store = apollo_local_store
+        TrackerPersistence.flush_all(store: store) if store
+      rescue StandardError => e
+        log_debug "TrackerPersistence shutdown flush error: #{e.message}"
       end
     end
   end

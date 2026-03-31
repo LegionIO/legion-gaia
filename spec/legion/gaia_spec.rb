@@ -159,6 +159,70 @@ RSpec.describe Legion::Gaia do
     end
   end
 
+  describe '.ingest with partner observation' do
+    before do
+      allow(Legion::Gaia::BondRegistry).to receive(:role).and_return(:unknown)
+
+      described_class.instance_variable_set(:@started, true)
+      described_class.instance_variable_set(:@sensory_buffer, Legion::Gaia::SensoryBuffer.new)
+      described_class.instance_variable_set(:@session_store, Legion::Gaia::SessionStore.new)
+      described_class.instance_variable_set(:@partner_observations, [])
+    end
+
+    it 'populates partner_observations buffer from auth_context identity' do
+      frame = Legion::Gaia::InputFrame.new(
+        content: 'hello',
+        channel_id: :cli,
+        auth_context: { identity: 'esity' }
+      )
+      described_class.ingest(frame)
+
+      obs = described_class.partner_observations
+      expect(obs.size).to eq(1)
+      expect(obs.first[:identity]).to eq('esity')
+      expect(obs.first[:bond_role]).to eq(:unknown)
+    end
+
+    it 'skips observation for anonymous identity' do
+      frame = Legion::Gaia::InputFrame.new(
+        content: 'hello',
+        channel_id: :cli,
+        auth_context: {}
+      )
+      described_class.ingest(frame)
+
+      expect(described_class.partner_observations).to be_empty
+    end
+
+    it 'detects partner role from BondRegistry' do
+      allow(Legion::Gaia::BondRegistry).to receive(:role).with('esity').and_return(:partner)
+
+      frame = Legion::Gaia::InputFrame.new(
+        content: 'hello',
+        channel_id: :teams,
+        auth_context: { identity: 'esity' }
+      )
+      described_class.ingest(frame)
+
+      obs = described_class.partner_observations.first
+      expect(obs[:bond_role]).to eq(:partner)
+      expect(obs[:channel]).to eq(:teams)
+    end
+
+    it 'extracts identity from aad_object_id fallback' do
+      frame = Legion::Gaia::InputFrame.new(
+        content: 'hello',
+        channel_id: :teams,
+        auth_context: { aad_object_id: 'aad-123', user_name: 'Test' }
+      )
+      described_class.ingest(frame)
+
+      obs = described_class.partner_observations
+      expect(obs.size).to eq(1)
+      expect(obs.first[:identity]).to eq('aad-123')
+    end
+  end
+
   describe 'VERSION' do
     it 'has a version number' do
       expect(Legion::Gaia::VERSION).not_to be_nil

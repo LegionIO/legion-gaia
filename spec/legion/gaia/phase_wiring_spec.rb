@@ -284,6 +284,40 @@ RSpec.describe Legion::Gaia::PhaseWiring do
     end
   end
 
+  describe 'PHASE_ARGS human_observations' do
+    it 'passes human_observations to social_cognition' do
+      args_lambda = described_class::PHASE_ARGS[:social_cognition]
+      ctx = { prior_results: { memory: :data }, state: { partner_observations: [{ identity: 'esity' }] },
+              signals: [], current_signal: nil, valences: {} }
+      result = args_lambda.call(ctx)
+      expect(result[:human_observations]).to eq([{ identity: 'esity' }])
+      expect(result[:tick_results]).to eq({ memory: :data })
+    end
+
+    it 'passes human_observations to theory_of_mind' do
+      args_lambda = described_class::PHASE_ARGS[:theory_of_mind]
+      ctx = { prior_results: {}, state: { partner_observations: [{ identity: 'esity' }] },
+              signals: [], current_signal: nil, valences: {} }
+      result = args_lambda.call(ctx)
+      expect(result[:human_observations]).to eq([{ identity: 'esity' }])
+    end
+
+    it 'passes human_observations to emotional_evaluation' do
+      args_lambda = described_class::PHASE_ARGS[:emotional_evaluation]
+      ctx = { prior_results: {}, state: { partner_observations: [{ identity: 'esity' }] },
+              signals: [], current_signal: nil, valences: {} }
+      result = args_lambda.call(ctx)
+      expect(result[:human_observations]).to eq([{ identity: 'esity' }])
+    end
+
+    it 'defaults to empty array when no observations' do
+      args_lambda = described_class::PHASE_ARGS[:social_cognition]
+      ctx = { prior_results: {}, state: {}, signals: [], current_signal: nil, valences: {} }
+      result = args_lambda.call(ctx)
+      expect(result[:human_observations]).to eq([])
+    end
+  end
+
   describe 'PHASE_ARGS knowledge_promotion' do
     let(:builder) { described_class::PHASE_ARGS[:knowledge_promotion] }
 

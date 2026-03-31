@@ -44,7 +44,10 @@ module Legion
           { signals: ctx[:signals] || [],
             active_wonders: ctx.dig(:prior_results, :agenda_formation, :agenda) || [] }
         },
-        emotional_evaluation: ->(ctx) { { signal: ctx[:current_signal] || {}, source_type: :ambient } },
+        emotional_evaluation: lambda { |ctx|
+          { signal: ctx[:current_signal] || {}, source_type: :ambient,
+            human_observations: ctx.dig(:state, :partner_observations) || [] }
+        },
         memory_retrieval: ->(_ctx) { { limit: knowledge_setting(:memory_retrieval_limit, 10) } },
         knowledge_retrieval: lambda { |ctx|
           current_signal = ctx[:signals]&.last
@@ -67,8 +70,14 @@ module Legion
         procedural_check: ->(_ctx) { {} },
         prediction_engine: ->(ctx) { { mode: :functional_mapping, context: ctx[:prior_results] || {} } },
         mesh_interface: ->(_ctx) { {} },
-        social_cognition: ->(ctx) { { tick_results: ctx[:prior_results] || {} } },
-        theory_of_mind: ->(ctx) { { tick_results: ctx[:prior_results] || {} } },
+        social_cognition: lambda { |ctx|
+          { tick_results: ctx[:prior_results] || {},
+            human_observations: ctx.dig(:state, :partner_observations) || [] }
+        },
+        theory_of_mind: lambda { |ctx|
+          { tick_results: ctx[:prior_results] || {},
+            human_observations: ctx.dig(:state, :partner_observations) || [] }
+        },
         gut_instinct: ->(ctx) { { valences: ctx[:valences] || [] } },
         action_selection: ->(ctx) { { tick_results: ctx[:prior_results] || {}, cognitive_state: {} } },
         working_memory_integration: ->(ctx) { { prior_results: ctx[:prior_results] || {} } },
