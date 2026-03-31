@@ -88,6 +88,8 @@ module Legion
         @router_bridge = nil
         @agent_bridge = nil
         @partner_observations = nil
+        @partner_absence_misses = 0
+        @last_valences = nil
 
         log_info 'Legion::Gaia shut down'
       end
@@ -135,6 +137,8 @@ module Legion
           @last_valences = [valence_result[:valence]] if valence_result.is_a?(Hash) && valence_result[:valence]
           tick_host.last_tick_result = result
         end
+
+        check_partner_absence(observations, phase_handlers)
 
         feed_notification_gate(result)
         @output_router&.process_delayed
@@ -195,6 +199,7 @@ module Legion
       def boot_agent
         @tick_unavailable_warned = false
         @partner_observations = []
+        @partner_absence_misses = 0
         @sensory_buffer = SensoryBuffer.new
         @registry = Registry.instance
         @registry.reset!
@@ -338,6 +343,43 @@ module Legion
         Legion::Apollo::Local
       rescue StandardError
         nil
+      end
+
+      def check_partner_absence(observations, phase_handlers)
+        has_partner = observations.any? { |o| o[:bond_role] == :partner }
+
+        if has_partner
+          @partner_absence_misses = 0
+          return
+        end
+
+        return unless phase_handlers.key?(:prediction_engine)
+
+        @partner_absence_misses += 1
+        inject_absence_valence(@partner_absence_misses)
+      rescue StandardError => e
+        log_debug "check_partner_absence error: #{e.message}"
+      end
+
+      def inject_absence_valence(consecutive_misses)
+        valence = absence_valence(consecutive_misses)
+        return unless valence
+
+        @last_valences ||= []
+        @last_valences.push(valence)
+        log_debug "[gaia] partner absence: misses=#{consecutive_misses} " \
+                  "importance=#{valence[:importance].round(2)}"
+      end
+
+      def absence_valence(consecutive_misses)
+        importance = if defined?(Legion::Extensions::Agentic::Affect::Emotion::Helpers::Valence)
+                       Legion::Extensions::Agentic::Affect::Emotion::Helpers::Valence
+                         .absence_importance(consecutive_misses)
+                     else
+                       [0.4 + (0.1 * Math.log(consecutive_misses + 1)), 0.7].min
+                     end
+
+        { urgency: 0.2, importance: importance, novelty: 0.1, familiarity: 0.8 }
       end
 
       def feed_notification_gate(result)

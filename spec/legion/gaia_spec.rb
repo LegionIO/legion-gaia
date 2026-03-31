@@ -157,6 +157,106 @@ RSpec.describe Legion::Gaia do
     end
   end
 
+  describe '.heartbeat partner absence' do
+    before { described_class.boot }
+
+    let(:mock_tick) { instance_double('TickHost') }
+
+    before do
+      allow(mock_tick).to receive(:execute_tick).and_return({ results: {} })
+      allow(mock_tick).to receive(:last_tick_result=)
+      allow(described_class.registry).to receive(:tick_host).and_return(mock_tick)
+    end
+
+    context 'when prediction_engine phase is wired' do
+      before do
+        allow(described_class.registry).to receive(:phase_handlers)
+          .and_return({ prediction_engine: ->(**) {} })
+      end
+
+      it 'increments absence counter when no partner observations' do
+        described_class.heartbeat
+        misses = described_class.instance_variable_get(:@partner_absence_misses)
+        expect(misses).to eq(1)
+      end
+
+      it 'accumulates consecutive misses' do
+        3.times { described_class.heartbeat }
+        misses = described_class.instance_variable_get(:@partner_absence_misses)
+        expect(misses).to eq(3)
+      end
+
+      it 'resets counter when partner is observed' do
+        described_class.heartbeat
+        described_class.heartbeat
+
+        described_class.instance_variable_set(:@partner_observations,
+                                              [{ bond_role: :partner, identity: 'test' }])
+        described_class.heartbeat
+
+        misses = described_class.instance_variable_get(:@partner_absence_misses)
+        expect(misses).to eq(0)
+      end
+
+      it 'injects absence valence into last_valences' do
+        described_class.heartbeat
+        valences = described_class.last_valences
+        expect(valences).to be_a(Array)
+        expect(valences.last[:urgency]).to eq(0.2)
+        expect(valences.last[:familiarity]).to eq(0.8)
+      end
+
+      it 'scales importance logarithmically with consecutive misses' do
+        described_class.heartbeat
+        low_importance = described_class.last_valences.last[:importance]
+
+        20.times { described_class.heartbeat }
+        high_importance = described_class.last_valences.last[:importance]
+
+        expect(high_importance).to be > low_importance
+      end
+
+      it 'caps importance at 0.7' do
+        100.times { described_class.heartbeat }
+        importance = described_class.last_valences.last[:importance]
+        expect(importance).to be <= 0.7
+      end
+    end
+
+    context 'when prediction_engine phase is not wired' do
+      before do
+        allow(described_class.registry).to receive(:phase_handlers).and_return({})
+      end
+
+      it 'does not increment absence counter' do
+        described_class.heartbeat
+        misses = described_class.instance_variable_get(:@partner_absence_misses)
+        expect(misses).to eq(0)
+      end
+
+      it 'does not inject absence valence' do
+        described_class.heartbeat
+        valences = described_class.last_valences
+        expect(valences).to be_nil
+      end
+    end
+
+    context 'when non-partner observations arrive' do
+      before do
+        allow(described_class.registry).to receive(:phase_handlers)
+          .and_return({ prediction_engine: ->(**) {} })
+        described_class.instance_variable_set(:@partner_observations,
+                                              [{ bond_role: :unknown, identity: 'visitor' }])
+      end
+
+      it 'still increments absence counter' do
+        described_class.heartbeat
+        misses = described_class.instance_variable_get(:@partner_absence_misses)
+        expect(misses).to eq(1)
+      end
+    end
+  end
+
   describe '.status' do
     it 'returns started: false when not booted' do
       expect(described_class.status).to eq({ started: false })
