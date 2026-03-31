@@ -18,17 +18,17 @@ RSpec.describe Legion::Gaia::PhaseWiring do
       end
     end
 
-    it 'contains all 8 dream cycle phases' do
+    it 'contains all 9 dream cycle phases' do
       dream_phases = %i[memory_audit association_walk contradiction_resolution
                         agenda_formation consolidation_commit knowledge_promotion
-                        dream_reflection dream_narration]
+                        dream_reflection partner_reflection dream_narration]
       dream_phases.each do |phase|
         expect(described_class::PHASE_MAP).to have_key(phase)
       end
     end
 
-    it 'has 24 total phases' do
-      expect(described_class::PHASE_MAP.size).to eq(24)
+    it 'has 25 total phases' do
+      expect(described_class::PHASE_MAP.size).to eq(25)
     end
 
     it 'each mapping has ext, runner, and fn keys' do
@@ -334,6 +334,39 @@ RSpec.describe Legion::Gaia::PhaseWiring do
       expect(result[:content_type]).to eq(:observation)
       expect(result[:tags]).to include('dream_cycle')
       expect(result[:source_agent]).to eq('gaia')
+    end
+  end
+
+  describe 'partner_reflection phase' do
+    it 'exists in PHASE_MAP' do
+      expect(described_class::PHASE_MAP).to have_key(:partner_reflection)
+    end
+
+    it 'targets Social Attachment runner' do
+      entry = described_class::PHASE_MAP[:partner_reflection]
+      expect(entry[:ext]).to eq(:Social)
+      expect(entry[:runner]).to eq(:Attachment)
+      expect(entry[:fn]).to eq(:reflect_on_bonds)
+    end
+
+    it 'has PHASE_ARGS lambda' do
+      expect(described_class::PHASE_ARGS).to have_key(:partner_reflection)
+      expect(described_class::PHASE_ARGS[:partner_reflection]).to respond_to(:call)
+    end
+
+    it 'PHASE_ARGS returns tick_results and bond_summary' do
+      ctx = { prior_results: { dream_reflection: { insight: 'test' } } }
+      args = described_class::PHASE_ARGS[:partner_reflection].call(ctx)
+      expect(args).to have_key(:tick_results)
+      expect(args).to have_key(:bond_summary)
+      expect(args[:bond_summary]).to eq({ insight: 'test' })
+    end
+
+    it 'PHASE_ARGS handles nil prior_results' do
+      ctx = { prior_results: nil }
+      args = described_class::PHASE_ARGS[:partner_reflection].call(ctx)
+      expect(args[:tick_results]).to eq({})
+      expect(args[:bond_summary]).to eq({})
     end
   end
 end

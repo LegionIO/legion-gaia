@@ -36,6 +36,7 @@ module Legion
         consolidation_commit: { ext: :Memory, runner: :Consolidation, fn: :migrate_tier },
         knowledge_promotion: { ext: :Apollo, runner: :Knowledge, fn: :handle_ingest },
         dream_reflection: { ext: :Reflection, runner: :Reflection, fn: :reflect },
+        partner_reflection: { ext: :Social, runner: :Attachment, fn: :reflect_on_bonds },
         dream_narration: { ext: :Narrator, runner: :Narrator, fn: :narrate }
       }.freeze
 
@@ -104,6 +105,10 @@ module Legion
             source_agent: 'gaia', source_channel: 'dream_cycle' }
         },
         dream_reflection: ->(ctx) { { tick_results: ctx[:prior_results] || {} } },
+        partner_reflection: lambda { |ctx|
+          { tick_results: ctx[:prior_results] || {},
+            bond_summary: ctx.dig(:prior_results, :dream_reflection) || {} }
+        },
         dream_narration: lambda { |ctx|
           { tick_results: ctx[:prior_results] || {}, cognitive_state: { source: :dream } }
         }
