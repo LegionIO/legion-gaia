@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.9.31] - 2026-03-31
+
+### Added
+- NotificationGate signal feeds: heartbeat feeds arousal from emotional_evaluation valence and Teams presence status into the gate
+- `process_delayed` call in heartbeat — delayed notification frames are now retried each tick
+- `last_presence_status` and `update_presence_status` on TeamsAdapter for presence signal tracking
+- `@notification_gate` stored as instance variable for direct heartbeat access
+
 ## [0.9.30] - 2026-03-31
 
 ### Added

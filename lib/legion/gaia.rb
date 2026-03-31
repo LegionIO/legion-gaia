@@ -84,6 +84,7 @@ module Legion
         @channel_registry = nil
         @output_router = nil
         @session_store = nil
+        @notification_gate = nil
         @router_bridge = nil
         @agent_bridge = nil
         @partner_observations = nil
@@ -103,7 +104,7 @@ module Legion
         end
       end
 
-      def heartbeat(**)
+      def heartbeat(**) # rubocop:disable Metrics/MethodLength
         return { error: :not_started } unless started?
 
         signals = @sensory_buffer.drain
@@ -134,6 +135,9 @@ module Legion
           @last_valences = [valence_result[:valence]] if valence_result.is_a?(Hash) && valence_result[:valence]
           tick_host.last_tick_result = result
         end
+
+        feed_notification_gate(result)
+        @output_router&.process_delayed
 
         maybe_flush_trackers
 
@@ -234,9 +238,9 @@ module Legion
         @session_store = SessionStore.new(ttl: settings&.dig(:session, :ttl) || 86_400)
 
         renderer = ChannelAwareRenderer.new(settings: settings || {})
-        notification_gate = NotificationGate.new(settings: settings || {})
+        @notification_gate = NotificationGate.new(settings: settings || {})
         @output_router = OutputRouter.new(channel_registry: @channel_registry, renderer: renderer,
-                                          notification_gate: notification_gate)
+                                          notification_gate: @notification_gate)
 
         ChannelAdapter.adapter_classes.each do |klass|
           adapter = klass.from_settings(settings)
@@ -334,6 +338,40 @@ module Legion
         Legion::Apollo::Local
       rescue StandardError
         nil
+      end
+
+      def feed_notification_gate(result)
+        return unless @notification_gate && result.is_a?(Hash) && result[:results]
+
+        if (valence = result.dig(:results, :emotional_evaluation, :valence))
+          arousal = compute_arousal(valence)
+          @notification_gate.update_behavioral(arousal: arousal) if arousal
+        end
+
+        feed_presence_to_gate
+      rescue StandardError => e
+        log_debug "feed_notification_gate error: #{e.message}"
+      end
+
+      def compute_arousal(valence)
+        return nil unless valence.is_a?(Hash)
+
+        urgency = valence[:urgency].to_f
+        novelty = valence[:novelty].to_f
+        importance = valence[:importance].to_f
+        ((urgency + novelty + importance) / 3.0).clamp(0.0, 1.0)
+      end
+
+      def feed_presence_to_gate
+        return unless @notification_gate && @channel_registry
+
+        teams_adapter = @channel_registry.adapter_for(:teams)
+        return unless teams_adapter.respond_to?(:last_presence_status)
+
+        status = teams_adapter.last_presence_status
+        @notification_gate.update_presence(availability: status) if status
+      rescue StandardError => e
+        log_debug "feed_presence_to_gate error: #{e.message}"
       end
 
       def maybe_flush_trackers

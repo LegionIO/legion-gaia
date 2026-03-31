@@ -98,6 +98,65 @@ RSpec.describe Legion::Gaia do
     end
   end
 
+  describe '.heartbeat notification gate feeds' do
+    before { described_class.boot }
+
+    context 'when tick host is available' do
+      let(:mock_tick) { instance_double('TickHost') }
+
+      before do
+        allow(mock_tick).to receive(:execute_tick).and_return({
+                                                                results: { emotional_evaluation: { valence: {
+                                                                  urgency: 0.6, novelty: 0.4, importance: 0.8
+                                                                } } }
+                                                              })
+        allow(mock_tick).to receive(:last_tick_result=)
+        allow(described_class.registry).to receive(:tick_host).and_return(mock_tick)
+        allow(described_class.registry).to receive(:phase_handlers).and_return({})
+      end
+
+      it 'feeds arousal to the notification gate' do
+        gate = described_class.output_router.notification_gate
+        expect(gate).to receive(:update_behavioral).with(arousal: be_between(0.0, 1.0))
+        described_class.heartbeat
+      end
+
+      it 'calls process_delayed on the output router' do
+        expect(described_class.output_router).to receive(:process_delayed)
+        described_class.heartbeat
+      end
+
+      it 'computes arousal as mean of urgency, novelty, importance' do
+        gate = described_class.output_router.notification_gate
+        # (0.6 + 0.4 + 0.8) / 3.0 = 0.6
+        expect(gate).to receive(:update_behavioral).with(arousal: be_within(0.01).of(0.6))
+        described_class.heartbeat
+      end
+    end
+
+    context 'when tick result has no valence' do
+      let(:mock_tick) { instance_double('TickHost') }
+
+      before do
+        allow(mock_tick).to receive(:execute_tick).and_return({ results: {} })
+        allow(mock_tick).to receive(:last_tick_result=)
+        allow(described_class.registry).to receive(:tick_host).and_return(mock_tick)
+        allow(described_class.registry).to receive(:phase_handlers).and_return({})
+      end
+
+      it 'does not feed arousal to the notification gate' do
+        gate = described_class.output_router.notification_gate
+        expect(gate).not_to receive(:update_behavioral)
+        described_class.heartbeat
+      end
+
+      it 'still calls process_delayed' do
+        expect(described_class.output_router).to receive(:process_delayed)
+        described_class.heartbeat
+      end
+    end
+  end
+
   describe '.status' do
     it 'returns started: false when not booted' do
       expect(described_class.status).to eq({ started: false })
