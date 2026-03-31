@@ -46,6 +46,7 @@ module Legion
             metadata: {
               source_type: :human_direct,
               salience: 0.9,
+              direct_address: direct_address?(text.strip),
               conversation_id: conversation['id'] || conversation[:id],
               activity_id: activity['id'] || activity[:id],
               activity_type: activity['type'] || activity[:type]

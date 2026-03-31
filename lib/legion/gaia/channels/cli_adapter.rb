@@ -26,7 +26,7 @@ module Legion
             content_type: :text,
             channel_capabilities: CAPABILITIES,
             device_context: { platform: :desktop, input_method: :keyboard },
-            metadata: { source_type: :human_direct, salience: 0.9 }
+            metadata: { source_type: :human_direct, salience: 0.9, direct_address: direct_address?(text) }
           )
         end
 

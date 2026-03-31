@@ -57,6 +57,14 @@ module Legion
       def supports?(capability)
         capabilities.include?(capability)
       end
+
+      private
+
+      DIRECT_ADDRESS_PATTERN = /\bgaia\b/i
+
+      def direct_address?(content)
+        content.to_s.match?(DIRECT_ADDRESS_PATTERN)
+      end
     end
   end
 end
