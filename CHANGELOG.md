@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.9.32] - 2026-03-31
+
+### Added
+- Partner absence emotional response: heartbeat tracks consecutive ticks without partner observations when prediction_engine phase is wired
+- `check_partner_absence` injects absence valence into `@last_valences` with logarithmic importance scaling (0.4 base, capped at 0.7)
+- Absence valence uses lex-agentic-affect `Helpers::Valence.absence_importance` when available, inline fallback otherwise
+- `@last_valences` cleared on shutdown to prevent state leakage
+
+## [0.9.31] - 2026-03-31
+
+### Added
+- NotificationGate signal feeds: heartbeat feeds arousal from emotional_evaluation valence and Teams presence status into the gate
+- `process_delayed` call in heartbeat — delayed notification frames are now retried each tick
+- `last_presence_status` and `update_presence_status` on TeamsAdapter for presence signal tracking
+- `@notification_gate` stored as instance variable for direct heartbeat access
+
 ## [0.9.30] - 2026-03-31
 
 ### Added

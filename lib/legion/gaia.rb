@@ -84,9 +84,12 @@ module Legion
         @channel_registry = nil
         @output_router = nil
         @session_store = nil
+        @notification_gate = nil
         @router_bridge = nil
         @agent_bridge = nil
         @partner_observations = nil
+        @partner_absence_misses = 0
+        @last_valences = nil
 
         log_info 'Legion::Gaia shut down'
       end
@@ -103,7 +106,7 @@ module Legion
         end
       end
 
-      def heartbeat(**)
+      def heartbeat(**) # rubocop:disable Metrics/MethodLength
         return { error: :not_started } unless started?
 
         signals = @sensory_buffer.drain
@@ -134,6 +137,11 @@ module Legion
           @last_valences = [valence_result[:valence]] if valence_result.is_a?(Hash) && valence_result[:valence]
           tick_host.last_tick_result = result
         end
+
+        check_partner_absence(observations, phase_handlers)
+
+        feed_notification_gate(result)
+        @output_router&.process_delayed
 
         maybe_flush_trackers
 
@@ -191,6 +199,7 @@ module Legion
       def boot_agent
         @tick_unavailable_warned = false
         @partner_observations = []
+        @partner_absence_misses = 0
         @sensory_buffer = SensoryBuffer.new
         @registry = Registry.instance
         @registry.reset!
@@ -234,9 +243,9 @@ module Legion
         @session_store = SessionStore.new(ttl: settings&.dig(:session, :ttl) || 86_400)
 
         renderer = ChannelAwareRenderer.new(settings: settings || {})
-        notification_gate = NotificationGate.new(settings: settings || {})
+        @notification_gate = NotificationGate.new(settings: settings || {})
         @output_router = OutputRouter.new(channel_registry: @channel_registry, renderer: renderer,
-                                          notification_gate: notification_gate)
+                                          notification_gate: @notification_gate)
 
         ChannelAdapter.adapter_classes.each do |klass|
           adapter = klass.from_settings(settings)
@@ -334,6 +343,77 @@ module Legion
         Legion::Apollo::Local
       rescue StandardError
         nil
+      end
+
+      def check_partner_absence(observations, phase_handlers)
+        has_partner = observations.any? { |o| o[:bond_role] == :partner }
+
+        if has_partner
+          @partner_absence_misses = 0
+          return
+        end
+
+        return unless phase_handlers.key?(:prediction_engine)
+
+        @partner_absence_misses += 1
+        inject_absence_valence(@partner_absence_misses)
+      rescue StandardError => e
+        log_debug "check_partner_absence error: #{e.message}"
+      end
+
+      def inject_absence_valence(consecutive_misses)
+        valence = absence_valence(consecutive_misses)
+        return unless valence
+
+        @last_valences ||= []
+        @last_valences.push(valence)
+        log_debug "[gaia] partner absence: misses=#{consecutive_misses} " \
+                  "importance=#{valence[:importance].round(2)}"
+      end
+
+      def absence_valence(consecutive_misses)
+        importance = if defined?(Legion::Extensions::Agentic::Affect::Emotion::Helpers::Valence)
+                       Legion::Extensions::Agentic::Affect::Emotion::Helpers::Valence
+                         .absence_importance(consecutive_misses)
+                     else
+                       [0.4 + (0.1 * Math.log(consecutive_misses + 1)), 0.7].min
+                     end
+
+        { urgency: 0.2, importance: importance, novelty: 0.1, familiarity: 0.8 }
+      end
+
+      def feed_notification_gate(result)
+        return unless @notification_gate && result.is_a?(Hash) && result[:results]
+
+        if (valence = result.dig(:results, :emotional_evaluation, :valence))
+          arousal = compute_arousal(valence)
+          @notification_gate.update_behavioral(arousal: arousal) if arousal
+        end
+
+        feed_presence_to_gate
+      rescue StandardError => e
+        log_debug "feed_notification_gate error: #{e.message}"
+      end
+
+      def compute_arousal(valence)
+        return nil unless valence.is_a?(Hash)
+
+        urgency = valence[:urgency].to_f
+        novelty = valence[:novelty].to_f
+        importance = valence[:importance].to_f
+        ((urgency + novelty + importance) / 3.0).clamp(0.0, 1.0)
+      end
+
+      def feed_presence_to_gate
+        return unless @notification_gate && @channel_registry
+
+        teams_adapter = @channel_registry.adapter_for(:teams)
+        return unless teams_adapter.respond_to?(:last_presence_status)
+
+        status = teams_adapter.last_presence_status
+        @notification_gate.update_presence(availability: status) if status
+      rescue StandardError => e
+        log_debug "feed_presence_to_gate error: #{e.message}"
       end
 
       def maybe_flush_trackers

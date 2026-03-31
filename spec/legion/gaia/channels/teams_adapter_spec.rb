@@ -166,6 +166,23 @@ RSpec.describe Legion::Gaia::Channels::TeamsAdapter do
     end
   end
 
+  describe '#last_presence_status' do
+    it 'is nil by default' do
+      expect(adapter.last_presence_status).to be_nil
+    end
+
+    it 'stores presence status via update_presence_status' do
+      adapter.update_presence_status(:Available)
+      expect(adapter.last_presence_status).to eq(:Available)
+    end
+
+    it 'updates presence status' do
+      adapter.update_presence_status(:Available)
+      adapter.update_presence_status(:Busy)
+      expect(adapter.last_presence_status).to eq(:Busy)
+    end
+  end
+
   describe '#deliver_proactive' do
     it 'returns error when no target_user in frame metadata' do
       frame = Legion::Gaia::OutputFrame.new(content: 'hi', channel_id: :teams)

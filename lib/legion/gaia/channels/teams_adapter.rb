@@ -12,7 +12,7 @@ module Legion
         MOBILE_CAPABILITIES = %i[rich_text adaptive_cards mobile mentions].freeze
         DESKTOP_CAPABILITIES = %i[rich_text adaptive_cards desktop mentions file_attachment].freeze
 
-        attr_reader :conversation_store, :app_id
+        attr_reader :conversation_store, :app_id, :last_presence_status
 
         def self.from_settings(settings)
           return nil unless settings&.dig(:channels, :teams, :enabled)
@@ -24,6 +24,11 @@ module Legion
           super(channel_id: :teams, capabilities: CAPABILITIES)
           @app_id = app_id
           @conversation_store = Teams::ConversationStore.new
+          @last_presence_status = nil
+        end
+
+        def update_presence_status(status)
+          @last_presence_status = status
         end
 
         def translate_inbound(activity)
