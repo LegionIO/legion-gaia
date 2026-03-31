@@ -74,7 +74,9 @@ module Legion
         end
         tracker.mark_clean!
       rescue StandardError => e
-        Legion::Logging.warn "TrackerPersistence flush error for #{tracker.class}: #{e.message}" if defined?(Legion::Logging)
+        if defined?(Legion::Logging)
+          Legion::Logging.warn "TrackerPersistence flush error for #{tracker.class}: #{e.message}"
+        end
       end
       private_class_method :flush_tracker
     end

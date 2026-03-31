@@ -16,8 +16,8 @@ RSpec.describe Legion::Gaia::TrackerPersistence do
   describe '.flush_dirty' do
     it 'flushes trackers that report dirty' do
       tracker = double('tracker', dirty?: true, to_apollo_entries: [
-        { content: '{"standing":"exemplary"}', tags: %w[social_graph reputation esity] }
-      ], mark_clean!: nil)
+                         { content: '{"standing":"exemplary"}', tags: %w[social_graph reputation esity] }
+                       ], mark_clean!: nil)
 
       described_class.register_tracker(:social_graph, tracker: tracker, tags: ['social_graph'])
 
@@ -40,8 +40,8 @@ RSpec.describe Legion::Gaia::TrackerPersistence do
   describe '.flush_all' do
     it 'flushes all trackers regardless of dirty state' do
       tracker = double('tracker', dirty?: false, to_apollo_entries: [
-        { content: '{}', tags: ['test'] }
-      ], mark_clean!: nil)
+                         { content: '{}', tags: ['test'] }
+                       ], mark_clean!: nil)
 
       described_class.register_tracker(:test, tracker: tracker, tags: ['test'])
 

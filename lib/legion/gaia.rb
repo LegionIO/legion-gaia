@@ -31,8 +31,8 @@ require 'legion/gaia/tracker_persistence'
 require 'legion/gaia/router'
 
 module Legion
-  module Gaia
-    class << self
+  module Gaia # rubocop:disable Metrics/ModuleLength
+    class << self # rubocop:disable Metrics/ClassLength
       include Legion::Gaia::Logging
       include Legion::Gaia::TeamsAuth
 
@@ -103,7 +103,7 @@ module Legion
         end
       end
 
-      def heartbeat(**) # rubocop:disable Metrics/AbcSize,Metrics/MethodLength
+      def heartbeat(**)
         return { error: :not_started } unless started?
 
         signals = @sensory_buffer.drain
@@ -140,7 +140,7 @@ module Legion
         result
       end
 
-      def ingest(input_frame) # rubocop:disable Metrics/AbcSize
+      def ingest(input_frame)
         return { ingested: false, reason: :not_started } unless started?
 
         signal = input_frame.to_signal
@@ -320,7 +320,7 @@ module Legion
           },
           domain_tags: ['partner_interaction', observation[:channel].to_s],
           origin: :direct_experience,
-          emotional_valence: @last_valences&.dig(0, :urgency).to_s || '0.0',
+          emotional_valence: @last_valences&.dig(0, :urgency).to_s,
           emotional_intensity: 0.5,
           confidence: 0.8
         )

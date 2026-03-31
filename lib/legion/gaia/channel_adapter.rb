@@ -54,13 +54,13 @@ module Legion
         raise NotImplementedError, "#{self.class}#deliver must be implemented"
       end
 
+      DIRECT_ADDRESS_PATTERN = /\bgaia\b/i
+
       def supports?(capability)
         capabilities.include?(capability)
       end
 
       private
-
-      DIRECT_ADDRESS_PATTERN = /\bgaia\b/i
 
       def direct_address?(content)
         content.to_s.match?(DIRECT_ADDRESS_PATTERN)

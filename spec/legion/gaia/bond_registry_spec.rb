@@ -50,11 +50,11 @@ RSpec.describe Legion::Gaia::BondRegistry do
   describe '.hydrate_from_apollo' do
     it 'loads partner identities from Apollo Local seed data' do
       stub_apollo = double('Apollo::Local')
-      allow(stub_apollo).to receive(:query).and_return({
+      seed_content = "Identity keys: esity, miverso2\nBond type: partner, creator\nBond priority: primary"
+      allow(stub_apollo).to receive(:query).and_return(
         success: true,
-        results: [{ content: "Identity keys: esity, miverso2\nBond type: partner, creator\nBond priority: primary",
-                     tags: %w[partner bond self-knowledge] }]
-      })
+        results: [{ content: seed_content, tags: %w[partner bond self-knowledge] }]
+      )
       described_class.hydrate_from_apollo(store: stub_apollo)
       expect(described_class.partner?('esity')).to be true
       expect(described_class.partner?('miverso2')).to be true
