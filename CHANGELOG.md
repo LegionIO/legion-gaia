@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.9.33] - 2026-03-31
+
+### Added
+- Wire `partner_reflection` dream phase in PHASE_MAP + PHASE_ARGS (Phase C bond reflection)
+
 ## [0.9.32] - 2026-03-31
 
 ### Added
