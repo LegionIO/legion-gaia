@@ -26,6 +26,8 @@ require 'legion/gaia/notification_gate'
 require 'legion/gaia/notification_gate/schedule_evaluator'
 require 'legion/gaia/proactive'
 require 'legion/gaia/offline_handler'
+require 'legion/gaia/bond_registry'
+require 'legion/gaia/tracker_persistence'
 require 'legion/gaia/router'
 
 module Legion
