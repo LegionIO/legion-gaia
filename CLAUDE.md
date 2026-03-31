@@ -16,7 +16,7 @@ lib/legion/gaia.rb                      # Entry point: boot, shutdown, heartbeat
 lib/legion/gaia/version.rb              # VERSION constant
 lib/legion/gaia/settings.rb             # Default config hash (channels, router, session, output)
 lib/legion/gaia/registry.rb             # Extension discovery, runner wiring, phase handler management
-lib/legion/gaia/phase_wiring.rb         # PHASE_MAP (24 phases: 16 active + 8 dream), PHASE_ARGS, resolve/build helpers
+lib/legion/gaia/phase_wiring.rb         # PHASE_MAP (25 phases: 16 active + 9 dream), PHASE_ARGS, resolve/build helpers
 lib/legion/gaia/runner_host.rb          # Wraps runner modules with isolated instance state via extend
 lib/legion/gaia/sensory_buffer.rb       # Thread-safe signal queue (max 1000, normalized)
 lib/legion/gaia/actors/heartbeat.rb     # Every-1s actor, drains buffer and drives tick
