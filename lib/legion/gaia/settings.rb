@@ -39,7 +39,7 @@ module Legion
 
       def default_notifications
         {
-          enabled: false,
+          enabled: true,
           quiet_hours: { enabled: false, schedule: [] },
           priority_override: :urgent,
           delay_queue_max: 100,
