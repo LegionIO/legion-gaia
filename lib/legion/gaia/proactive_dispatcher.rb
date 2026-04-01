@@ -126,7 +126,10 @@ module Legion
       end
 
       def resolve_partner_channel
-        nil # Uses default channel routing via NotificationGate
+        return nil unless defined?(Legion::Gaia::BondRegistry)
+
+        bond = Legion::Gaia::BondRegistry.all_bonds.find { |b| b[:role] == :partner }
+        bond&.dig(:preferred_channel) || bond&.dig(:last_channel)
       end
     end
   end

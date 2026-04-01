@@ -1,5 +1,8 @@
 # frozen_string_literal: true
 
+require 'json'
+require 'net/http'
+require 'uri'
 require_relative 'slack/signing_verifier'
 
 module Legion
@@ -127,8 +130,36 @@ module Legion
           Legion::Extensions::Slack::Runners::Chat.send(message: message, webhook: webhook)
         end
 
-        def deliver_via_api(_content)
-          { error: :not_implemented, message: 'Bot token API delivery not yet implemented' }
+        def deliver_via_api(content)
+          return { error: :no_bot_token } unless @bot_token
+
+          text = content.is_a?(Hash) ? content[:text] : content.to_s
+          channel = (content.is_a?(Hash) && content[:channel]) || @channel_id.to_s
+          post_to_slack_api(channel: channel, text: text)
+        rescue StandardError => e
+          { error: :network_error, message: e.message }
+        end
+
+        def post_to_slack_api(channel:, text:)
+          uri = URI('https://slack.com/api/chat.postMessage')
+          http = Net::HTTP.new(uri.host, uri.port)
+          http.use_ssl = true
+
+          request = Net::HTTP::Post.new(uri.path)
+          request['Authorization'] = "Bearer #{@bot_token}"
+          request['Content-Type'] = 'application/json'
+          request.body = ::JSON.generate({ channel: channel, text: text })
+
+          response = http.request(request)
+          parsed = ::JSON.parse(response.body, symbolize_names: true)
+
+          if parsed[:ok]
+            { delivered: true, ts: parsed[:ts] }
+          else
+            { error: parsed[:error] || :unknown_error }
+          end
+        rescue StandardError => e
+          { error: :network_error, message: e.message }
         end
 
         def deliver_via_api_to_channel(content)

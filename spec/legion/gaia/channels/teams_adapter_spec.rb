@@ -117,7 +117,7 @@ RSpec.describe Legion::Gaia::Channels::TeamsAdapter do
       expect(result[:error]).to eq(:no_conversation_reference)
     end
 
-    it 'returns error when conversation_id is nil' do
+    it 'returns error when conversation_id is nil and no default configured' do
       result = adapter.deliver('hello')
       expect(result[:error]).to eq(:no_conversation_reference)
     end
@@ -126,6 +126,25 @@ RSpec.describe Legion::Gaia::Channels::TeamsAdapter do
       adapter.translate_inbound(base_activity)
       result = adapter.deliver({ type: 'text', text: 'hello' }, conversation_id: 'conv-1')
       expect(result[:error]).to eq(:bot_runner_not_available)
+    end
+
+    context 'with default_conversation_id configured (Fix 4)' do
+      subject(:adapter_with_default) do
+        described_class.new(app_id: 'test-app-id', default_conversation_id: 'conv-1')
+      end
+
+      before { adapter_with_default.translate_inbound(base_activity) }
+
+      it 'uses default_conversation_id when no conversation_id passed' do
+        result = adapter_with_default.deliver({ type: 'text', text: 'hello' })
+        # Bot runner not available in test — but we reached it (past the reference check)
+        expect(result[:error]).to eq(:bot_runner_not_available)
+      end
+
+      it 'explicit conversation_id overrides default' do
+        result = adapter_with_default.deliver({ type: 'text', text: 'hello' }, conversation_id: 'nonexistent')
+        expect(result[:error]).to eq(:no_conversation_reference)
+      end
     end
   end
 

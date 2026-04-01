@@ -231,6 +231,7 @@ module Legion
         @registry.discover
         boot_channels
         boot_agent_bridge
+        hydrate_from_apollo_local
       end
 
       def boot_router
@@ -489,6 +490,16 @@ module Legion
         TrackerPersistence.flush_all(store: store) if store
       rescue StandardError => e
         log_debug "TrackerPersistence shutdown flush error: #{e.message}"
+      end
+
+      def hydrate_from_apollo_local
+        store = apollo_local_store
+        return unless store
+
+        TrackerPersistence.hydrate_all(store: store) if defined?(TrackerPersistence)
+        BondRegistry.hydrate_from_apollo(store: store) if defined?(BondRegistry)
+      rescue StandardError => e
+        log_debug "Apollo Local hydration error on boot: #{e.message}"
       end
 
       def process_dream_proactive(dream_results)

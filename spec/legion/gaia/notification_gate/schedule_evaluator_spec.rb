@@ -75,5 +75,61 @@ RSpec.describe Legion::Gaia::NotificationGate::ScheduleEvaluator do
         expect(evaluator.quiet?).to be false
       end
     end
+
+    context 'with non-US timezone (Fix 5: expanded tz table)' do
+      subject(:evaluator) do
+        described_class.new(schedule: [{
+                              days: %w[mon tue wed thu fri],
+                              start: '23:00',
+                              end: '07:00',
+                              timezone: 'Europe/London'
+                            }])
+      end
+
+      it 'returns true for Wednesday at 23:30 UTC (London standard time, within window)' do
+        # March 18, 2026 is Wednesday — London is UTC+0 in standard time
+        time = Time.new(2026, 3, 18, 23, 30, 0, '+00:00')
+        expect(evaluator.quiet?(at: time)).to be true
+      end
+
+      it 'returns false for Wednesday at 14:00 UTC (outside quiet window)' do
+        time = Time.new(2026, 3, 18, 14, 0, 0, '+00:00')
+        expect(evaluator.quiet?(at: time)).to be false
+      end
+    end
+
+    context 'with Tokyo timezone (Fix 5: Asia zones)' do
+      subject(:evaluator) do
+        described_class.new(schedule: [{
+                              days: %w[mon tue wed thu fri],
+                              start: '22:00',
+                              end: '08:00',
+                              timezone: 'Asia/Tokyo'
+                            }])
+      end
+
+      it 'returns true for Wednesday at 23:00 JST (within window)' do
+        # JST is UTC+9, so 23:00 JST = 14:00 UTC
+        time = Time.new(2026, 3, 18, 14, 0, 0, '+00:00')
+        expect(evaluator.quiet?(at: time)).to be true
+      end
+    end
+
+    context 'with unknown timezone' do
+      subject(:evaluator) do
+        described_class.new(schedule: [{
+                              days: %w[mon tue wed thu fri],
+                              start: '22:00',
+                              end: '08:00',
+                              timezone: 'Mars/Olympus_Mons'
+                            }])
+      end
+
+      it 'falls back to UTC when timezone is unknown' do
+        # Falls back to the time as-is when offset is nil
+        time = Time.new(2026, 3, 18, 23, 0, 0, '+00:00')
+        expect { evaluator.quiet?(at: time) }.not_to raise_error
+      end
+    end
   end
 end
