@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require 'time'
+
 module Legion
   module Gaia
     class TickHistory
@@ -33,7 +35,7 @@ module Legion
 
       def recent(limit: 50)
         @mutex.synchronize do
-          @entries.last(limit).dup
+          @entries.last(limit).map(&:dup)
         end
       end
 

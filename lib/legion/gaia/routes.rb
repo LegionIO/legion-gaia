@@ -74,7 +74,16 @@ module Legion
 
       def self.register_ticks_route(app)
         app.get '/api/gaia/ticks' do
-          limit = (params[:limit] || 50).to_i.clamp(1, 200)
+          halt 503, json_error('gaia_unavailable', 'gaia is not started', status_code: 503) unless gaia_available?
+
+          max_limit =
+            if defined?(Legion::Gaia::TickHistory) && Legion::Gaia::TickHistory.const_defined?(:MAX_ENTRIES)
+              Legion::Gaia::TickHistory::MAX_ENTRIES
+            else
+              200
+            end
+
+          limit = (params[:limit] || 50).to_i.clamp(1, max_limit)
           events = Legion::Gaia.tick_history&.recent(limit: limit) || []
           json_response({ events: events })
         end

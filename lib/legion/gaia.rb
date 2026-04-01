@@ -246,6 +246,7 @@ module Legion
       end
 
       def boot_router
+        @started_at = Time.now.utc
         boot_channels
         allowed = settings&.dig(:router, :allowed_worker_ids) || []
         @router_bridge = Router::RouterBridge.new(
