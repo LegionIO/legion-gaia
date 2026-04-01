@@ -36,7 +36,10 @@ module Legion
         consolidation_commit: { ext: :Memory, runner: :Consolidation, fn: :migrate_tier },
         knowledge_promotion: { ext: :Apollo, runner: :Knowledge, fn: :handle_ingest },
         dream_reflection: { ext: :Reflection, runner: :Reflection, fn: :reflect },
-        partner_reflection: { ext: :Social, runner: :Attachment, fn: :reflect_on_bonds },
+        partner_reflection: [
+          { ext: :Social, runner: :Attachment, fn: :reflect_on_bonds },
+          { ext: :Social, runner: :Calibration, fn: :sync_partner_knowledge }
+        ],
         dream_narration: { ext: :Narrator, runner: :Narrator, fn: :narrate }
       }.freeze
 

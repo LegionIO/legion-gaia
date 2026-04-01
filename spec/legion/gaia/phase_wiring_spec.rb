@@ -359,9 +359,10 @@ RSpec.describe Legion::Gaia::PhaseWiring do
 
     it 'targets Social Attachment runner' do
       entry = described_class::PHASE_MAP[:partner_reflection]
-      expect(entry[:ext]).to eq(:Social)
-      expect(entry[:runner]).to eq(:Attachment)
-      expect(entry[:fn]).to eq(:reflect_on_bonds)
+      bond_handler = entry.is_a?(Array) ? entry.find { |h| h[:fn] == :reflect_on_bonds } : entry
+      expect(bond_handler[:ext]).to eq(:Social)
+      expect(bond_handler[:runner]).to eq(:Attachment)
+      expect(bond_handler[:fn]).to eq(:reflect_on_bonds)
     end
 
     it 'has PHASE_ARGS lambda' do
