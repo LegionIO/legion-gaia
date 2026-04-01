@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require 'legion/gaia/version'
+require 'legion/gaia/tick_history'
 require 'legion/gaia/workflow'
 require 'legion/gaia/routes'
 require 'legion/gaia/advisory'
@@ -38,7 +39,8 @@ module Legion
       include Legion::Gaia::TeamsAuth
 
       attr_reader :sensory_buffer, :registry, :channel_registry, :output_router, :session_store,
-                  :router_bridge, :agent_bridge, :last_valences, :partner_observations
+                  :router_bridge, :agent_bridge, :last_valences, :partner_observations,
+                  :tick_history, :tick_count
 
       def proactive_dispatcher
         @proactive_dispatcher ||= ProactiveDispatcher.new
@@ -96,6 +98,9 @@ module Legion
         @partner_absence_misses = 0
         @last_valences = nil
         @last_response_at = nil
+        @tick_history = nil
+        @tick_count = nil
+        @started_at = nil
 
         log_info 'Legion::Gaia shut down'
       end
@@ -137,6 +142,9 @@ module Legion
 
         result = tick_host.execute_tick(signals: signals, phase_handlers: phase_handlers,
                                         partner_observations: observations)
+
+        @tick_history&.record(result)
+        @tick_count = (@tick_count || 0) + 1
 
         if result.is_a?(Hash) && result[:results]
           valence_result = result[:results][:emotional_evaluation]
@@ -225,6 +233,9 @@ module Legion
         @tick_unavailable_warned = false
         @partner_observations = []
         @partner_absence_misses = 0
+        @tick_history = TickHistory.new
+        @tick_count = 0
+        @started_at = Time.now.utc
         @sensory_buffer = SensoryBuffer.new
         @registry = Registry.instance
         @registry.reset!
@@ -282,16 +293,38 @@ module Legion
         end
       end
 
-      def base_status
+      def base_status # rubocop:disable Metrics/CyclomaticComplexity,Metrics/PerceivedComplexity
+        ttl = settings&.dig(:session, :ttl)
         status = {
           started: true,
           mode: @mode,
           buffer_depth: @sensory_buffer&.size || 0,
           active_channels: @channel_registry&.active_channels || [],
-          sessions: @session_store&.size || 0
+          sessions: @session_store&.size || 0,
+          tick_count: @tick_count || 0,
+          tick_mode: tick_mode_from_host,
+          sensory_buffer: {
+            depth: @sensory_buffer&.size || 0,
+            max_capacity: SensoryBuffer::MAX_BUFFER_SIZE
+          },
+          sessions_detail: {
+            active_count: @session_store&.size || 0,
+            ttl: ttl
+          },
+          uptime_seconds: @started_at ? (Time.now.utc - @started_at).to_i : nil
         }
         status.merge!(registry_status) unless router_mode?
         status
+      end
+
+      def tick_mode_from_host
+        tick_host = @registry&.tick_host
+        return :dormant unless tick_host.respond_to?(:last_tick_result)
+
+        last = tick_host.last_tick_result
+        last.is_a?(Hash) ? (last[:mode] || :active) : :dormant
+      rescue StandardError
+        :dormant
       end
 
       def router_status

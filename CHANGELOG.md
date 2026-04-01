@@ -2,12 +2,17 @@
 
 ## [Unreleased]
 
+## [0.9.37] - 2026-04-01
+
 ### Added
-- observe_interlocutor: calibration evaluation on partner messages (content, latency, baseline tracking)
-- record_advisory_meta: public API for LLM pipeline to record advisory types
-- compute_response_latency: tracks time between GAIA response and next partner message
-- partner_reflection: multi-handler — reflect_on_bonds + sync_partner_knowledge (CalibrationRunner)
-- TrackerPersistence: calibration_store registered for automatic flush/hydrate
+- `TickHistory` ring buffer (max 200 entries): records per-phase events (timestamp, phase name, duration_ms, status) from each heartbeat tick result
+- `GET /api/gaia/ticks` route: returns recent tick phase events with configurable `limit` param (1–200, default 50)
+- Enhanced `/api/gaia/status` response: `tick_count`, `tick_mode`, nested `sensory_buffer` (depth + max_capacity), nested `sessions_detail` (active_count + ttl), `uptime_seconds`
+- `tick_history` and `tick_count` accessors on `Legion::Gaia`
+- `@started_at` tracked on boot for uptime calculation
+
+### Changed
+- `notifications.enabled` default changed from `false` to `true` in `Settings.default_notifications`
 
 ## [0.9.36] - 2026-03-31
 

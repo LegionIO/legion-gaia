@@ -55,6 +55,7 @@ module Legion
         end
 
         register_status_route(app)
+        register_ticks_route(app)
         register_channels_route(app)
         register_buffer_route(app)
         register_sessions_route(app)
@@ -68,6 +69,14 @@ module Legion
           else
             json_response({ started: false }, status_code: 503)
           end
+        end
+      end
+
+      def self.register_ticks_route(app)
+        app.get '/api/gaia/ticks' do
+          limit = (params[:limit] || 50).to_i.clamp(1, 200)
+          events = Legion::Gaia.tick_history&.recent(limit: limit) || []
+          json_response({ events: events })
         end
       end
 
@@ -146,8 +155,8 @@ module Legion
       end
 
       class << self
-        private :register_status_route, :register_channels_route, :register_buffer_route,
-                :register_sessions_route, :register_teams_webhook_route
+        private :register_status_route, :register_ticks_route, :register_channels_route,
+                :register_buffer_route, :register_sessions_route, :register_teams_webhook_route
       end
     end
   end
