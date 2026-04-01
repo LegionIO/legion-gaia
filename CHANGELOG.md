@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+## [0.9.38] - 2026-04-01
+
+### Fixed
+- Add `require 'time'` in `TickHistory` to ensure `Time#iso8601` is always available
+- Deep-dup entries in `TickHistory#recent` with `.map(&:dup)` to prevent callers from mutating ring buffer internals
+- Add `gaia_available?` guard to `/api/gaia/ticks` route (returns 503 when GAIA not started)
+- Use `TickHistory::MAX_ENTRIES` instead of hardcoded `200` for ticks route limit cap
+- Track `@started_at` in `boot_router` for accurate uptime in router mode
+
 ## [0.9.37] - 2026-04-01
 
 ### Added
