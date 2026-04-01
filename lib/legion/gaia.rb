@@ -95,6 +95,7 @@ module Legion
         @partner_observations = nil
         @partner_absence_misses = 0
         @last_valences = nil
+        @last_response_at = nil
 
         log_info 'Legion::Gaia shut down'
       end
@@ -174,6 +175,8 @@ module Legion
       end
 
       def respond(content:, channel_id:, in_reply_to: nil, session_continuity_id: nil, metadata: {})
+        @last_response_at = Time.now.utc
+
         frame = OutputFrame.new(
           content: content,
           channel_id: channel_id,
@@ -195,12 +198,7 @@ module Legion
         @last_response_at = Time.now.utc
         return unless defined?(Legion::Extensions::Agentic::Social::Calibration::Runners::Calibration)
 
-        @calibration_runner ||= begin
-          runner = Object.new
-          runner.extend(Legion::Extensions::Agentic::Social::Calibration::Runners::Calibration)
-          runner
-        end
-
+        ensure_calibration_runner
         @calibration_runner.record_advisory_meta(advisory_id: advisory_id, advisory_types: advisory_types)
       rescue StandardError => e
         log_warn "record_advisory_meta error: #{e.message}"
@@ -380,21 +378,24 @@ module Legion
       def evaluate_calibration(observation)
         return unless defined?(Legion::Extensions::Agentic::Social::Calibration::Runners::Calibration)
 
-        @calibration_runner ||= begin
-          runner = Object.new
-          runner.extend(Legion::Extensions::Agentic::Social::Calibration::Runners::Calibration)
-          TrackerPersistence.register_tracker(
-            :calibration,
-            tracker: runner.send(:calibration_store),
-            tags: %w[bond calibration]
-          )
-          runner
-        end
-
+        ensure_calibration_runner
         result = @calibration_runner.update_calibration(observation: observation)
         @last_calibration_deltas = result[:deltas] if result[:success] && result[:deltas]
       rescue StandardError => e
         log_warn "evaluate_calibration error: #{e.message}"
+      end
+
+      def ensure_calibration_runner
+        return if @calibration_runner
+
+        runner = Object.new
+        runner.extend(Legion::Extensions::Agentic::Social::Calibration::Runners::Calibration)
+        TrackerPersistence.register_tracker(
+          :calibration,
+          tracker: runner.send(:calibration_store),
+          tags: %w[bond calibration]
+        )
+        @calibration_runner = runner
       end
 
       def compute_response_latency
@@ -493,8 +494,11 @@ module Legion
       def process_dream_proactive(dream_results)
         return unless dream_results.is_a?(Hash)
 
+        pr = dream_results[:partner_reflection]
+        partner_reflection_hash = pr.is_a?(Array) ? pr.find { |r| r.is_a?(Hash) } : pr
+
         intent = dream_results.dig(:action_selection, :proactive_outreach) ||
-                 dream_results.dig(:partner_reflection, :proactive_suggestion)
+                 partner_reflection_hash&.dig(:proactive_suggestion)
         return unless intent
 
         proactive_dispatcher.queue_intent(intent)

@@ -350,6 +350,13 @@ RSpec.describe Legion::Gaia::PhaseWiring do
       args = described_class::PHASE_ARGS[:action_selection].call(ctx)
       expect(args[:bond_state]).to eq({})
     end
+
+    it 'extracts first hash from partner_reflection array when multi-handler result' do
+      bond_result = { partner_bond: { stage: :established } }
+      ctx = { prior_results: { partner_reflection: [bond_result, { synced: true }] } }
+      args = described_class::PHASE_ARGS[:action_selection].call(ctx)
+      expect(args[:bond_state]).to eq(bond_result)
+    end
   end
 
   describe 'partner_reflection phase' do
