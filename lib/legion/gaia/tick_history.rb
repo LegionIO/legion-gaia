@@ -20,11 +20,11 @@ module Legion
           next unless phase_data.is_a?(Hash)
 
           {
-            timestamp: timestamp,
-            phase: phase_name.to_s,
+            timestamp: timestamp.freeze,
+            phase: phase_name.to_s.freeze,
             duration_ms: phase_data[:elapsed_ms],
             status: phase_data[:status]
-          }
+          }.freeze
         end
 
         @mutex.synchronize do

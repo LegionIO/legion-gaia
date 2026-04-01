@@ -113,6 +113,19 @@ RSpec.describe Legion::Gaia::TickHistory do
       durations = entries.map { |e| e[:duration_ms] }
       expect(durations).to eq([7, 8, 9])
     end
+
+    it 'does not corrupt internal state when caller mutates a returned entry' do
+      original_phase = history.recent(limit: 1).first[:phase]
+      returned = history.recent(limit: 1)
+      returned.first[:phase] = 'mutated'
+      expect(history.recent(limit: 1).first[:phase]).to eq(original_phase)
+    end
+
+    it 'returns frozen string values so in-place string mutation is not possible' do
+      entry = history.recent(limit: 1).first
+      expect(entry[:phase]).to be_frozen
+      expect(entry[:timestamp]).to be_frozen
+    end
   end
 
   describe '#size' do
