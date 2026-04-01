@@ -189,6 +189,23 @@ module Legion
         end
       end
 
+      def record_advisory_meta(advisory_id:, advisory_types:)
+        return unless started?
+
+        @last_response_at = Time.now.utc
+        return unless defined?(Legion::Extensions::Agentic::Social::Calibration::Runners::Calibration)
+
+        @calibration_runner ||= begin
+          runner = Object.new
+          runner.extend(Legion::Extensions::Agentic::Social::Calibration::Runners::Calibration)
+          runner
+        end
+
+        @calibration_runner.record_advisory_meta(advisory_id: advisory_id, advisory_types: advisory_types)
+      rescue StandardError => e
+        log_warn "record_advisory_meta error: #{e.message}"
+      end
+
       def status
         return { started: false } unless started?
 
@@ -311,15 +328,20 @@ module Legion
           bond_role: role,
           channel: input_frame.channel_id,
           content_type: input_frame.content_type,
+          content: input_frame.content.to_s,
           content_length: input_frame.content.to_s.length,
           direct_address: input_frame.metadata[:direct_address] || false,
+          latency: compute_response_latency,
           timestamp: input_frame.received_at
         }
 
         @partner_observations ||= []
         @partner_observations.push(observation)
 
-        record_interaction_trace(observation) if role == :partner
+        if role == :partner
+          record_interaction_trace(observation)
+          evaluate_calibration(observation)
+        end
       rescue StandardError => e
         log_warn "observe_interlocutor error: #{e.message}"
       end
@@ -353,6 +375,32 @@ module Legion
         Legion::Apollo::Local
       rescue StandardError
         nil
+      end
+
+      def evaluate_calibration(observation)
+        return unless defined?(Legion::Extensions::Agentic::Social::Calibration::Runners::Calibration)
+
+        @calibration_runner ||= begin
+          runner = Object.new
+          runner.extend(Legion::Extensions::Agentic::Social::Calibration::Runners::Calibration)
+          TrackerPersistence.register_tracker(
+            :calibration,
+            tracker: runner.send(:calibration_store),
+            tags: %w[bond calibration]
+          )
+          runner
+        end
+
+        result = @calibration_runner.update_calibration(observation: observation)
+        @last_calibration_deltas = result[:deltas] if result[:success] && result[:deltas]
+      rescue StandardError => e
+        log_warn "evaluate_calibration error: #{e.message}"
+      end
+
+      def compute_response_latency
+        return nil unless @last_response_at
+
+        (Time.now.utc - @last_response_at).to_f
       end
 
       def check_partner_absence(observations, phase_handlers)
