@@ -102,7 +102,7 @@ RSpec.describe Legion::Gaia::Channels::SlackAdapter do
 
       it 'posts to Slack API and returns delivered with ts on success' do
         allow(mock_response).to receive(:body)
-          .and_return(JSON.generate({ 'ok' => true, 'ts' => '1234567890.000001' }))
+          .and_return(::JSON.generate({ 'ok' => true, 'ts' => '1234567890.000001' }))
         result = adapter.deliver({ text: 'hello' })
         expect(result[:delivered]).to be true
         expect(result[:ts]).to eq('1234567890.000001')
@@ -110,7 +110,7 @@ RSpec.describe Legion::Gaia::Channels::SlackAdapter do
 
       it 'returns error key from API on failure' do
         allow(mock_response).to receive(:body)
-          .and_return(JSON.generate({ 'ok' => false, 'error' => 'channel_not_found' }))
+          .and_return(::JSON.generate({ 'ok' => false, 'error' => 'channel_not_found' }))
         result = adapter.deliver({ text: 'hello' })
         expect(result[:error]).to eq('channel_not_found')
       end
