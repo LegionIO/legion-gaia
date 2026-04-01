@@ -111,7 +111,7 @@ module Legion
         end
       end
 
-      def heartbeat(**) # rubocop:disable Metrics/MethodLength
+      def heartbeat(**) # rubocop:disable Metrics/MethodLength,Metrics/CyclomaticComplexity,Metrics/PerceivedComplexity,Metrics/AbcSize
         return { error: :not_started } unless started?
 
         signals = @sensory_buffer.drain

@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.9.34] - 2026-03-31
+
+### Added
+- IntentClassifier: 7 interaction intent types (casual, question, directive, seeking_advice, greeting, urgent, direct_engage)
+- Intent classification wired into ChannelAdapter `build_intent_metadata` (replaces boolean `direct_address`)
+- TeamsAdapter `translate_inbound` uses `**build_intent_metadata` for richer inbound metadata
+- ProactiveDispatcher: frequency-limited proactive message delivery (3/day, 2hr interval, 24hr ignore cooldown), pending buffer (max 5), content generation via LLM
+- PresenceEvaluator: offline detection (`partner_offline?`, `offline_duration`, `transitioned_online?`, `status_changed_at` tracking)
+- Dream-to-proactive bridge: `process_dream_proactive` queues intents from dream cycle results; `try_dispatch_pending` drains and delivers via gated dispatcher
+- PHASE_ARGS: `action_selection` now passes `bond_state` from `partner_reflection` prior results
+
 ## [0.9.33] - 2026-03-31
 
 ### Added
