@@ -80,7 +80,11 @@ module Legion
             human_observations: ctx.dig(:state, :partner_observations) || [] }
         },
         gut_instinct: ->(ctx) { { valences: ctx[:valences] || [] } },
-        action_selection: ->(ctx) { { tick_results: ctx[:prior_results] || {}, cognitive_state: {} } },
+        action_selection: lambda { |ctx|
+          { tick_results: ctx[:prior_results] || {},
+            cognitive_state: {},
+            bond_state: ctx.dig(:prior_results, :partner_reflection) || {} }
+        },
         working_memory_integration: ->(ctx) { { prior_results: ctx[:prior_results] || {} } },
         memory_consolidation: ->(_ctx) { {} },
         homeostasis_regulation: ->(ctx) { { tick_results: ctx[:prior_results] || {} } },

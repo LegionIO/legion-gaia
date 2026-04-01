@@ -337,6 +337,21 @@ RSpec.describe Legion::Gaia::PhaseWiring do
     end
   end
 
+  describe 'action_selection PHASE_ARGS includes bond_state' do
+    it 'passes bond_state from partner_reflection' do
+      ctx = { prior_results: { partner_reflection: { partner_bond: { stage: :established } } } }
+      args = described_class::PHASE_ARGS[:action_selection].call(ctx)
+      expect(args).to have_key(:bond_state)
+      expect(args[:bond_state][:partner_bond][:stage]).to eq(:established)
+    end
+
+    it 'defaults bond_state to empty hash' do
+      ctx = { prior_results: {} }
+      args = described_class::PHASE_ARGS[:action_selection].call(ctx)
+      expect(args[:bond_state]).to eq({})
+    end
+  end
+
   describe 'partner_reflection phase' do
     it 'exists in PHASE_MAP' do
       expect(described_class::PHASE_MAP).to have_key(:partner_reflection)

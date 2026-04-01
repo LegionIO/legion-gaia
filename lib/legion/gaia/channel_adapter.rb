@@ -60,6 +60,18 @@ module Legion
         capabilities.include?(capability)
       end
 
+      protected
+
+      def build_intent_metadata(content)
+        require_relative 'intent_classifier' unless defined?(IntentClassifier)
+        classification = IntentClassifier.classify_with_engagement(content)
+        {
+          interaction_intent: classification[:intent],
+          direct_engage: classification[:direct_engage],
+          direct_address: classification[:direct_engage] || direct_address?(content)
+        }
+      end
+
       private
 
       def direct_address?(content)

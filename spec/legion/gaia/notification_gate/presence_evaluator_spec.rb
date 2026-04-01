@@ -124,4 +124,67 @@ RSpec.describe Legion::Gaia::NotificationGate::PresenceEvaluator do
       end
     end
   end
+
+  describe '#partner_offline?' do
+    before { evaluator.update(availability: 'Offline') }
+
+    it 'returns true when offline beyond threshold' do
+      evaluator.instance_variable_set(:@status_changed_at, Time.now.utc - 3600)
+      expect(evaluator.partner_offline?(threshold: 1800)).to be true
+    end
+
+    it 'returns false when offline within threshold' do
+      evaluator.instance_variable_set(:@status_changed_at, Time.now.utc - 60)
+      expect(evaluator.partner_offline?(threshold: 1800)).to be false
+    end
+
+    it 'returns false when available' do
+      evaluator.update(availability: 'Available')
+      expect(evaluator.partner_offline?(threshold: 1800)).to be false
+    end
+  end
+
+  describe '#offline_duration' do
+    it 'returns 0 when no status change recorded' do
+      expect(evaluator.offline_duration).to eq(0)
+    end
+
+    it 'returns seconds since status changed' do
+      evaluator.instance_variable_set(:@status_changed_at, Time.now.utc - 120)
+      expect(evaluator.offline_duration).to be_within(2).of(120)
+    end
+  end
+
+  describe '#status_changed_at tracking' do
+    it 'records timestamp on availability change' do
+      evaluator.update(availability: 'Available')
+      evaluator.update(availability: 'Offline')
+      expect(evaluator.status_changed_at).to be_a(Time)
+    end
+
+    it 'does not update on same status' do
+      evaluator.update(availability: 'Available')
+      first = evaluator.status_changed_at
+      sleep 0.01
+      evaluator.update(availability: 'Available')
+      expect(evaluator.status_changed_at).to eq(first)
+    end
+  end
+
+  describe '#transitioned_online?' do
+    it 'returns true on Offline to Available transition' do
+      evaluator.update(availability: 'Offline')
+      expect(evaluator.transitioned_online?('Available')).to be true
+    end
+
+    it 'returns false on Available to Available' do
+      evaluator.update(availability: 'Available')
+      expect(evaluator.transitioned_online?('Available')).to be false
+    end
+
+    it 'returns false on Available to Offline' do
+      evaluator.update(availability: 'Available')
+      expect(evaluator.transitioned_online?('Offline')).to be false
+    end
+  end
 end

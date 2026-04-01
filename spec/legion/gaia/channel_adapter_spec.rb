@@ -48,4 +48,26 @@ RSpec.describe Legion::Gaia::ChannelAdapter do
       expect { adapter.deliver(frame) }.to raise_error(NotImplementedError)
     end
   end
+
+  describe '#build_intent_metadata' do
+    it 'adds interaction_intent to metadata' do
+      metadata = adapter.send(:build_intent_metadata, 'what do you think about this?')
+      expect(metadata[:interaction_intent]).to eq(:seeking_advice)
+    end
+
+    it 'adds direct_engage flag' do
+      metadata = adapter.send(:build_intent_metadata, 'gaia help me')
+      expect(metadata[:direct_engage]).to be true
+    end
+
+    it 'preserves direct_address for backward compat' do
+      metadata = adapter.send(:build_intent_metadata, 'hey gaia')
+      expect(metadata[:direct_address]).to be true
+    end
+
+    it 'handles nil content' do
+      metadata = adapter.send(:build_intent_metadata, nil)
+      expect(metadata[:interaction_intent]).to eq(:casual)
+    end
+  end
 end
