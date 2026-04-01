@@ -1,5 +1,14 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- observe_interlocutor: calibration evaluation on partner messages (content, latency, baseline tracking)
+- record_advisory_meta: public API for LLM pipeline to record advisory types
+- compute_response_latency: tracks time between GAIA response and next partner message
+- partner_reflection: multi-handler — reflect_on_bonds + sync_partner_knowledge (CalibrationRunner)
+- TrackerPersistence: calibration_store registered for automatic flush/hydrate
+
 ## [0.9.34] - 2026-03-31
 
 ### Added

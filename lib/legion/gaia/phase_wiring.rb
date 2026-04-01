@@ -36,7 +36,10 @@ module Legion
         consolidation_commit: { ext: :Memory, runner: :Consolidation, fn: :migrate_tier },
         knowledge_promotion: { ext: :Apollo, runner: :Knowledge, fn: :handle_ingest },
         dream_reflection: { ext: :Reflection, runner: :Reflection, fn: :reflect },
-        partner_reflection: { ext: :Social, runner: :Attachment, fn: :reflect_on_bonds },
+        partner_reflection: [
+          { ext: :Social, runner: :Attachment, fn: :reflect_on_bonds },
+          { ext: :Social, runner: :Calibration, fn: :sync_partner_knowledge }
+        ],
         dream_narration: { ext: :Narrator, runner: :Narrator, fn: :narrate }
       }.freeze
 
@@ -81,9 +84,11 @@ module Legion
         },
         gut_instinct: ->(ctx) { { valences: ctx[:valences] || [] } },
         action_selection: lambda { |ctx|
+          pr = ctx.dig(:prior_results, :partner_reflection)
+          bond_state = pr.is_a?(Array) ? (pr.find { |r| r.is_a?(Hash) } || {}) : (pr || {})
           { tick_results: ctx[:prior_results] || {},
             cognitive_state: {},
-            bond_state: ctx.dig(:prior_results, :partner_reflection) || {} }
+            bond_state: bond_state }
         },
         working_memory_integration: ->(ctx) { { prior_results: ctx[:prior_results] || {} } },
         memory_consolidation: ->(_ctx) { {} },
