@@ -24,7 +24,7 @@ module Legion
 
               Legion::Gaia::SensoryBuffer::MAX_BUFFER_SIZE
             rescue NameError => e
-              Legion::Logging.debug "[gaia]] route helpers failed #{e.class}: #{e.message}" if defined?(Legion::Logging)
+              Legion::Logging.debug "[gaia] route helpers failed #{e.class}: #{e.message}" if defined?(Legion::Logging)
               nil
             end
           end
