@@ -325,7 +325,7 @@ module Legion
         last = tick_host.last_tick_result
         last.is_a?(Hash) ? (last[:mode] || :active) : :dormant
       rescue StandardError => e
-        Legion::Logging.debug("[gaia](tick_mode_from_host) #{e.class}: #{e.message}")
+        log_debug("[gaia](tick_mode_from_host) #{e.class}: #{e.message}")
         :dormant
       end
 
