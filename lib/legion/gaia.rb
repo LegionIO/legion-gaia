@@ -26,6 +26,7 @@ require 'legion/gaia/notification_gate'
 require 'legion/gaia/notification_gate/schedule_evaluator'
 require 'legion/gaia/proactive'
 require 'legion/gaia/offline_handler'
+require 'legion/gaia/proactive_dispatcher'
 require 'legion/gaia/bond_registry'
 require 'legion/gaia/tracker_persistence'
 require 'legion/gaia/router'
@@ -38,6 +39,10 @@ module Legion
 
       attr_reader :sensory_buffer, :registry, :channel_registry, :output_router, :session_store,
                   :router_bridge, :agent_bridge, :last_valences, :partner_observations
+
+      def proactive_dispatcher
+        @proactive_dispatcher ||= ProactiveDispatcher.new
+      end
 
       def advise(conversation_id:, messages:, caller:)
         Advisory.advise(conversation_id: conversation_id, messages: messages, caller: caller)
@@ -144,6 +149,11 @@ module Legion
         @output_router&.process_delayed
 
         maybe_flush_trackers
+
+        if result.is_a?(Hash) && result[:results]
+          process_dream_proactive(result[:results])
+          try_dispatch_pending
+        end
 
         result
       end
@@ -430,6 +440,29 @@ module Legion
         TrackerPersistence.flush_all(store: store) if store
       rescue StandardError => e
         log_debug "TrackerPersistence shutdown flush error: #{e.message}"
+      end
+
+      def process_dream_proactive(dream_results)
+        return unless dream_results.is_a?(Hash)
+
+        intent = dream_results.dig(:action_selection, :proactive_outreach) ||
+                 dream_results.dig(:partner_reflection, :proactive_suggestion)
+        return unless intent
+
+        proactive_dispatcher.queue_intent(intent)
+      end
+
+      def try_dispatch_pending
+        intents = proactive_dispatcher.drain_pending
+        intents.each do |intent|
+          result = proactive_dispatcher.dispatch_with_gate(intent)
+          unless result[:dispatched]
+            proactive_dispatcher.queue_intent(intent)
+            break
+          end
+        end
+      rescue StandardError => e
+        log_debug "[gaia] proactive dispatch error: #{e.message}"
       end
     end
   end
