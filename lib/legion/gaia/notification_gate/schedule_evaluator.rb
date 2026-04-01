@@ -6,6 +6,35 @@ module Legion
       class ScheduleEvaluator
         DAY_NAMES = %w[sun mon tue wed thu fri sat].freeze
 
+        # Standard (non-DST) offsets for known IANA zone names.
+        # Zones that observe DST have two entries; zones that don't have one.
+        STANDARD_OFFSETS = {
+          'America/New_York' => '-05:00', 'America/Chicago' => '-06:00',
+          'America/Denver' => '-07:00', 'America/Los_Angeles' => '-08:00',
+          'America/Phoenix' => '-07:00', 'America/Anchorage' => '-09:00',
+          'Pacific/Honolulu' => '-10:00', 'America/Halifax' => '-04:00',
+          'America/Toronto' => '-05:00', 'America/Vancouver' => '-08:00',
+          'UTC' => '+00:00', 'Europe/London' => '+00:00',
+          'Europe/Paris' => '+01:00', 'Europe/Berlin' => '+01:00',
+          'Europe/Rome' => '+01:00', 'Europe/Madrid' => '+01:00',
+          'Europe/Amsterdam' => '+01:00', 'Europe/Stockholm' => '+01:00',
+          'Europe/Helsinki' => '+02:00', 'Europe/Moscow' => '+03:00',
+          'Asia/Kolkata' => '+05:30', 'Asia/Tokyo' => '+09:00',
+          'Asia/Shanghai' => '+08:00', 'Asia/Singapore' => '+08:00',
+          'Asia/Dubai' => '+04:00', 'Asia/Seoul' => '+09:00',
+          'Australia/Sydney' => '+10:00', 'Australia/Melbourne' => '+10:00',
+          'Pacific/Auckland' => '+12:00'
+        }.freeze
+
+        # DST adjustments (+1 hour relative to standard) for zones that observe DST.
+        DST_ZONES = %w[
+          America/New_York America/Chicago America/Denver America/Los_Angeles
+          America/Anchorage America/Halifax America/Toronto America/Vancouver
+          Europe/London Europe/Paris Europe/Berlin Europe/Rome Europe/Madrid
+          Europe/Amsterdam Europe/Stockholm Europe/Helsinki
+          Australia/Sydney Australia/Melbourne Pacific/Auckland
+        ].freeze
+
         def initialize(schedule: [])
           @schedule = normalize_schedule(schedule)
         end
@@ -61,13 +90,37 @@ module Legion
 
         def tz_offset(timezone)
           return nil unless timezone
+          return tzinfo_offset(timezone) if defined?(TZInfo)
 
-          offsets = {
-            'America/Chicago' => '-06:00', 'America/New_York' => '-05:00',
-            'America/Denver' => '-07:00', 'America/Los_Angeles' => '-08:00',
-            'UTC' => '+00:00', 'America/Phoenix' => '-07:00'
-          }
-          offsets[timezone]
+          base = STANDARD_OFFSETS[timezone]
+          return nil unless base
+
+          dst_active? && DST_ZONES.include?(timezone) ? dst_shift(base) : base
+        end
+
+        def tzinfo_offset(timezone)
+          hours = TZInfo::Timezone.get(timezone).current_period.utc_total_offset / 3600.0
+          sign = hours.negative? ? '-' : '+'
+          abs_h = hours.abs.to_i
+          abs_m = ((hours.abs % 1) * 60).round
+          format('%<sign>s%<h>02d:%<m>02d', sign: sign, h: abs_h, m: abs_m)
+        rescue StandardError
+          nil
+        end
+
+        def dst_shift(offset_str)
+          sign = offset_str[0]
+          parts = offset_str[1..].split(':').map(&:to_i)
+          base_minutes = (parts[0] * 60) + parts[1]
+          signed_minutes = (sign == '-' ? -base_minutes : base_minutes) + 60
+          abs_total = signed_minutes.abs
+          new_sign = signed_minutes.negative? ? '-' : '+'
+          format('%<sign>s%<h>02d:%<m>02d', sign: new_sign, h: abs_total / 60, m: abs_total % 60)
+        end
+
+        def dst_active?
+          m = Time.now.utc.month
+          m.between?(3, 11)
         end
       end
     end

@@ -109,4 +109,66 @@ RSpec.describe Legion::Gaia::ProactiveDispatcher do
       expect(dispatcher.pending_buffer.size).to eq(5)
     end
   end
+
+  describe '#resolve_partner_channel (Fix 6)' do
+    context 'when BondRegistry is not defined' do
+      before { hide_const('Legion::Gaia::BondRegistry') }
+
+      it 'returns nil' do
+        expect(dispatcher.send(:resolve_partner_channel)).to be_nil
+      end
+    end
+
+    context 'when BondRegistry has no partner bond' do
+      before do
+        allow(Legion::Gaia::BondRegistry).to receive(:all_bonds).and_return([])
+      end
+
+      it 'returns nil' do
+        expect(dispatcher.send(:resolve_partner_channel)).to be_nil
+      end
+    end
+
+    context 'when partner bond has a preferred_channel' do
+      before do
+        allow(Legion::Gaia::BondRegistry).to receive(:all_bonds).and_return([
+                                                                              { role: :partner,
+                                                                                identity: 'esity',
+                                                                                preferred_channel: :teams }
+                                                                            ])
+      end
+
+      it 'returns the preferred_channel' do
+        expect(dispatcher.send(:resolve_partner_channel)).to eq(:teams)
+      end
+    end
+
+    context 'when partner bond has a last_channel but no preferred_channel' do
+      before do
+        allow(Legion::Gaia::BondRegistry).to receive(:all_bonds).and_return([
+                                                                              { role: :partner,
+                                                                                identity: 'esity',
+                                                                                last_channel: :slack }
+                                                                            ])
+      end
+
+      it 'falls back to last_channel' do
+        expect(dispatcher.send(:resolve_partner_channel)).to eq(:slack)
+      end
+    end
+
+    context 'when non-partner bond exists but no partner bond' do
+      before do
+        allow(Legion::Gaia::BondRegistry).to receive(:all_bonds).and_return([
+                                                                              { role: :colleague,
+                                                                                identity: 'someone',
+                                                                                preferred_channel: :cli }
+                                                                            ])
+      end
+
+      it 'returns nil' do
+        expect(dispatcher.send(:resolve_partner_channel)).to be_nil
+      end
+    end
+  end
 end

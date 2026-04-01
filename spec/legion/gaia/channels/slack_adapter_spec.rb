@@ -88,12 +88,38 @@ RSpec.describe Legion::Gaia::Channels::SlackAdapter do
       expect(result[:error]).to eq(:slack_runner_not_available)
     end
 
-    context 'with bot_token and no webhook' do
+    context 'with bot_token and no webhook (Fix 3: deliver_via_api)' do
       subject(:adapter) { described_class.new(bot_token: 'xoxb-test') }
 
-      it 'returns not_implemented for API delivery' do
+      let(:mock_http) { instance_double(Net::HTTP) }
+      let(:mock_response) { instance_double(Net::HTTPResponse) }
+
+      before do
+        allow(Net::HTTP).to receive(:new).and_return(mock_http)
+        allow(mock_http).to receive(:use_ssl=)
+        allow(mock_http).to receive(:request).and_return(mock_response)
+      end
+
+      it 'posts to Slack API and returns delivered with ts on success' do
+        allow(mock_response).to receive(:body)
+          .and_return(::JSON.generate({ 'ok' => true, 'ts' => '1234567890.000001' })) # rubocop:disable Style/RedundantConstantBase
         result = adapter.deliver({ text: 'hello' })
-        expect(result[:error]).to eq(:not_implemented)
+        expect(result[:delivered]).to be true
+        expect(result[:ts]).to eq('1234567890.000001')
+      end
+
+      it 'returns error key from API on failure' do
+        allow(mock_response).to receive(:body)
+          .and_return(::JSON.generate({ 'ok' => false, 'error' => 'channel_not_found' })) # rubocop:disable Style/RedundantConstantBase
+        result = adapter.deliver({ text: 'hello' })
+        expect(result[:error]).to eq('channel_not_found')
+      end
+
+      it 'returns network_error on exception' do
+        allow(mock_http).to receive(:request).and_raise(StandardError, 'connection refused')
+        result = adapter.deliver({ text: 'hello' })
+        expect(result[:error]).to eq(:network_error)
+        expect(result[:message]).to include('connection refused')
       end
     end
   end

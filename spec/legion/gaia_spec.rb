@@ -29,6 +29,46 @@ RSpec.describe Legion::Gaia do
       described_class.boot
       expect(described_class.registry).to be_a(Legion::Gaia::Registry)
     end
+
+    context 'when Apollo Local is available on boot (Fix 1 + Fix 2)' do
+      let(:mock_store) do
+        double('ApolloLocal', started?: true).tap do |s|
+          allow(s).to receive(:query).and_return({ success: false })
+          allow(s).to receive(:upsert)
+        end
+      end
+
+      before do
+        Legion::Gaia::TrackerPersistence.reset!
+        stub_const('Legion::Apollo::Local', mock_store)
+        allow(Legion::Gaia::TrackerPersistence).to receive(:hydrate_all)
+        allow(Legion::Gaia::BondRegistry).to receive(:hydrate_from_apollo)
+        # Prevent flush_all on shutdown from trying real tracker objects
+        allow(Legion::Gaia::TrackerPersistence).to receive(:flush_all)
+      end
+
+      it 'calls TrackerPersistence.hydrate_all with the apollo local store' do
+        described_class.boot
+        expect(Legion::Gaia::TrackerPersistence).to have_received(:hydrate_all).with(store: mock_store)
+      end
+
+      it 'calls BondRegistry.hydrate_from_apollo with the apollo local store' do
+        described_class.boot
+        expect(Legion::Gaia::BondRegistry).to have_received(:hydrate_from_apollo).with(store: mock_store)
+      end
+    end
+
+    context 'when Apollo Local is not available on boot' do
+      it 'does not call TrackerPersistence.hydrate_all' do
+        expect(Legion::Gaia::TrackerPersistence).not_to receive(:hydrate_all)
+        described_class.boot
+      end
+
+      it 'does not call BondRegistry.hydrate_from_apollo' do
+        expect(Legion::Gaia::BondRegistry).not_to receive(:hydrate_from_apollo)
+        described_class.boot
+      end
+    end
   end
 
   describe '.shutdown' do

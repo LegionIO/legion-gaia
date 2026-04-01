@@ -9,6 +9,16 @@
 - partner_reflection: multi-handler — reflect_on_bonds + sync_partner_knowledge (CalibrationRunner)
 - TrackerPersistence: calibration_store registered for automatic flush/hydrate
 
+## [0.9.36] - 2026-03-31
+
+### Fixed
+- Wire `TrackerPersistence.hydrate_all` on boot when Apollo Local is available (restores calibration data after reboot)
+- Wire `BondRegistry.hydrate_from_apollo` on boot when Apollo Local is available (restores partner bonds after reboot)
+- Implement `SlackAdapter#deliver_via_api`: real HTTP POST to `chat.postMessage` using `net/http` (replaces `:not_implemented` stub)
+- Fix `TeamsAdapter#deliver` signature mismatch: accept `default_conversation_id` from settings as fallback when no `conversation_id` is passed
+- Expand `ScheduleEvaluator#tz_offset` from 6 hardcoded zones to 29 IANA zones with DST-aware offsets; use `TZInfo` when available
+- Implement `ProactiveDispatcher#resolve_partner_channel`: read `preferred_channel` or `last_channel` from `BondRegistry` partner bond
+
 ## [0.9.34] - 2026-03-31
 
 ### Added

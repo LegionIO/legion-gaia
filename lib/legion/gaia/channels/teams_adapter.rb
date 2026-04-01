@@ -17,12 +17,16 @@ module Legion
         def self.from_settings(settings)
           return nil unless settings&.dig(:channels, :teams, :enabled)
 
-          new(app_id: settings.dig(:channels, :teams, :app_id))
+          new(
+            app_id: settings.dig(:channels, :teams, :app_id),
+            default_conversation_id: settings.dig(:channels, :teams, :default_conversation_id)
+          )
         end
 
-        def initialize(app_id: nil)
+        def initialize(app_id: nil, default_conversation_id: nil)
           super(channel_id: :teams, capabilities: CAPABILITIES)
           @app_id = app_id
+          @default_conversation_id = default_conversation_id
           @conversation_store = Teams::ConversationStore.new
           @last_presence_status = nil
         end
@@ -69,7 +73,8 @@ module Legion
         end
 
         def deliver(rendered_content, conversation_id: nil)
-          ref = conversation_id && conversation_store.lookup(conversation_id)
+          resolved_id = conversation_id || @default_conversation_id
+          ref = resolved_id && conversation_store.lookup(resolved_id)
           return { error: :no_conversation_reference } unless ref
 
           deliver_via_bot(rendered_content, ref)
