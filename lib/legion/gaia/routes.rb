@@ -10,7 +10,7 @@
 module Legion
   module Gaia
     module Routes
-      def self.registered(app) # rubocop:disable Metrics/AbcSize,Metrics/CyclomaticComplexity,Metrics/MethodLength,Metrics/PerceivedComplexity
+      def self.registered(app)
         app.helpers do # rubocop:disable Metrics/BlockLength
           unless method_defined?(:gaia_available?)
             define_method(:gaia_available?) do
@@ -23,7 +23,8 @@ module Legion
               return nil unless defined?(Legion::Gaia::SensoryBuffer)
 
               Legion::Gaia::SensoryBuffer::MAX_BUFFER_SIZE
-            rescue NameError
+            rescue NameError => e
+              Legion::Logging.debug "[gaia]] route helpers failed #{e.class}: #{e.message}" if defined?(Legion::Logging)
               nil
             end
           end
