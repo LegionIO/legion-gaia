@@ -117,7 +117,7 @@ module Legion
         end
       end
 
-      def heartbeat(**) # rubocop:disable Metrics/MethodLength,Metrics/CyclomaticComplexity,Metrics/PerceivedComplexity,Metrics/AbcSize
+      def heartbeat(**)
         return { error: :not_started } unless started?
 
         signals = @sensory_buffer.drain
@@ -246,6 +246,7 @@ module Legion
       end
 
       def boot_router
+        @started_at = Time.now.utc
         boot_channels
         allowed = settings&.dig(:router, :allowed_worker_ids) || []
         @router_bridge = Router::RouterBridge.new(
@@ -293,7 +294,7 @@ module Legion
         end
       end
 
-      def base_status # rubocop:disable Metrics/CyclomaticComplexity,Metrics/PerceivedComplexity
+      def base_status
         ttl = settings&.dig(:session, :ttl)
         status = {
           started: true,
@@ -323,7 +324,8 @@ module Legion
 
         last = tick_host.last_tick_result
         last.is_a?(Hash) ? (last[:mode] || :active) : :dormant
-      rescue StandardError
+      rescue StandardError => e
+        log_debug("[gaia](tick_mode_from_host) #{e.class}: #{e.message}")
         :dormant
       end
 
@@ -405,7 +407,8 @@ module Legion
         return nil unless defined?(Legion::Apollo::Local) && Legion::Apollo::Local.started?
 
         Legion::Apollo::Local
-      rescue StandardError
+      rescue StandardError => e
+        log_debug "[gaia](apollo_local_store) error #{e.class}: #{e.message}"
         nil
       end
 

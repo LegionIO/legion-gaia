@@ -26,7 +26,7 @@ module Legion
         @bonds.values
       end
 
-      def hydrate_from_apollo(store: nil) # rubocop:disable Metrics/CyclomaticComplexity,Metrics/PerceivedComplexity
+      def hydrate_from_apollo(store: nil)
         return unless store
 
         result = store.query(text: 'partner', tags: %w[self-knowledge])
