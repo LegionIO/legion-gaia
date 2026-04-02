@@ -40,7 +40,7 @@ module Legion
       def teams_authenticated?
         return false unless defined?(Legion::Extensions::MicrosoftTeams::Helpers::TokenCache)
 
-        Legion::Extensions::MicrosoftTeams::Helpers::TokenCache.new.authenticated?
+        Legion::Extensions::MicrosoftTeams::Helpers::TokenCache.instance.authenticated?
       rescue StandardError => e
         handle_exception(e, level: :warn, operation: 'gaia.teams_auth.teams_authenticated')
         false
