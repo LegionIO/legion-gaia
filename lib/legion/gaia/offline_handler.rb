@@ -1,14 +1,22 @@
 # frozen_string_literal: true
 
+require 'legion/logging/helper'
+
 module Legion
   module Gaia
     module OfflineHandler
+      extend Legion::Logging::Helper
+
       DEFAULT_OFFLINE_MESSAGE = 'The agent is currently offline. Your message has been queued.'
 
       class << self
         def handle_offline_delivery(input_frame, worker_id:)
           queue_message(input_frame, worker_id)
           notify_sender(input_frame)
+          log.info(
+            'OfflineHandler queued ' \
+            "frame_id=#{input_frame.respond_to?(:id) ? input_frame.id : 'unknown'} worker_id=#{worker_id}"
+          )
           { queued: true, worker_id: worker_id }
         end
 
@@ -21,6 +29,7 @@ module Legion
 
         def record_presence(worker_id)
           presence_store[worker_id] = { last_seen: Time.now }
+          log.debug("OfflineHandler recorded presence worker_id=#{worker_id}")
         end
 
         def pending_count(worker_id)
@@ -28,7 +37,9 @@ module Legion
         end
 
         def drain_pending(worker_id)
-          pending_store.delete(worker_id) || []
+          drained = pending_store.delete(worker_id) || []
+          log.info("OfflineHandler drained pending worker_id=#{worker_id} count=#{drained.size}") if drained.any?
+          drained
         end
 
         def reset!
@@ -56,8 +67,10 @@ module Legion
             session_continuity_id: frame.respond_to?(:session_continuity_id) ? frame.session_continuity_id : nil
           )
           registry.deliver(output)
+          log.info("OfflineHandler notified sender frame_id=#{output.id} channel=#{frame.channel_id}")
         rescue StandardError => e
-          Legion::Logging.warn("OfflineHandler notify_sender failed: #{e.message}") if defined?(Legion::Logging)
+          handle_exception(e, level: :warn, operation: 'gaia.offline_handler.notify_sender',
+                              channel_id: frame.respond_to?(:channel_id) ? frame.channel_id : nil)
           nil
         end
 
@@ -68,9 +81,7 @@ module Legion
             60
           end
         rescue StandardError => e
-          if defined?(Legion::Logging)
-            Legion::Logging.debug("OfflineHandler offline_threshold settings unavailable, using default: #{e.message}")
-          end
+          handle_exception(e, level: :debug, operation: 'gaia.offline_handler.offline_threshold')
           60
         end
 

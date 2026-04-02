@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require 'legion/logging/helper'
 require_relative 'teams/bot_framework_auth'
 require_relative 'teams/conversation_store'
 require_relative 'teams/webhook_handler'
@@ -8,6 +9,8 @@ module Legion
   module Gaia
     module Channels
       class TeamsAdapter < ChannelAdapter
+        include Legion::Logging::Helper
+
         CAPABILITIES = %i[rich_text adaptive_cards proactive_messaging mobile desktop mentions].freeze
         MOBILE_CAPABILITIES = %i[rich_text adaptive_cards mobile mentions].freeze
         DESKTOP_CAPABILITIES = %i[rich_text adaptive_cards desktop mentions file_attachment].freeze
@@ -33,6 +36,7 @@ module Legion
 
         def update_presence_status(status)
           @last_presence_status = status
+          log.info("TeamsAdapter presence updated status=#{status}")
         end
 
         def translate_inbound(activity)
@@ -44,6 +48,7 @@ module Legion
           text = strip_mention(text, activity)
 
           conversation_store.store_from_activity(activity)
+          log.debug("TeamsAdapter translated inbound activity_id=#{activity['id'] || activity[:id]}")
 
           InputFrame.new(
             content: text.strip,
@@ -75,8 +80,12 @@ module Legion
         def deliver(rendered_content, conversation_id: nil)
           resolved_id = conversation_id || @default_conversation_id
           ref = resolved_id && conversation_store.lookup(resolved_id)
-          return { error: :no_conversation_reference } unless ref
+          unless ref
+            log.error("TeamsAdapter deliver failed conversation_id=#{resolved_id} error=no_conversation_reference")
+            return { error: :no_conversation_reference }
+          end
 
+          log.info("TeamsAdapter delivering conversation_id=#{ref.conversation_id}")
           deliver_via_bot(rendered_content, ref)
         end
 
@@ -88,6 +97,7 @@ module Legion
           return conversation_id if conversation_id.is_a?(Hash) && conversation_id[:error]
 
           rendered = translate_outbound(output_frame)
+          log.info("TeamsAdapter proactive delivery user_id=#{user_id} conversation_id=#{conversation_id}")
           deliver(rendered, conversation_id: conversation_id)
         end
 
@@ -113,11 +123,11 @@ module Legion
             service_url: service_url,
             tenant_id: resolved_tenant
           )
+          log.info("TeamsAdapter created proactive conversation user_id=#{user_id} conversation_id=#{conversation_id}")
           conversation_id
         rescue StandardError => e
-          if defined?(Legion::Logging)
-            Legion::Logging.warn("TeamsAdapter create_proactive_conversation failed: #{e.message}")
-          end
+          handle_exception(e, level: :warn, operation: 'gaia.channels.teams_adapter.create_proactive_conversation',
+                              user_id: user_id, tenant_id: resolved_tenant)
           { error: :create_conversation_failed, message: e.message }
         end
 
@@ -187,16 +197,19 @@ module Legion
 
         def deliver_via_bot(rendered_content, ref)
           unless bot_runner_available?
+            log.error('TeamsAdapter deliver_via_bot failed error=bot_runner_not_available')
             return { error: :bot_runner_not_available,
                      message: 'lex-microsoft_teams Bot runner not loaded' }
           end
 
           bot = Legion::Extensions::MicrosoftTeams::Client.new
           if rendered_content.is_a?(Hash) && rendered_content[:type] == 'adaptive_card'
+            log.info("TeamsAdapter sending adaptive card conversation_id=#{ref.conversation_id}")
             bot.send_card(service_url: ref.service_url, conversation_id: ref.conversation_id,
                           card: rendered_content[:card])
           else
             text = rendered_content.is_a?(Hash) ? rendered_content[:text] : rendered_content.to_s
+            log.info("TeamsAdapter sending text conversation_id=#{ref.conversation_id}")
             bot.send_text(service_url: ref.service_url, conversation_id: ref.conversation_id,
                           text: text)
           end
@@ -208,7 +221,13 @@ module Legion
 
         def resolve_proactive_conversation(user_id)
           existing = conversation_store.conversations_for_user(user_id)
-          return existing.first.conversation_id unless existing.empty?
+          unless existing.empty?
+            log.debug(
+              'TeamsAdapter reused proactive conversation ' \
+              "user_id=#{user_id} conversation_id=#{existing.first.conversation_id}"
+            )
+            return existing.first.conversation_id
+          end
 
           create_proactive_conversation(user_id: user_id)
         end

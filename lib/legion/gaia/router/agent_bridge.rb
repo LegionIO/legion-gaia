@@ -1,9 +1,13 @@
 # frozen_string_literal: true
 
+require 'legion/logging/helper'
+
 module Legion
   module Gaia
     module Router
       class AgentBridge
+        include Legion::Logging::Helper
+
         attr_reader :worker_id, :started
 
         def initialize(worker_id:)
@@ -14,11 +18,13 @@ module Legion
         def start
           @started = true
           subscribe_inbound if transport_available?
+          log.info("AgentBridge started worker_id=#{@worker_id}")
         end
 
         def stop
           @consumer&.cancel if @consumer.respond_to?(:cancel)
           @started = false
+          log.info("AgentBridge stopped worker_id=#{@worker_id}")
         end
 
         def started?
@@ -30,8 +36,13 @@ module Legion
 
           if transport_available?
             Transport::Messages::OutputFrameMessage.new(frame: output_frame).publish
+            log.info("AgentBridge published output frame_id=#{output_frame.id} worker_id=#{@worker_id}")
             { published: true, frame_id: output_frame.id }
           else
+            log.error(
+              'AgentBridge publish failed ' \
+              "frame_id=#{output_frame.id} worker_id=#{@worker_id} error=no_transport"
+            )
             { published: false, reason: :no_transport, frame_id: output_frame.id }
           end
         end
@@ -41,8 +52,10 @@ module Legion
           return { ingested: false, reason: :invalid_frame } unless frame
 
           if Legion::Gaia.respond_to?(:ingest) && Legion::Gaia.started?
+            log.debug("AgentBridge ingesting frame_id=#{frame.id} worker_id=#{@worker_id}")
             Legion::Gaia.ingest(frame)
           else
+            log.error("AgentBridge ingest failed frame_id=#{frame.id} worker_id=#{@worker_id} error=gaia_not_started")
             { ingested: false, reason: :gaia_not_started }
           end
         end
@@ -56,7 +69,8 @@ module Legion
             ingest_from_payload(message) if message
             queue.acknowledge(delivery_info.delivery_tag)
           rescue StandardError => e
-            log_error("AgentBridge inbound error: #{e.message}")
+            handle_exception(e, level: :error, operation: 'gaia.router.agent_bridge.subscribe_inbound',
+                                worker_id: @worker_id)
             queue.reject(delivery_info.delivery_tag)
           end
         end
@@ -74,7 +88,8 @@ module Legion
             metadata: payload[:metadata] || {}
           )
         rescue StandardError => e
-          Legion::Logging.warn("AgentBridge reconstruct_input_frame failed: #{e.message}") if defined?(Legion::Logging)
+          handle_exception(e, level: :warn, operation: 'gaia.router.agent_bridge.reconstruct_input_frame',
+                              worker_id: @worker_id)
           nil
         end
 
@@ -82,16 +97,13 @@ module Legion
           parsed = Legion::JSON.load(raw)
           parsed.is_a?(Hash) ? parsed : nil
         rescue StandardError => e
-          Legion::Logging.warn("AgentBridge decode_payload failed: #{e.message}") if defined?(Legion::Logging)
+          handle_exception(e, level: :warn, operation: 'gaia.router.agent_bridge.decode_payload',
+                              worker_id: @worker_id)
           nil
         end
 
         def transport_available?
           defined?(Legion::Transport::Connection) && Legion::Transport::Connection.respond_to?(:session)
-        end
-
-        def log_error(msg)
-          Legion::Logging.error(msg) if Legion.const_defined?(:Logging, false)
         end
       end
     end

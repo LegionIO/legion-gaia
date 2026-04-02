@@ -4,12 +4,15 @@ require 'net/http'
 require 'uri'
 require 'openssl'
 require 'base64'
+require 'legion/logging/helper'
 
 module Legion
   module Gaia
     module Channels
       module Teams
         module BotFrameworkAuth
+          extend Legion::Logging::Helper
+
           OPENID_METADATA_URL = 'https://login.botframework.com/v1/.well-known/openidconfiguration'
           BOT_FRAMEWORK_ISSUER = 'https://api.botframework.com'
           EMULATOR_ISSUER = 'https://sts.windows.net/d6d49420-f39b-4df7-a1dc-d59a935871db/'
@@ -66,9 +69,7 @@ module Legion
             decoded = Base64.urlsafe_decode64(padded)
             ::JSON.parse(decoded)
           rescue StandardError => e
-            if defined?(Legion::Logging)
-              Legion::Logging.debug("BotFrameworkAuth JWT segment decode failed: #{e.message}")
-            end
+            handle_exception(e, level: :debug, operation: 'gaia.channels.teams.bot_framework_auth.decode_jwt_segment')
             nil
           end
 

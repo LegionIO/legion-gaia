@@ -1,8 +1,12 @@
 # frozen_string_literal: true
 
+require 'legion/logging/helper'
+
 module Legion
   module Gaia
     class ProactiveDispatcher
+      include Legion::Logging::Helper
+
       MAX_PER_DAY     = 3
       MIN_INTERVAL    = 7200     # 2 hours
       IGNORE_COOLDOWN = 86_400   # 24 hours
@@ -33,10 +37,12 @@ module Legion
       def record_dispatch!
         prune_old_dispatches!
         @dispatch_log << { at: Time.now.utc }
+        log.info("ProactiveDispatcher recorded dispatch count=#{@dispatch_log.size}")
       end
 
       def record_ignored!
         @last_ignored_at = Time.now.utc
+        log.info('ProactiveDispatcher recorded ignored interaction')
       end
 
       def dispatches_today
@@ -47,23 +53,35 @@ module Legion
       def queue_intent(intent)
         @pending_buffer << intent
         @pending_buffer.shift while @pending_buffer.size > MAX_PENDING
+        log.info("ProactiveDispatcher queued intent reason=#{intent.dig(:trigger,
+                                                                        :reason)} pending=#{@pending_buffer.size}")
       end
 
       def drain_pending
         drained = @pending_buffer.dup
         @pending_buffer.clear
+        log.info("ProactiveDispatcher drained pending count=#{drained.size}") if drained.any?
         drained
       end
 
       def dispatch_with_gate(intent)
-        return { dispatched: false, reason: :rate_limited } unless can_dispatch?
+        unless can_dispatch?
+          log.info("ProactiveDispatcher skipped intent reason=#{intent.dig(:trigger, :reason)} status=rate_limited")
+          return { dispatched: false, reason: :rate_limited }
+        end
 
         content = generate_content(intent)
-        return { dispatched: false, reason: :no_content } unless content
+        unless content
+          log.info("ProactiveDispatcher skipped intent reason=#{intent.dig(:trigger, :reason)} status=no_content")
+          return { dispatched: false, reason: :no_content }
+        end
 
         partner_id = resolve_partner_id
         channel_id = resolve_partner_channel
-        return { dispatched: false, reason: :no_partner } unless partner_id
+        unless partner_id
+          log.info("ProactiveDispatcher skipped intent reason=#{intent.dig(:trigger, :reason)} status=no_partner")
+          return { dispatched: false, reason: :no_partner }
+        end
 
         result = proactive_module.send_notification(
           content: content,
@@ -73,8 +91,13 @@ module Legion
         )
 
         record_dispatch!
+        log.info(
+          'ProactiveDispatcher dispatched intent ' \
+          "reason=#{intent.dig(:trigger, :reason)} user_id=#{partner_id} channel_id=#{channel_id}"
+        )
         { dispatched: true, content: content, result: result }
       rescue StandardError => e
+        handle_exception(e, level: :warn, operation: 'gaia.proactive_dispatcher.dispatch_with_gate')
         { dispatched: false, reason: :error, error: e.message }
       end
 
@@ -99,7 +122,8 @@ module Legion
 
         result = Legion::LLM.ask(message: prompt)
         result&.content || prompt
-      rescue StandardError
+      rescue StandardError => e
+        handle_exception(e, level: :debug, operation: 'gaia.proactive_dispatcher.generate_content')
         prompt
       end
 

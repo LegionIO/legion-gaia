@@ -1,9 +1,13 @@
 # frozen_string_literal: true
 
+require 'legion/logging/helper'
+
 module Legion
   module Gaia
     module Router
       class RouterBridge
+        include Legion::Logging::Helper
+
         attr_reader :worker_routing, :channel_registry, :started
 
         def initialize(channel_registry:, worker_routing: nil, allowed_worker_ids: [])
@@ -14,10 +18,12 @@ module Legion
 
         def start
           @started = true
+          log.info("RouterBridge started workers=#{@worker_routing.size}")
         end
 
         def stop
           @started = false
+          log.info('RouterBridge stopped')
         end
 
         def started?
@@ -33,6 +39,7 @@ module Legion
 
           return offline_response(input_frame) unless worker_id
 
+          log.info("RouterBridge routing inbound frame_id=#{input_frame.id} worker_id=#{worker_id}")
           publish_input_frame(input_frame, worker_id: worker_id)
         end
 
@@ -43,10 +50,24 @@ module Legion
           return { delivered: false, reason: :invalid_frame } unless frame
 
           adapter = @channel_registry.adapter_for(frame.channel_id)
-          return { delivered: false, reason: :no_adapter, channel_id: frame.channel_id } unless adapter
+          unless adapter
+            log.error(
+              'RouterBridge route_outbound failed ' \
+              "frame_id=#{frame.id} channel_id=#{frame.channel_id} error=no_adapter"
+            )
+            return { delivered: false, reason: :no_adapter, channel_id: frame.channel_id }
+          end
 
           rendered = adapter.translate_outbound(frame)
           deliver_result = deliver_output(adapter, rendered, frame)
+          if deliver_result.is_a?(Hash) && deliver_result[:error]
+            log.error(
+              'RouterBridge route_outbound failed ' \
+              "frame_id=#{frame.id} channel_id=#{frame.channel_id} error=#{deliver_result[:error]}"
+            )
+          else
+            log.info("RouterBridge routed outbound frame_id=#{frame.id} channel_id=#{frame.channel_id}")
+          end
           { delivered: true, channel_id: frame.channel_id, frame_id: frame.id }.merge(deliver_result)
         end
 
@@ -66,18 +87,22 @@ module Legion
             worker_id: worker_id
           ).publish
 
+          log.debug("RouterBridge published inbound frame_id=#{input_frame.id} worker_id=#{worker_id}")
           { routed: true, worker_id: worker_id, frame_id: input_frame.id }
         end
 
         def mock_publish(input_frame, worker_id)
+          log.debug("RouterBridge mock-published frame_id=#{input_frame.id} worker_id=#{worker_id}")
           { routed: true, worker_id: worker_id, frame_id: input_frame.id, transport: :mock }
         end
 
         def offline_response(input_frame)
+          identity = extract_identity(input_frame)
+          log.warn("RouterBridge could not route inbound frame_id=#{input_frame.id} identity=#{identity}")
           {
             routed: false,
             reason: :worker_not_found,
-            identity: extract_identity(input_frame),
+            identity: identity,
             frame_id: input_frame.id
           }
         end
@@ -94,9 +119,7 @@ module Legion
             metadata: payload[:metadata] || {}
           )
         rescue StandardError => e
-          if defined?(Legion::Logging)
-            Legion::Logging.warn("RouterBridge reconstruct_output_frame failed: #{e.message}")
-          end
+          handle_exception(e, level: :warn, operation: 'gaia.router.router_bridge.reconstruct_output_frame')
           nil
         end
 
