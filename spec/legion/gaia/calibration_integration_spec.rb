@@ -32,8 +32,7 @@ RSpec.describe 'GAIA calibration integration' do
         calibration_module
       )
       allow(Legion::Gaia).to receive(:started?).and_return(true)
-      allow(Legion::Gaia).to receive(:log_warn)
-      allow(Legion::Gaia).to receive(:log_debug)
+      allow(Legion::Gaia).to receive(:log).and_return(double('Logger').as_null_object)
       allow(Legion::Gaia).to receive(:record_interaction_trace)
       allow(Legion::Gaia::BondRegistry).to receive(:role).and_return(:partner)
       allow(Legion::Gaia::TrackerPersistence).to receive(:register_tracker)

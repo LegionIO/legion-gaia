@@ -1,13 +1,24 @@
 # frozen_string_literal: true
 
 RSpec.describe Legion::Gaia do
+  let(:logging_stub) do
+    Module.new.tap do |mod|
+      mod.define_singleton_method(:configuration_generation) { 0 }
+      %i[debug info warn error fatal unknown].each do |level|
+        mod.define_singleton_method(level) { |_msg| nil }
+      end
+      mod.const_set(:TaggedLogger, Class.new do
+        def initialize(**); end
+
+        %i[debug info warn error fatal unknown].each do |level|
+          define_method(level) { |_msg = nil| nil }
+        end
+      end)
+    end
+  end
+
   before do
-    stub_const('Legion::Logging', Module.new do
-      def self.debug(_msg); end
-      def self.info(_msg); end
-      def self.warn(_msg); end
-      def self.error(_msg); end
-    end)
+    stub_const('Legion::Logging', logging_stub)
   end
 
   after do
@@ -99,17 +110,21 @@ RSpec.describe Legion::Gaia do
     end
 
     context 'when lex-tick is unavailable' do
+      let(:logger) { double('Logger').as_null_object }
+
       before { described_class.boot }
 
       it 'logs the warning on the first heartbeat' do
         msg = '[gaia] lex-tick not available, will retry next heartbeat'
-        expect(described_class).to receive(:log_warn).with(msg).once
+        allow(described_class).to receive(:log).and_return(logger)
+        expect(logger).to receive(:warn).with(msg).once
         described_class.heartbeat
       end
 
       it 'does not log the warning on subsequent heartbeats' do
+        allow(described_class).to receive(:log).and_return(logger)
         described_class.heartbeat
-        expect(described_class).not_to receive(:log_warn)
+        expect(logger).not_to receive(:warn)
         described_class.heartbeat
         described_class.heartbeat
       end
@@ -121,7 +136,8 @@ RSpec.describe Legion::Gaia do
         allow(mock_tick).to receive(:last_tick_result=)
 
         # First unavailability: warning fires once
-        expect(described_class).to receive(:log_warn).once
+        allow(described_class).to receive(:log).and_return(logger)
+        expect(logger).to receive(:warn).once
         described_class.heartbeat
 
         # Tick becomes available: resets the warned flag
@@ -132,7 +148,7 @@ RSpec.describe Legion::Gaia do
         # Tick goes unavailable again: warning fires again
         allow(registry).to receive(:tick_host).and_return(nil)
         msg = '[gaia] lex-tick not available, will retry next heartbeat'
-        expect(described_class).to receive(:log_warn).with(msg).once
+        expect(logger).to receive(:warn).with(msg).once
         described_class.heartbeat
       end
     end
@@ -260,6 +276,34 @@ RSpec.describe Legion::Gaia do
         100.times { described_class.heartbeat }
         importance = described_class.last_valences.last[:importance]
         expect(importance).to be <= 0.7
+      end
+
+      context 'when action_selection is also wired and absence exceeds pattern' do
+        let(:attachment_runner) { instance_double('AttachmentRunner') }
+
+        before do
+          allow(described_class.registry).to receive(:phase_handlers)
+            .and_return({ prediction_engine: ->(**) {}, action_selection: ->(**) {} })
+          allow(described_class.registry).to receive(:runner_instances)
+            .and_return({ Social_Attachment: attachment_runner })
+          allow(attachment_runner).to receive(:reflect_on_bonds)
+            .with(tick_results: {}, bond_summary: {})
+            .and_return({ partner_bond: { absence_exceeds_pattern: true } })
+        end
+
+        it 'queues an internal absence signal after sustained misses' do
+          5.times { described_class.heartbeat }
+
+          expect(described_class.sensory_buffer.size).to eq(1)
+          signal = described_class.sensory_buffer.drain.first
+          expect(signal[:source_type]).to eq(:partner_absence)
+          expect(signal[:salience]).to eq(0.75)
+        end
+
+        it 'respects the absence signal cooldown' do
+          10.times { described_class.heartbeat }
+          expect(attachment_runner).to have_received(:reflect_on_bonds).once
+        end
       end
     end
 

@@ -1,13 +1,24 @@
 # frozen_string_literal: true
 
 RSpec.describe Legion::Gaia::Registry do
+  let(:logging_stub) do
+    Module.new.tap do |mod|
+      mod.define_singleton_method(:configuration_generation) { 0 }
+      %i[debug info warn error fatal unknown].each do |level|
+        mod.define_singleton_method(level) { |_msg| nil }
+      end
+      mod.const_set(:TaggedLogger, Class.new do
+        def initialize(**); end
+
+        %i[debug info warn error fatal unknown].each do |level|
+          define_method(level) { |_msg = nil| nil }
+        end
+      end)
+    end
+  end
+
   before do
-    stub_const('Legion::Logging', Module.new do
-      def self.debug(_msg); end
-      def self.info(_msg); end
-      def self.warn(_msg); end
-      def self.error(_msg); end
-    end)
+    stub_const('Legion::Logging', logging_stub)
   end
 
   subject(:registry) { described_class.instance.tap(&:reset!) }

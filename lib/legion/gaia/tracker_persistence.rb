@@ -1,8 +1,12 @@
 # frozen_string_literal: true
 
+require 'legion/logging/helper'
+
 module Legion
   module Gaia
     module TrackerPersistence
+      extend Legion::Logging::Helper
+
       FLUSH_INTERVAL = 300 # 5 minutes
 
       module_function
@@ -10,6 +14,7 @@ module Legion
       def register_tracker(name, tracker:, tags:)
         @trackers ||= {}
         @trackers[name] = { tracker: tracker, tags: tags }
+        log.info("TrackerPersistence registered tracker=#{name} tags=#{Array(tags).join(',')}")
       end
 
       def registered_trackers
@@ -26,8 +31,9 @@ module Legion
           flush_tracker(tracker, store: store)
         end
         @last_flush_at = Time.now.utc
+        log.info("TrackerPersistence flushed dirty trackers count=#{registered_trackers.size}")
       rescue StandardError => e
-        Legion::Logging.warn "TrackerPersistence flush_dirty error: #{e.message}" if defined?(Legion::Logging)
+        handle_exception(e, level: :warn, operation: 'gaia.tracker_persistence.flush_dirty')
       end
 
       def flush_all(store: nil)
@@ -37,8 +43,9 @@ module Legion
           flush_tracker(entry[:tracker], store: store)
         end
         @last_flush_at = Time.now.utc
+        log.info("TrackerPersistence flushed all trackers count=#{registered_trackers.size}")
       rescue StandardError => e
-        Legion::Logging.warn "TrackerPersistence flush_all error: #{e.message}" if defined?(Legion::Logging)
+        handle_exception(e, level: :warn, operation: 'gaia.tracker_persistence.flush_all')
       end
 
       def hydrate_all(store: nil)
@@ -47,8 +54,9 @@ module Legion
         registered_trackers.each_value do |entry|
           entry[:tracker].from_apollo(store: store)
         end
+        log.info("TrackerPersistence hydrated trackers count=#{registered_trackers.size}")
       rescue StandardError => e
-        Legion::Logging.warn "TrackerPersistence hydrate error: #{e.message}" if defined?(Legion::Logging)
+        handle_exception(e, level: :warn, operation: 'gaia.tracker_persistence.hydrate_all')
       end
 
       def last_flush_at
@@ -73,10 +81,10 @@ module Legion
                        source_channel: 'gaia', confidence: entry.fetch(:confidence, 0.9))
         end
         tracker.mark_clean!
+        log.debug("TrackerPersistence flushed tracker=#{tracker.class} entries=#{entries.size}")
       rescue StandardError => e
-        if defined?(Legion::Logging)
-          Legion::Logging.warn "TrackerPersistence flush error for #{tracker.class}: #{e.message}"
-        end
+        handle_exception(e, level: :warn, operation: 'gaia.tracker_persistence.flush_tracker',
+                            tracker_class: tracker.class.to_s)
       end
       private_class_method :flush_tracker
     end
