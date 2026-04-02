@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+## [0.9.39] - 2026-04-02
+
+### Changed
+- Switch non-API GAIA library logging to `Legion::Logging::Helper`, replacing direct `Legion::Logging.*` calls and legacy `log_*` wrappers with helper-backed `log`
+- Expand `info`, `debug`, and `error` coverage across GAIA runtime booting, routing, proactive delivery, trackers, adapters, and workflow transitions
+
+### Fixed
+- Route rescued GAIA library exceptions through `handle_exception` so failures are captured consistently with operation context
+- Update GAIA logging specs to support helper-backed tagged logging and keep the full suite green after the logging uplift
+
 ## [0.9.38] - 2026-04-01
 
 ### Fixed
