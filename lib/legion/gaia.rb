@@ -117,7 +117,7 @@ module Legion
 
       def settings
         if Legion.const_defined?('Settings', false)
-          Legion::Settings[:gaia]
+          Legion::Settings[:gaia] || Legion::Gaia::Settings.default
         else
           Legion::Gaia::Settings.default
         end

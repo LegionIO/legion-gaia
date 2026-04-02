@@ -1,6 +1,11 @@
 # frozen_string_literal: true
 
 require 'bundler/setup'
+require 'legion/logging'
+require 'legion/settings'
+Legion::Logging.setup(log_file: './legion.log', level: 'fatal')
+Legion::Settings.load
+
 require 'legion/gaia'
 
 RSpec.configure do |config|
