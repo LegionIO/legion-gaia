@@ -1,11 +1,13 @@
 # frozen_string_literal: true
 
 require 'singleton'
+require 'legion/logging/helper'
 
 module Legion
   module Gaia
     class AuditObserver
       include Singleton
+      include Legion::Logging::Helper
 
       def initialize
         @user_prefs = {}
@@ -22,8 +24,13 @@ module Legion
           record_tool_patterns(event)
           record_quality(event)
         end
+        identity = event.dig(:caller, :requested_by, :identity)
+        log.debug(
+          'AuditObserver processed event ' \
+          "identity=#{identity || 'unknown'} tools=#{Array(event[:tools_used]).size}"
+        )
       rescue StandardError => e
-        Legion::Logging.warn("audit observer error: #{e.message}") if defined?(Legion::Logging)
+        handle_exception(e, level: :warn, operation: 'gaia.audit_observer.process_event')
       end
 
       def user_preferences(identity)

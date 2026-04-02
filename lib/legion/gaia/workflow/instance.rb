@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require 'legion/logging/helper'
+
 module Legion
   module Gaia
     module Workflow
@@ -15,6 +17,8 @@ module Legion
       # Thread-safety: each instance holds a Mutex so concurrent calls to
       # `transition!` serialize correctly.
       class Instance
+        include Legion::Logging::Helper
+
         attr_reader :id, :definition, :current_state, :history, :metadata, :created_at
 
         # @param definition [Definition]
@@ -56,7 +60,9 @@ module Legion
         def transition(to_state, **ctx)
           transition!(to_state, **ctx)
           true
-        rescue GuardRejected, CheckpointBlocked
+        rescue GuardRejected, CheckpointBlocked => e
+          handle_exception(e, level: :debug, operation: 'gaia.workflow.instance.transition',
+                              workflow: definition.name, to_state: to_state)
           false
         end
 
@@ -164,6 +170,10 @@ module Legion
             ctx: ctx,
             at: Time.now
           }
+          log.info(
+            'Workflow::Instance transitioned ' \
+            "workflow=#{definition.name} id=#{id} from=#{current_state} to=#{to_state}"
+          )
         end
       end
     end

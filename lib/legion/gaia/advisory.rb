@@ -1,8 +1,12 @@
 # frozen_string_literal: true
 
+require 'legion/logging/helper'
+
 module Legion
   module Gaia
     module Advisory
+      extend Legion::Logging::Helper
+
       module_function
 
       # Fast in-memory advisory. NEVER makes LLM calls.
@@ -15,9 +19,13 @@ module Legion
         advisory[:valence] = Gaia.last_valences if Gaia.last_valences
         merge_tick_data!(advisory, Gaia.registry&.tick_host&.last_tick_result)
         merge_observer_data!(advisory, caller)
-        advisory.compact
+        result = advisory.compact
+        if result.any?
+          log.info("GAIA advisory generated conversation_id=#{conversation_id} keys=#{result.keys.join(',')}")
+        end
+        result
       rescue StandardError => e
-        Legion::Logging.warn("GAIA advisory failed: #{e.message}") if defined?(Legion::Logging)
+        handle_exception(e, level: :warn, operation: 'gaia.advisory.advise', conversation_id: conversation_id)
         nil
       end
 
