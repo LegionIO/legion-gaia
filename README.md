@@ -2,7 +2,7 @@
 
 Cognitive coordination layer for the LegionIO framework. GAIA is the mind that inhabits the Legion body.
 
-**Version**: 0.9.26
+**Version**: 0.9.42
 
 GAIA sits on top of LegionIO's infrastructure and coordinates all agentic subordinate functions. It drives the tick cycle, manages extension discovery and wiring, and provides the channel abstraction for multi-interface communication.
 
@@ -23,7 +23,7 @@ Legion::Gaia.ingest                      OutputRouter -> NotificationGate -> Ren
     v                                        |
 SensoryBuffer -----> Heartbeat (1s) --> Cognitive Pipeline
                          |
-                    PhaseWiring (24 phases)
+                    PhaseWiring (25 phases)
                          |
                     Registry -> RunnerHost(s)
                          |
@@ -102,11 +102,11 @@ gaia:
 
 ## Cognitive Phases
 
-GAIA wires 24 phases across two cycles:
+GAIA wires 25 phases across two cycles:
 
 **Active Tick (16 phases):** sensory processing, emotional evaluation, memory retrieval, knowledge retrieval, identity entropy check, working memory integration, procedural check, prediction engine, mesh interface, social cognition, theory of mind, gut instinct, action selection, memory consolidation, homeostasis regulation, post-tick reflection.
 
-**Dream Cycle (8 phases):** memory audit, association walk, contradiction resolution, agenda formation, consolidation commit, knowledge promotion, dream reflection, dream narration.
+**Dream Cycle (9 phases):** memory audit, association walk, contradiction resolution, agenda formation, consolidation commit, knowledge promotion, dream reflection, partner reflection, dream narration.
 
 ## Channel Adapters
 

@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [0.9.42] - 2026-04-02
+
+### Fixed
+- Keep trackers dirty when Apollo persistence returns a failed upsert response, and avoid advancing the flush timestamp for unsuccessful tracker flushes
+- Refresh repo docs to match the current GAIA version and the 25-phase wiring layout
+
 ## [0.9.41] - 2026-04-02
 
 ### Fixed

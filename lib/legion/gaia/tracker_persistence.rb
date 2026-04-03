@@ -24,13 +24,14 @@ module Legion
       def flush_dirty(store: nil)
         return unless store
 
+        failed = false
         registered_trackers.each_value do |entry|
           tracker = entry[:tracker]
           next unless tracker.dirty?
 
-          flush_tracker(tracker, store: store)
+          failed ||= !flush_tracker(tracker, store: store)
         end
-        @last_flush_at = Time.now.utc
+        @last_flush_at = Time.now.utc unless failed
         log.info("TrackerPersistence flushed dirty trackers count=#{registered_trackers.size}")
       rescue StandardError => e
         handle_exception(e, level: :warn, operation: 'gaia.tracker_persistence.flush_dirty')
@@ -39,10 +40,11 @@ module Legion
       def flush_all(store: nil)
         return unless store
 
+        failed = false
         registered_trackers.each_value do |entry|
-          flush_tracker(entry[:tracker], store: store)
+          failed ||= !flush_tracker(entry[:tracker], store: store)
         end
-        @last_flush_at = Time.now.utc
+        @last_flush_at = Time.now.utc unless failed
         log.info("TrackerPersistence flushed all trackers count=#{registered_trackers.size}")
       rescue StandardError => e
         handle_exception(e, level: :warn, operation: 'gaia.tracker_persistence.flush_all')
@@ -76,17 +78,37 @@ module Legion
 
       def flush_tracker(tracker, store:)
         entries = tracker.to_apollo_entries
-        entries.each do |entry|
+        results = entries.map do |entry|
           store.upsert(content: entry[:content], tags: entry[:tags],
                        source_channel: 'gaia', confidence: entry.fetch(:confidence, 0.9))
         end
+
+        unless results.all? { |result| upsert_succeeded?(result) }
+          log.error("TrackerPersistence flush failed tracker=#{tracker.class} entries=#{entries.size}")
+          return false
+        end
+
         tracker.mark_clean!
         log.debug("TrackerPersistence flushed tracker=#{tracker.class} entries=#{entries.size}")
+        true
       rescue StandardError => e
         handle_exception(e, level: :warn, operation: 'gaia.tracker_persistence.flush_tracker',
                             tracker_class: tracker.class.to_s)
+        false
       end
       private_class_method :flush_tracker
+
+      def upsert_succeeded?(result)
+        return false if result.nil? || result == false
+        return true unless result.is_a?(Hash)
+
+        return false if result[:error] || result['error']
+        return false if result.key?(:success) && result[:success] == false
+        return false if result.key?('success') && result['success'] == false
+
+        true
+      end
+      private_class_method :upsert_succeeded?
     end
   end
 end
