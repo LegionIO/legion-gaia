@@ -1,21 +1,11 @@
 # frozen_string_literal: true
 
+require 'legion/logging/helper'
+
 module Legion
   module Gaia
     module Logging
-      private
-
-      def log_debug(msg)
-        Legion::Logging.debug(msg) if Legion.const_defined?(:Logging, false)
-      end
-
-      def log_info(msg)
-        Legion::Logging.info(msg) if Legion.const_defined?(:Logging, false)
-      end
-
-      def log_warn(msg)
-        Legion::Logging.warn(msg) if Legion.const_defined?(:Logging, false)
-      end
+      include Legion::Logging::Helper
     end
   end
 end

@@ -1,14 +1,19 @@
 # frozen_string_literal: true
 
+require 'legion/logging/helper'
+
 module Legion
   module Gaia
     module BondRegistry
+      extend Legion::Logging::Helper
+
       module_function
 
       def register(identity, role:, priority: :normal)
         @bonds ||= {}
         @bonds[identity.to_s] = { identity: identity.to_s, role: role.to_sym, priority: priority.to_sym,
                                   since: Time.now.utc }
+        log.info("BondRegistry registered identity=#{identity} role=#{role} priority=#{priority}")
       end
 
       def partner?(identity)
@@ -41,12 +46,14 @@ module Legion
 
           identities.each { |id| register(id, role: :partner, priority: priority) }
         end
+        log.info("BondRegistry hydrated entries=#{result[:results].size}")
       rescue StandardError => e
-        Legion::Logging.warn "BondRegistry hydration failed: #{e.message}" if defined?(Legion::Logging)
+        handle_exception(e, level: :warn, operation: 'gaia.bond_registry.hydrate_from_apollo')
       end
 
       def reset!
         @bonds = {}
+        log.debug('BondRegistry reset')
       end
 
       def extract_identity_keys(content)

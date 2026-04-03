@@ -35,6 +35,22 @@ RSpec.describe Legion::Gaia::TrackerPersistence do
       expect(mock_store).not_to receive(:upsert)
       described_class.flush_dirty(store: mock_store)
     end
+
+    it 'keeps trackers dirty when Apollo returns a failed upsert response' do
+      tracker = double('tracker', dirty?: true, to_apollo_entries: [
+                         { content: '{"standing":"exemplary"}', tags: %w[social_graph reputation esity] }
+                       ])
+
+      described_class.register_tracker(:social_graph, tracker: tracker, tags: ['social_graph'])
+
+      expect(mock_store).to receive(:upsert)
+        .with(hash_including(content: '{"standing":"exemplary"}'))
+        .and_return({ success: false })
+      expect(tracker).not_to receive(:mark_clean!)
+
+      described_class.flush_dirty(store: mock_store)
+      expect(described_class.last_flush_at).to be_nil
+    end
   end
 
   describe '.flush_all' do
@@ -75,6 +91,19 @@ RSpec.describe Legion::Gaia::TrackerPersistence do
       described_class.flush_dirty(store: mock_store)
 
       expect(described_class.last_flush_at).to be_within(2).of(Time.now.utc)
+    end
+
+    it 'does not advance when a flush fails' do
+      tracker = double('tracker', dirty?: true, to_apollo_entries: [
+                         { content: '{}', tags: ['test'] }
+                       ])
+
+      described_class.register_tracker(:test, tracker: tracker, tags: ['test'])
+      allow(mock_store).to receive(:upsert).and_return({ success: false })
+
+      described_class.flush_dirty(store: mock_store)
+
+      expect(described_class.last_flush_at).to be_nil
     end
   end
 

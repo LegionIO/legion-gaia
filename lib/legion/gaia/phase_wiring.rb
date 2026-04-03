@@ -1,8 +1,12 @@
 # frozen_string_literal: true
 
+require 'legion/logging/helper'
+
 module Legion
   module Gaia
     module PhaseWiring # rubocop:disable Metrics/ModuleLength
+      extend Legion::Logging::Helper
+
       PHASE_MAP = {
         sensory_processing: { ext: :Attention, runner: :Attention, fn: :filter_signals },
         emotional_evaluation: { ext: :Emotion, runner: :Valence,       fn: :evaluate_valence },
@@ -50,9 +54,13 @@ module Legion
         },
         emotional_evaluation: lambda { |ctx|
           { signal: ctx[:current_signal] || {}, source_type: :ambient,
-            human_observations: ctx.dig(:state, :partner_observations) || [] }
+            human_observations: partner_observations_from(ctx) }
         },
-        memory_retrieval: ->(_ctx) { { limit: knowledge_setting(:memory_retrieval_limit, 10) } },
+        memory_retrieval: lambda { |ctx|
+          return { skip: true, reason: :idle_no_signals } if Array(ctx[:signals]).empty?
+
+          { limit: knowledge_setting(:memory_retrieval_limit, 10) }
+        },
         knowledge_retrieval: lambda { |ctx|
           current_signal = ctx[:signals]&.last
           memory_results = ctx.dig(:prior_results, :memory_retrieval)
@@ -64,7 +72,7 @@ module Legion
           end
 
           {
-            text: current_signal[:content] || current_signal.to_s,
+            text: current_signal[:value] || current_signal[:content] || current_signal.to_s,
             limit: knowledge_setting(:retrieval_limit, 5),
             min_confidence: knowledge_setting(:retrieval_min_confidence, 0.3),
             tags: current_signal[:tags]
@@ -72,29 +80,31 @@ module Legion
         },
         identity_entropy_check: ->(_ctx) { {} },
         procedural_check: ->(_ctx) { {} },
-        prediction_engine: ->(ctx) { { mode: :functional_mapping, context: ctx[:prior_results] || {} } },
+        prediction_engine: lambda { |ctx|
+          return { skip: true, reason: :idle_no_signals } if Array(ctx[:signals]).empty?
+
+          { mode: :functional_mapping, context: ctx[:prior_results] || {} }
+        },
         mesh_interface: ->(_ctx) { {} },
         social_cognition: lambda { |ctx|
           { tick_results: ctx[:prior_results] || {},
-            human_observations: ctx.dig(:state, :partner_observations) || [] }
+            human_observations: partner_observations_from(ctx) }
         },
         theory_of_mind: lambda { |ctx|
           { tick_results: ctx[:prior_results] || {},
-            human_observations: ctx.dig(:state, :partner_observations) || [] }
+            human_observations: partner_observations_from(ctx) }
         },
         gut_instinct: ->(ctx) { { valences: ctx[:valences] || [] } },
         action_selection: lambda { |ctx|
-          pr = ctx.dig(:prior_results, :partner_reflection)
-          bond_state = pr.is_a?(Array) ? (pr.find { |r| r.is_a?(Hash) } || {}) : (pr || {})
           { tick_results: ctx[:prior_results] || {},
             cognitive_state: {},
-            bond_state: bond_state }
+            bond_state: bond_state_from(ctx) }
         },
         working_memory_integration: ->(ctx) { { prior_results: ctx[:prior_results] || {} } },
-        memory_consolidation: ->(_ctx) { {} },
+        memory_consolidation: ->(_ctx) { { maintenance: false } },
         homeostasis_regulation: ->(ctx) { { tick_results: ctx[:prior_results] || {} } },
         post_tick_reflection: lambda { |ctx|
-          { tick_results: ctx[:prior_results] || {}, since: ctx.dig(:state, :last_observer_tick) }
+          { tick_results: ctx[:prior_results] || {}, since: observer_cursor_from(ctx) }
         },
         memory_audit: ->(_ctx) { { limit: knowledge_setting(:memory_audit_limit, 20) } },
         association_walk: lambda { |ctx|
@@ -129,7 +139,8 @@ module Legion
         return default unless defined?(Legion::Settings) && !Legion::Settings[:gaia].nil?
 
         Legion::Settings[:gaia].dig(:knowledge, key) || default
-      rescue StandardError
+      rescue StandardError => e
+        handle_exception(e, level: :debug, operation: 'gaia.phase_wiring.knowledge_setting', key: key)
         default
       end
 
@@ -158,11 +169,14 @@ module Legion
         end
 
         nil
-      rescue StandardError
+      rescue StandardError => e
+        handle_exception(e, level: :debug, operation: 'gaia.phase_wiring.core_library_runner',
+                            extension: ext_sym, runner: runner_sym)
         nil
       end
 
       def deep_agentic_runner(ext_sym, runner_sym)
+        return nil unless defined?(Legion::Extensions)
         return nil unless Legion::Extensions.const_defined?(:Agentic, false)
 
         agentic = Legion::Extensions::Agentic
@@ -180,6 +194,8 @@ module Legion
       end
 
       def locate_ext_mod(ext_sym)
+        return nil unless defined?(Legion::Extensions)
+
         if Legion::Extensions.const_defined?(ext_sym, false)
           Legion::Extensions.const_get(ext_sym, false)
         elsif Legion::Extensions.const_defined?(:Agentic, false) &&
@@ -210,34 +226,97 @@ module Legion
         value.is_a?(Array) ? value : [value]
       end
 
+      def normalize_phase_result(value)
+        return value unless value.is_a?(Array)
+
+        compact = value.compact
+        return {} if compact.empty?
+        return compact.first if compact.size == 1
+        return compact.each_with_object({}) { |item, merged| merged.merge!(item) } if compact.all?(Hash)
+
+        compact
+      end
+
+      def normalize_prior_results(results)
+        return {} unless results.is_a?(Hash)
+
+        results.transform_values { |value| normalize_phase_result(value) }
+      end
+
       def build_phase_handlers(runner_instances)
-        handlers = {}
-
-        PHASE_MAP.each do |phase, value|
-          next if value.nil?
-
-          maps = mappings_for(value)
-          active = maps.filter_map do |mapping|
-            instance_key = :"#{mapping[:ext]}_#{mapping[:runner]}"
-            instance = runner_instances[instance_key]
-            next unless instance
-
-            { instance: instance, fn: mapping[:fn] }
-          end
-          next if active.empty?
-
-          arg_builder = PHASE_ARGS[phase]
-
-          handlers[phase] = lambda { |state:, signals:, prior_results:|
-            ctx = { state: state, signals: signals, prior_results: prior_results,
-                    current_signal: signals&.last, valences: collect_valences(prior_results) }
-            args = arg_builder ? arg_builder.call(ctx) : {}
-            results = active.map { |h| h[:instance].send(h[:fn], **args) }
-            results.size == 1 ? results.first : results
-          }
+        PHASE_MAP.each_with_object({}) do |(phase, value), handlers|
+          handler = build_phase_handler(phase, value, runner_instances)
+          handlers[phase] = handler if handler
         end
+      end
 
-        handlers
+      def build_phase_handler(phase, value, runner_instances)
+        return if value.nil?
+
+        active = active_phase_mappings(value, runner_instances)
+        return if active.empty?
+
+        arg_builder = PHASE_ARGS[phase]
+        lambda { |state:, signals:, prior_results:, **context|
+          execute_phase_handler(
+            active,
+            arg_builder,
+            state: state,
+            signals: signals,
+            prior_results: prior_results,
+            context: context
+          )
+        }
+      end
+
+      def active_phase_mappings(value, runner_instances)
+        mappings_for(value).filter_map do |mapping|
+          active_phase_mapping(mapping, runner_instances)
+        end
+      end
+
+      def active_phase_mapping(mapping, runner_instances)
+        instance_key = :"#{mapping[:ext]}_#{mapping[:runner]}"
+        instance = runner_instances[instance_key]
+        return unless instance
+
+        { instance: instance, fn: mapping[:fn] }
+      end
+
+      def execute_phase_handler(active, arg_builder, state:, signals:, prior_results:, context:)
+        normalized_results = normalize_prior_results(prior_results)
+        ctx = phase_handler_context(
+          state: state,
+          signals: signals,
+          normalized_results: normalized_results,
+          prior_results: prior_results,
+          context: context
+        )
+        args = arg_builder ? arg_builder.call(ctx) : {}
+
+        skipped_result = skipped_phase_result(args)
+        return skipped_result if skipped_result
+
+        results = active.map { |handler| handler[:instance].send(handler[:fn], **args) }
+        normalize_phase_result(results)
+      end
+
+      def phase_handler_context(state:, signals:, normalized_results:, prior_results:, context:)
+        {
+          state: state,
+          signals: signals,
+          prior_results: normalized_results,
+          raw_prior_results: prior_results,
+          current_signal: signals&.last,
+          valences: collect_valences(normalized_results)
+        }.merge(context)
+      end
+
+      def skipped_phase_result(args)
+        return unless args.is_a?(Hash) && args[:skip]
+
+        reason = args[:reason] || args[:skipped] || :phase_wiring_skip
+        { status: :skipped, reason: reason }
       end
 
       def discover_available_extensions
@@ -270,6 +349,27 @@ module Legion
         return nil if parts.empty?
 
         "Dream cycle synthesis: #{parts.join('. ')}"
+      end
+
+      def bond_state_from(ctx)
+        prior = ctx.dig(:prior_results, :partner_reflection)
+        bond_state = prior.is_a?(Array) ? (prior.find { |item| item.is_a?(Hash) } || {}) : (prior || {})
+        return bond_state if bond_state.is_a?(Hash) && !bond_state.empty?
+
+        live_partner_reflection(ctx)
+      end
+
+      def live_partner_reflection(ctx)
+        return {} unless defined?(Legion::Gaia) && Legion::Gaia.respond_to?(:registry)
+
+        runner = Legion::Gaia.registry&.runner_instances&.dig(:Social_Attachment)
+        return {} unless runner.respond_to?(:reflect_on_bonds)
+
+        result = runner.reflect_on_bonds(tick_results: ctx[:prior_results] || {}, bond_summary: {})
+        result.is_a?(Hash) ? result : {}
+      rescue StandardError => e
+        handle_exception(e, level: :debug, operation: 'gaia.phase_wiring.live_partner_reflection')
+        {}
       end
 
       def extract_association(assoc)
@@ -310,6 +410,27 @@ module Legion
         return [] unless valence_result.is_a?(Hash) && valence_result[:valence]
 
         [valence_result[:valence]]
+      end
+
+      def partner_observations_from(ctx)
+        observations = ctx[:partner_observations]
+        return observations if observations.is_a?(Array)
+
+        state = ctx[:state]
+        return state[:partner_observations] || [] if state.is_a?(Hash)
+        return state.partner_observations if state.respond_to?(:partner_observations)
+
+        []
+      end
+
+      def observer_cursor_from(ctx)
+        return ctx[:last_observer_tick] if ctx.key?(:last_observer_tick)
+
+        state = ctx[:state]
+        return state[:last_observer_tick] if state.is_a?(Hash)
+        return state.last_observer_tick if state.respond_to?(:last_observer_tick)
+
+        nil
       end
     end
   end

@@ -89,6 +89,7 @@ RSpec.describe Legion::Gaia::ProactiveDispatcher do
       allow(proactive).to receive(:send_notification).and_return({ delivered: true })
       result = dispatcher.dispatch_with_gate(intent)
       expect(result[:dispatched]).to be true
+      expect(result[:channel_id]).to eq('teams')
     end
 
     it 'blocks when limit reached' do
@@ -96,6 +97,29 @@ RSpec.describe Legion::Gaia::ProactiveDispatcher do
       result = dispatcher.dispatch_with_gate(intent)
       expect(result[:dispatched]).to be false
       expect(result[:reason]).to eq(:rate_limited)
+    end
+
+    it 'does not consume quota when downstream delivery fails' do
+      allow(proactive).to receive(:send_notification).and_return(
+        { 'teams' => { delivered: false, error: :adapter_failed } }
+      )
+
+      result = dispatcher.dispatch_with_gate(intent)
+
+      expect(result[:dispatched]).to be false
+      expect(result[:reason]).to eq(:adapter_failed)
+      expect(dispatcher.dispatches_today).to eq(0)
+    end
+
+    it 'returns no_partner_channel and does not broadcast when channel resolution fails' do
+      allow(dispatcher).to receive(:resolve_partner_channel).and_return(nil)
+      expect(proactive).not_to receive(:send_notification)
+
+      result = dispatcher.dispatch_with_gate(intent)
+
+      expect(result[:dispatched]).to be false
+      expect(result[:reason]).to eq(:no_partner_channel)
+      expect(dispatcher.dispatches_today).to eq(0)
     end
   end
 

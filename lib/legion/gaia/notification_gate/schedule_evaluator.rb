@@ -1,9 +1,13 @@
 # frozen_string_literal: true
 
+require 'legion/logging/helper'
+
 module Legion
   module Gaia
     class NotificationGate
       class ScheduleEvaluator
+        include Legion::Logging::Helper
+
         DAY_NAMES = %w[sun mon tue wed thu fri sat].freeze
 
         # Standard (non-DST) offsets for known IANA zone names.
@@ -104,7 +108,9 @@ module Legion
           abs_h = hours.abs.to_i
           abs_m = ((hours.abs % 1) * 60).round
           format('%<sign>s%<h>02d:%<m>02d', sign: sign, h: abs_h, m: abs_m)
-        rescue StandardError
+        rescue StandardError => e
+          handle_exception(e, level: :debug, operation: 'gaia.notification_gate.schedule_evaluator.tzinfo_offset',
+                              timezone: timezone)
           nil
         end
 

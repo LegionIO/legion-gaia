@@ -19,6 +19,28 @@ RSpec.describe Legion::Gaia::RunnerHost do
     expect(host.test_method).to eq({ result: :ok })
   end
 
+  it 'calls singleton methods defined on the runner module' do
+    singleton_module = Module.new do
+      def self.retrieve(text:, **)
+        { text: text, source: :singleton_module }
+      end
+    end
+
+    singleton_host = described_class.new(singleton_module)
+    expect(singleton_host.retrieve(text: 'ping')).to eq({ text: 'ping', source: :singleton_module })
+  end
+
+  it 'calls instance methods on class-based runners' do
+    runner_class = Class.new do
+      def reflect(topic:, **)
+        { topic: topic, source: :class_instance }
+      end
+    end
+
+    class_host = described_class.new(runner_class)
+    expect(class_host.reflect(topic: 'memory')).to eq({ topic: 'memory', source: :class_instance })
+  end
+
   it 'isolates instance state between hosts' do
     stateful_module = Module.new do
       def increment

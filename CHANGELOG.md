@@ -2,6 +2,50 @@
 
 ## [Unreleased]
 
+## [0.9.44] - 2026-04-02
+
+### Fixed
+- Route Teams webhook traffic through `Legion::Gaia.ingest` so webhook-delivered frames use normal signal normalization, session tracking, and interlocutor observation instead of pushing raw frames into the sensory buffer
+
+## [0.9.43] - 2026-04-02
+
+### Fixed
+- Preserve undelivered proactive intents when pending dispatch stops mid-drain, prevent failed sends from consuming proactive quota, and fail partner-directed dispatches when no partner channel can be resolved
+
+## [0.9.42] - 2026-04-02
+
+### Fixed
+- Keep trackers dirty when Apollo persistence returns a failed upsert response, and avoid advancing the flush timestamp for unsuccessful tracker flushes
+- Refresh repo docs to match the current GAIA version and the 25-phase wiring layout
+
+## [0.9.41] - 2026-04-02
+
+### Fixed
+- Normalize `RouterBridge#route_outbound` delivery results so adapter-reported error hashes remain undelivered instead of being wrapped as successful outbound delivery
+
+## [0.9.40] - 2026-04-02
+
+### Fixed
+- Preserve actual proactive delivery outcomes: `send_message`, `send_to_user`, and `start_conversation` now return failure when adapter or registry delivery reports failure instead of always reporting success
+- Include explicit per-channel `:no_adapter` failures in `send_notification` fanout results instead of silently skipping requested channels
+- Propagate adapter delivery errors through `ChannelRegistry#deliver` so upstream callers can report real delivery outcomes
+
+## [0.9.39] - 2026-04-02
+
+### Added
+- Partner-absence signal queuing: queues an ambient `InputFrame` when `partner_absence_misses` exceeds `ABSENCE_SIGNAL_THRESHOLD` (5), with a 30-minute cooldown (`ABSENCE_SIGNAL_COOLDOWN`) and salience 0.75 to prevent signal flood
+
+### Changed
+- Switch non-API GAIA library logging to `Legion::Logging::Helper`, replacing direct `Legion::Logging.*` calls and legacy `log_*` wrappers with helper-backed `log`
+- Expand `info`, `debug`, and `error` coverage across GAIA runtime booting, routing, proactive delivery, trackers, adapters, and workflow transitions
+- `PhaseWiring` `memory_retrieval` and `prediction_engine` now return `{ skip: true, reason: :idle_no_signals }` when the signals array is empty, skipping expensive phase execution on idle ticks
+- `PhaseWiring` `knowledge_retrieval` now reads `signal[:value]` before falling back to `signal[:content]` for the query text
+- `PhaseWiring` result normalization: `partner_observations` extracted via `partner_observations_from(ctx)` helper instead of direct `ctx.dig` to normalize observation shape
+
+### Fixed
+- Route rescued GAIA library exceptions through `handle_exception` so failures are captured consistently with operation context
+- Update GAIA logging specs to support helper-backed tagged logging and keep the full suite green after the logging uplift
+
 ## [0.9.38] - 2026-04-01
 
 ### Fixed

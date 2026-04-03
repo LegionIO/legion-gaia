@@ -74,6 +74,20 @@ RSpec.describe Legion::Gaia::ChannelRegistry do
       expect(result[:delivered]).to be false
       expect(result[:reason]).to eq(:adapter_stopped)
     end
+
+    it 'propagates adapter delivery failures' do
+      failing_adapter = instance_double(Legion::Gaia::ChannelAdapter,
+                                        channel_id: :cli,
+                                        started?: true)
+      allow(failing_adapter).to receive(:translate_outbound).with(frame).and_return('hello')
+      allow(failing_adapter).to receive(:deliver).with('hello').and_return({ error: :network_error })
+      registry.register(failing_adapter)
+
+      result = registry.deliver(frame)
+      expect(result[:delivered]).to be false
+      expect(result[:error]).to eq(:network_error)
+      expect(result[:channel_id]).to eq(:cli)
+    end
   end
 
   describe '#start_all / #stop_all' do

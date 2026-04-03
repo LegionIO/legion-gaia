@@ -3,12 +3,15 @@
 require 'json'
 require 'net/http'
 require 'uri'
+require 'legion/logging/helper'
 require_relative 'slack/signing_verifier'
 
 module Legion
   module Gaia
     module Channels
       class SlackAdapter < ChannelAdapter
+        include Legion::Logging::Helper
+
         CAPABILITIES = %i[rich_text threads reactions mentions file_attachment].freeze
 
         attr_reader :signing_secret, :bot_token
@@ -58,6 +61,10 @@ module Legion
 
         def deliver(rendered_content, webhook: nil)
           target_webhook = webhook || @default_webhook
+          log.info(
+            'SlackAdapter delivering ' \
+            "mode=#{@bot_token && !target_webhook ? 'api' : 'webhook'} channel=#{channel_id}"
+          )
           return deliver_via_api(rendered_content) if @bot_token && !target_webhook
 
           deliver_via_webhook(rendered_content, target_webhook)
@@ -72,6 +79,7 @@ module Legion
 
           channel = dm_result[:channel_id]
           rendered = translate_outbound(output_frame).merge(channel: channel)
+          log.info("SlackAdapter proactive delivery user_id=#{user_id} channel=#{channel}")
           deliver_via_api_to_channel(rendered)
         end
 
@@ -85,9 +93,11 @@ module Legion
           )
           return result if result.is_a?(Hash) && result[:error]
 
-          { channel_id: result[:channel_id] || result['channel']&.dig('id') || result['channel'] }
+          channel_id = result[:channel_id] || result['channel']&.dig('id') || result['channel']
+          log.info("SlackAdapter opened DM user_id=#{user_id} channel=#{channel_id}")
+          { channel_id: channel_id }
         rescue StandardError => e
-          Legion::Logging.warn("SlackAdapter open_dm failed: #{e.message}") if defined?(Legion::Logging)
+          handle_exception(e, level: :warn, operation: 'gaia.channels.slack_adapter.open_dm', user_id: user_id)
           { error: :open_dm_failed, message: e.message }
         end
 
@@ -122,11 +132,13 @@ module Legion
 
         def deliver_via_webhook(content, webhook)
           unless slack_runner_available?
+            log.error('SlackAdapter deliver_via_webhook failed error=slack_runner_not_available')
             return { error: :slack_runner_not_available,
                      message: 'lex-slack Chat runner not loaded' }
           end
 
           message = content.is_a?(Hash) ? content[:text] : content.to_s
+          log.info("SlackAdapter delivering via webhook message_length=#{message.length}")
           Legion::Extensions::Slack::Runners::Chat.send(message: message, webhook: webhook)
         end
 
@@ -137,6 +149,8 @@ module Legion
           channel = (content.is_a?(Hash) && content[:channel]) || @channel_id.to_s
           post_to_slack_api(channel: channel, text: text)
         rescue StandardError => e
+          handle_exception(e, level: :warn, operation: 'gaia.channels.slack_adapter.deliver_via_api',
+                              channel: channel)
           { error: :network_error, message: e.message }
         end
 
@@ -154,22 +168,28 @@ module Legion
           parsed = ::JSON.parse(response.body, symbolize_names: true)
 
           if parsed[:ok]
+            log.info("SlackAdapter delivered via API channel=#{channel}")
             { delivered: true, ts: parsed[:ts] }
           else
+            log.error("SlackAdapter API delivery failed channel=#{channel} error=#{parsed[:error] || :unknown_error}")
             { error: parsed[:error] || :unknown_error }
           end
         rescue StandardError => e
+          handle_exception(e, level: :warn, operation: 'gaia.channels.slack_adapter.post_to_slack_api',
+                              channel: channel)
           { error: :network_error, message: e.message }
         end
 
         def deliver_via_api_to_channel(content)
           unless slack_runner_available?
+            log.error('SlackAdapter deliver_via_api_to_channel failed error=slack_runner_not_available')
             return { error: :slack_runner_not_available,
                      message: 'lex-slack Chat runner not loaded' }
           end
 
           message = content.is_a?(Hash) ? content[:text] : content.to_s
           channel = content.is_a?(Hash) ? content[:channel] : nil
+          log.info("SlackAdapter sending proactive API message channel=#{channel}")
           Legion::Extensions::Slack::Runners::Chat.send(
             message: message,
             channel: channel,

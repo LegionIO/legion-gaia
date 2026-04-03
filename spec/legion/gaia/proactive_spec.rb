@@ -33,6 +33,17 @@ RSpec.describe Legion::Gaia::Proactive do
       expect(result[:sent]).to be true
       expect(result[:channel]).to eq(:cli)
     end
+
+    it 'propagates failed registry delivery results' do
+      allow(channel_registry).to receive(:adapter_for).with(:cli).and_return(cli_adapter)
+      allow(channel_registry).to receive(:deliver).and_return({ delivered: false, reason: :adapter_stopped })
+
+      result = described_class.send_message(channel_id: :cli, content: 'hello')
+      expect(result[:sent]).to be false
+      expect(result[:delivered]).to be false
+      expect(result[:reason]).to eq(:adapter_stopped)
+      expect(result[:channel]).to eq(:cli)
+    end
   end
 
   describe '.send_to_user' do
@@ -69,6 +80,16 @@ RSpec.describe Legion::Gaia::Proactive do
         expect(result[:sent]).to be true
       end
 
+      it 'returns failed registry delivery results when fallback delivery fails' do
+        allow(channel_registry).to receive(:adapter_for).with(:cli).and_return(cli_adapter)
+        allow(cli_adapter).to receive(:respond_to?).with(:deliver_proactive).and_return(false)
+        allow(channel_registry).to receive(:deliver).and_return({ delivered: false, reason: :adapter_stopped })
+
+        result = described_class.send_to_user(user_id: 'u1', content: 'hi', channel_id: :cli)
+        expect(result[:sent]).to be false
+        expect(result[:reason]).to eq(:adapter_stopped)
+      end
+
       it 'passes through error from deliver_proactive' do
         proactive_adapter = instance_double(Legion::Gaia::Channels::TeamsAdapter)
         allow(channel_registry).to receive(:adapter_for).with(:teams).and_return(proactive_adapter)
@@ -96,6 +117,19 @@ RSpec.describe Legion::Gaia::Proactive do
         result = described_class.send_to_user(user_id: 'u1', content: 'hi')
         expect(result[:sent]).to be true
         expect(result[:results]).to have_key(:cli)
+      end
+
+      it 'returns partial failure when one channel fails' do
+        allow(channel_registry).to receive(:active_channels).and_return(%i[cli teams])
+        allow(channel_registry).to receive(:adapter_for).with(:cli).and_return(cli_adapter)
+        allow(channel_registry).to receive(:adapter_for).with(:teams).and_return(nil)
+        allow(cli_adapter).to receive(:respond_to?).with(:deliver_proactive).and_return(false)
+        allow(channel_registry).to receive(:deliver).and_return({ delivered: true })
+
+        result = described_class.send_to_user(user_id: 'u1', content: 'hi')
+        expect(result[:sent]).to be false
+        expect(result[:reason]).to eq(:partial_failure)
+        expect(result.dig(:results, :teams, :reason)).to eq(:no_adapter)
       end
     end
   end
@@ -131,7 +165,7 @@ RSpec.describe Legion::Gaia::Proactive do
       expect(result[:teams]).to eq({ delivered: true })
     end
 
-    it 'skips channels with no adapter' do
+    it 'returns explicit failure results for channels with no adapter' do
       allow(channel_registry).to receive(:active_channels).and_return(%i[cli teams])
       allow(channel_registry).to receive(:adapter_for).with(:cli).and_return(cli_adapter)
       allow(channel_registry).to receive(:adapter_for).with(:teams).and_return(nil)
@@ -139,7 +173,8 @@ RSpec.describe Legion::Gaia::Proactive do
 
       result = described_class.send_notification(content: 'msg')
       expect(result).to have_key(:cli)
-      expect(result).not_to have_key(:teams)
+      expect(result.dig(:teams, :delivered)).to be false
+      expect(result.dig(:teams, :reason)).to eq(:no_adapter)
     end
 
     it 'passes priority in frame metadata' do
@@ -199,6 +234,17 @@ RSpec.describe Legion::Gaia::Proactive do
 
       result = described_class.start_conversation(channel_id: :cli, user_id: 'u1', content: 'hi')
       expect(result[:started]).to be true
+    end
+
+    it 'returns failed fallback delivery results when registry delivery fails' do
+      allow(channel_registry).to receive(:adapter_for).with(:cli).and_return(cli_adapter)
+      allow(cli_adapter).to receive(:respond_to?).with(:deliver_proactive).and_return(false)
+      allow(channel_registry).to receive(:deliver).and_return({ delivered: false, reason: :adapter_stopped })
+
+      result = described_class.start_conversation(channel_id: :cli, user_id: 'u1', content: 'hi')
+      expect(result[:started]).to be false
+      expect(result[:reason]).to eq(:adapter_stopped)
+      expect(result[:channel]).to eq(:cli)
     end
   end
 

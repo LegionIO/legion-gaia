@@ -59,12 +59,7 @@ RSpec.describe Legion::Gaia::Router::AgentBridge do
 
     context 'with GAIA booted' do
       before do
-        stub_const('Legion::Logging', Module.new do
-          def self.debug(_msg); end
-          def self.info(_msg); end
-          def self.warn(_msg); end
-          def self.error(_msg); end
-        end)
+        stub_const('Legion::Logging', logging_stub)
         Legion::Gaia.boot
       end
       after { Legion::Gaia.shutdown }

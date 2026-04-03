@@ -1,8 +1,12 @@
 # frozen_string_literal: true
 
+require 'legion/logging/helper'
+
 module Legion
   module Gaia
     module TeamsAuth
+      include Legion::Logging::Helper
+
       private
 
       def check_teams_auth
@@ -16,8 +20,9 @@ module Legion
           content_type: :text
         )
         @teams_nudge_sent = true
+        log.info('TeamsAuth sent CLI nudge for Teams authentication')
       rescue StandardError => e
-        Legion::Logging.warn("TeamsAuth check_teams_auth failed: #{e.message}") if defined?(Legion::Logging)
+        handle_exception(e, level: :warn, operation: 'gaia.teams_auth.check_teams_auth')
         nil
       end
 
@@ -35,9 +40,9 @@ module Legion
       def teams_authenticated?
         return false unless defined?(Legion::Extensions::MicrosoftTeams::Helpers::TokenCache)
 
-        Legion::Extensions::MicrosoftTeams::Helpers::TokenCache.new.authenticated?
+        Legion::Extensions::MicrosoftTeams::Helpers::TokenCache.instance.authenticated?
       rescue StandardError => e
-        Legion::Logging.warn("TeamsAuth teams_authenticated? failed: #{e.message}") if defined?(Legion::Logging)
+        handle_exception(e, level: :warn, operation: 'gaia.teams_auth.teams_authenticated')
         false
       end
     end

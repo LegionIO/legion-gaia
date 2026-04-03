@@ -91,6 +91,48 @@ RSpec.describe Legion::Gaia::PhaseWiring do
         expect(builder).to respond_to(:call)
       end
     end
+
+    it 'marks memory_consolidation as deferred maintenance on the heartbeat path' do
+      expect(described_class::PHASE_ARGS[:memory_consolidation].call({})).to eq({ maintenance: false })
+    end
+
+    it 'skips memory_retrieval when no signals are present' do
+      expect(described_class::PHASE_ARGS[:memory_retrieval].call(signals: [])).to eq(
+        { skip: true, reason: :idle_no_signals }
+      )
+    end
+
+    it 'runs memory_retrieval when signals are present' do
+      result = described_class::PHASE_ARGS[:memory_retrieval].call(signals: [{ value: 'ping' }])
+      expect(result).to include(:limit)
+    end
+
+    it 'uses signal value for knowledge_retrieval text' do
+      result = described_class::PHASE_ARGS[:knowledge_retrieval].call(
+        signals: [{ value: 'testing', source_type: :human_direct, tags: [:api] }],
+        prior_results: {}
+      )
+
+      expect(result).to include(text: 'testing', tags: [:api])
+    end
+
+    it 'skips prediction_engine when no signals are present' do
+      expect(described_class::PHASE_ARGS[:prediction_engine].call(signals: [])).to eq(
+        { skip: true, reason: :idle_no_signals }
+      )
+    end
+
+    it 'runs prediction_engine when signals are present' do
+      result = described_class::PHASE_ARGS[:prediction_engine].call(
+        signals: [{ value: 'testing' }],
+        prior_results: { emotional_evaluation: { arousal: 0.2 } }
+      )
+
+      expect(result).to eq(
+        mode: :functional_mapping,
+        context: { emotional_evaluation: { arousal: 0.2 } }
+      )
+    end
   end
 
   describe '.resolve_runner_class' do
@@ -178,10 +220,10 @@ RSpec.describe Legion::Gaia::PhaseWiring do
       expect(result).to eq({ filtered: true })
     end
 
-    it 'returns array of results when multiple handlers match for a phase' do
+    it 'coalesces multi-handler hash results into a single hash for a phase' do
       mod_a = Module.new do
         def detect_gaps(**)
-          { gaps: [] }
+          { curiosity_intensity: 0.7 }
         end
       end
       mod_b = Module.new do
@@ -196,8 +238,7 @@ RSpec.describe Legion::Gaia::PhaseWiring do
       handlers = described_class.build_phase_handlers(instances)
       expect(handlers).to have_key(:working_memory_integration)
       result = handlers[:working_memory_integration].call(state: {}, signals: [], prior_results: {})
-      expect(result).to be_an(Array)
-      expect(result.size).to eq(2)
+      expect(result).to eq({ curiosity_intensity: 0.7, health_score: 1.0 })
     end
 
     it 'wires a phase when only the synapse handler is present' do
@@ -211,6 +252,42 @@ RSpec.describe Legion::Gaia::PhaseWiring do
 
       handlers = described_class.build_phase_handlers(instances)
       expect(handlers).to have_key(:working_memory_integration)
+    end
+
+    it 'treats skip args as phase control flow and does not invoke the runner' do
+      test_module = Module.new do
+        def retrieve(**)
+          raise 'runner should not be called'
+        end
+      end
+      host = Legion::Gaia::RunnerHost.new(test_module)
+      instances = { Apollo_Request: host }
+
+      handlers = described_class.build_phase_handlers(instances)
+      result = handlers[:knowledge_retrieval].call(state: {}, signals: [], prior_results: {})
+
+      expect(result).to eq({ status: :skipped, reason: :phase_wiring_skip })
+    end
+
+    it 'passes normalized prior results to downstream single-handler phases' do
+      test_module = Module.new do
+        def form_intentions(tick_results:, **)
+          tick_results[:working_memory_integration]
+        end
+      end
+      host = Legion::Gaia::RunnerHost.new(test_module)
+      instances = { Volition_Volition: host }
+
+      handlers = described_class.build_phase_handlers(instances)
+      prior_results = {
+        working_memory_integration: [
+          { curiosity_intensity: 0.8 },
+          { health_score: 0.95 }
+        ]
+      }
+      result = handlers[:action_selection].call(state: {}, signals: [], prior_results: prior_results)
+
+      expect(result).to eq({ curiosity_intensity: 0.8, health_score: 0.95 })
     end
   end
 
@@ -285,6 +362,20 @@ RSpec.describe Legion::Gaia::PhaseWiring do
   end
 
   describe 'PHASE_ARGS human_observations' do
+    it 'prefers top-level partner_observations from tick execution context' do
+      args_lambda = described_class::PHASE_ARGS[:social_cognition]
+      ctx = {
+        prior_results: { memory: :data },
+        partner_observations: [{ identity: 'top-level' }],
+        state: Object.new,
+        signals: [],
+        current_signal: nil,
+        valences: {}
+      }
+      result = args_lambda.call(ctx)
+      expect(result[:human_observations]).to eq([{ identity: 'top-level' }])
+    end
+
     it 'passes human_observations to social_cognition' do
       args_lambda = described_class::PHASE_ARGS[:social_cognition]
       ctx = { prior_results: { memory: :data }, state: { partner_observations: [{ identity: 'esity' }] },
@@ -315,6 +406,19 @@ RSpec.describe Legion::Gaia::PhaseWiring do
       ctx = { prior_results: {}, state: {}, signals: [], current_signal: nil, valences: {} }
       result = args_lambda.call(ctx)
       expect(result[:human_observations]).to eq([])
+    end
+  end
+
+  describe 'PHASE_ARGS observer cursor' do
+    it 'prefers top-level last_observer_tick from tick execution context' do
+      args_lambda = described_class::PHASE_ARGS[:post_tick_reflection]
+      ctx = {
+        prior_results: {},
+        last_observer_tick: 42,
+        state: Object.new
+      }
+      result = args_lambda.call(ctx)
+      expect(result[:since]).to eq(42)
     end
   end
 
@@ -356,6 +460,20 @@ RSpec.describe Legion::Gaia::PhaseWiring do
       ctx = { prior_results: { partner_reflection: [bond_result, { synced: true }] } }
       args = described_class::PHASE_ARGS[:action_selection].call(ctx)
       expect(args[:bond_state]).to eq(bond_result)
+    end
+
+    it 'falls back to live attachment reflection when prior partner_reflection is absent' do
+      runner = instance_double('AttachmentRunner')
+      registry = instance_double('Legion::Gaia::Registry', runner_instances: { Social_Attachment: runner })
+      allow(Legion::Gaia).to receive(:registry).and_return(registry)
+      allow(runner).to receive(:reflect_on_bonds)
+        .with(tick_results: { prediction_engine: { confidence: 0.7 } }, bond_summary: {})
+        .and_return({ partner_bond: { absence_exceeds_pattern: true } })
+
+      ctx = { prior_results: { prediction_engine: { confidence: 0.7 } } }
+      args = described_class::PHASE_ARGS[:action_selection].call(ctx)
+
+      expect(args[:bond_state]).to eq({ partner_bond: { absence_exceeds_pattern: true } })
     end
   end
 

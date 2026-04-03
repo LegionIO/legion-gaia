@@ -1,10 +1,14 @@
 # frozen_string_literal: true
 
+require 'legion/logging/helper'
+
 module Legion
   module Gaia
     module Channels
       module Teams
         class WebhookHandler
+          include Legion::Logging::Helper
+
           attr_reader :adapter
 
           def initialize(adapter)
@@ -22,6 +26,7 @@ module Legion
             end
 
             activity_type = activity['type'] || activity[:type]
+            log.info("WebhookHandler received activity_type=#{activity_type}")
             case activity_type
             when 'message' then handle_message(activity)
             when 'conversationUpdate' then handle_conversation_update(activity)
@@ -37,6 +42,7 @@ module Legion
             return error_response(:translate_failed, 'Could not translate activity') unless frame
 
             Legion::Gaia.ingest(frame) if Legion::Gaia.respond_to?(:ingest)
+            log.info("WebhookHandler ingested frame_id=#{frame.id}")
             success_response(:message_ingested, frame.id)
           end
 
@@ -68,7 +74,7 @@ module Legion
 
             ::JSON.parse(body)
           rescue StandardError => e
-            Legion::Logging.debug("WebhookHandler activity parse failed: #{e.message}") if defined?(Legion::Logging)
+            handle_exception(e, level: :debug, operation: 'gaia.channels.teams.webhook_handler.parse_activity')
             nil
           end
 

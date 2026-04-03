@@ -55,6 +55,30 @@ RSpec.describe Legion::Gaia::Routes do
     captured
   end
 
+  def build_post_route_context(body:)
+    ctx = Object.new
+    request = double('request', body: StringIO.new(body))
+
+    ctx.define_singleton_method(:request) { request }
+    ctx.define_singleton_method(:params) { {} }
+    ctx.define_singleton_method(:json_response) do |data, status_code: 200|
+      { status: status_code, body: data }
+    end
+    ctx.define_singleton_method(:halt) do |*args|
+      throw :halt, args
+    end
+
+    ctx
+  end
+
+  def capture_teams_webhook_block
+    captured = nil
+    fake_app = double('app')
+    allow(fake_app).to receive(:post).with('/api/channels/teams/webhook') { |&blk| captured = blk }
+    described_class.send(:register_teams_webhook_route, fake_app)
+    captured
+  end
+
   describe 'GET /api/gaia/ticks route block' do
     let(:ticks_block) { capture_ticks_block }
 
@@ -114,6 +138,60 @@ RSpec.describe Legion::Gaia::Routes do
         result = ctx.instance_exec(&ticks_block)
         expect(result[:body][:events]).to eq([])
       end
+    end
+  end
+
+  describe 'POST /api/channels/teams/webhook route block' do
+    let(:webhook_block) { capture_teams_webhook_block }
+    let(:activity) do
+      {
+        'type' => 'message',
+        'id' => 'activity-1',
+        'text' => 'hello gaia',
+        'from' => { 'id' => 'user-1', 'name' => 'Esity', 'aadObjectId' => 'oid-1' },
+        'conversation' => { 'id' => 'conv-1' },
+        'recipient' => { 'id' => 'bot-1' }
+      }
+    end
+    let(:input_frame) do
+      Legion::Gaia::InputFrame.new(
+        id: 'frame-1',
+        content: 'hello gaia',
+        channel_id: :teams,
+        auth_context: { aad_object_id: 'oid-1', identity: 'oid-1' },
+        metadata: { source_type: :human_direct, direct_address: true }
+      )
+    end
+    let(:adapter) { instance_double(Legion::Gaia::Channels::TeamsAdapter) }
+
+    before do
+      allow(Legion::Gaia::Routes).to receive(:teams_adapter).and_return(adapter)
+    end
+
+    it 'routes webhook frames through Gaia.ingest' do
+      allow(adapter).to receive(:translate_inbound)
+        .with(hash_including(type: 'message', text: 'hello gaia'))
+        .and_return(input_frame)
+      allow(Legion::Gaia).to receive(:sensory_buffer).and_return(instance_double(Legion::Gaia::SensoryBuffer))
+
+      expect(Legion::Gaia).to receive(:ingest).with(input_frame)
+      expect(Legion::Gaia.sensory_buffer).not_to receive(:push)
+
+      ctx = build_post_route_context(body: Legion::JSON.dump(activity))
+      result = ctx.instance_exec(&webhook_block)
+
+      expect(result[:status]).to eq(200)
+      expect(result[:body]).to eq({ status: 'accepted', frame_id: 'frame-1' })
+    end
+
+    it 'halts with 503 when teams adapter is unavailable' do
+      allow(Legion::Gaia::Routes).to receive(:teams_adapter).and_return(nil)
+
+      ctx = build_post_route_context(body: Legion::JSON.dump(activity))
+      result = catch(:halt) { ctx.instance_exec(&webhook_block) }
+
+      expect(result).not_to be_nil
+      expect(result.first).to eq(503)
     end
   end
 end

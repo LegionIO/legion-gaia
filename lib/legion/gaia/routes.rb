@@ -148,9 +148,18 @@ module Legion
           end
 
           input_frame = adapter.translate_inbound(activity)
-          Legion::Gaia.sensory_buffer&.push(input_frame) if defined?(Legion::Gaia)
-          Legion::Logging.info "API: accepted Teams webhook frame_id=#{input_frame&.id}" if defined?(Legion::Logging)
-          json_response({ status: 'accepted', frame_id: input_frame&.id })
+          unless input_frame
+            if defined?(Legion::Logging)
+              Legion::Logging.warn 'API POST /api/channels/teams/webhook returned 422: ' \
+                                   'unsupported or malformed Teams activity'
+            end
+            halt 422, json_error('invalid_teams_activity', 'unsupported or malformed Teams activity',
+                                 status_code: 422)
+          end
+
+          Legion::Gaia.ingest(input_frame) if defined?(Legion::Gaia)
+          Legion::Logging.info "API: accepted Teams webhook frame_id=#{input_frame.id}" if defined?(Legion::Logging)
+          json_response({ status: 'accepted', frame_id: input_frame.id })
         end
       end
 
