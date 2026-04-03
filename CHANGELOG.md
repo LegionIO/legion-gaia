@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+## [0.9.40] - 2026-04-02
+
+### Fixed
+- Preserve actual proactive delivery outcomes: `send_message`, `send_to_user`, and `start_conversation` now return failure when adapter or registry delivery reports failure instead of always reporting success
+- Include explicit per-channel `:no_adapter` failures in `send_notification` fanout results instead of silently skipping requested channels
+- Propagate adapter delivery errors through `ChannelRegistry#deliver` so upstream callers can report real delivery outcomes
+
 ## [0.9.39] - 2026-04-02
 
 ### Added
