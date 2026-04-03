@@ -4,9 +4,15 @@
 
 ## [0.9.39] - 2026-04-02
 
+### Added
+- Partner-absence signal queuing: queues an ambient `InputFrame` when `partner_absence_misses` exceeds `ABSENCE_SIGNAL_THRESHOLD` (5), with a 30-minute cooldown (`ABSENCE_SIGNAL_COOLDOWN`) and salience 0.75 to prevent signal flood
+
 ### Changed
 - Switch non-API GAIA library logging to `Legion::Logging::Helper`, replacing direct `Legion::Logging.*` calls and legacy `log_*` wrappers with helper-backed `log`
 - Expand `info`, `debug`, and `error` coverage across GAIA runtime booting, routing, proactive delivery, trackers, adapters, and workflow transitions
+- `PhaseWiring` `memory_retrieval` and `prediction_engine` now return `{ skip: true, reason: :idle_no_signals }` when the signals array is empty, skipping expensive phase execution on idle ticks
+- `PhaseWiring` `knowledge_retrieval` now reads `signal[:value]` before falling back to `signal[:content]` for the query text
+- `PhaseWiring` result normalization: `partner_observations` extracted via `partner_observations_from(ctx)` helper instead of direct `ctx.dig` to normalize observation shape
 
 ### Fixed
 - Route rescued GAIA library exceptions through `handle_exception` so failures are captured consistently with operation context

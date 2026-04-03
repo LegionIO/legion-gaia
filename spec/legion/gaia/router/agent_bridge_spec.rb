@@ -3,22 +3,6 @@
 RSpec.describe Legion::Gaia::Router::AgentBridge do
   subject(:bridge) { described_class.new(worker_id: 'worker-1') }
 
-  let(:logging_stub) do
-    Module.new.tap do |mod|
-      mod.define_singleton_method(:configuration_generation) { 0 }
-      %i[debug info warn error fatal unknown].each do |level|
-        mod.define_singleton_method(level) { |_msg| nil }
-      end
-      mod.const_set(:TaggedLogger, Class.new do
-        def initialize(**); end
-
-        %i[debug info warn error fatal unknown].each do |level|
-          define_method(level) { |_msg = nil| nil }
-        end
-      end)
-    end
-  end
-
   describe '#initialize' do
     it 'stores worker_id' do
       expect(bridge.worker_id).to eq('worker-1')

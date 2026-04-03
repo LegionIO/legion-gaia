@@ -25,9 +25,10 @@ module Legion
       end
 
       def respond_to_missing?(method_name, include_private = false)
-        @runner_module.respond_to?(method_name, include_private) ||
-          runner_instance.respond_to?(method_name, include_private) ||
-          super
+        return true if @runner_module.respond_to?(method_name, include_private)
+        return true if @runner_module.is_a?(Class) && @runner_module.method_defined?(method_name)
+
+        super
       end
 
       def to_s
