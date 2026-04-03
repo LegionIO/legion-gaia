@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [0.9.43] - 2026-04-02
+
+### Fixed
+- Preserve undelivered proactive intents when pending dispatch stops mid-drain, prevent failed sends from consuming proactive quota, and fail partner-directed dispatches when no partner channel can be resolved
+
 ## [0.9.42] - 2026-04-02
 
 ### Fixed

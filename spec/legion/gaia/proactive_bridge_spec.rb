@@ -66,5 +66,24 @@ RSpec.describe 'Dream-to-Proactive Bridge' do
       # Buffer re-queued since dispatch failed
       expect(dispatcher.pending_buffer.size).to eq(1)
     end
+
+    it 'requeues the failed intent and later drained intents' do
+      first_intent = { id: 1, type: :proactive_outreach, trigger: { reason: :insight } }
+      second_intent = { id: 2, type: :proactive_outreach, trigger: { reason: :check_in } }
+      third_intent = { id: 3, type: :proactive_outreach, trigger: { reason: :curiosity } }
+
+      dispatcher.queue_intent(first_intent)
+      dispatcher.queue_intent(second_intent)
+      dispatcher.queue_intent(third_intent)
+
+      allow(dispatcher).to receive(:dispatch_with_gate).and_return(
+        { dispatched: true },
+        { dispatched: false, reason: :adapter_failed }
+      )
+
+      gaia_module.send(:try_dispatch_pending)
+
+      expect(dispatcher.pending_buffer).to eq([second_intent, third_intent])
+    end
   end
 end

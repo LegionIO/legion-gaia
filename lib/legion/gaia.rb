@@ -628,17 +628,21 @@ module Legion
 
       def try_dispatch_pending
         intents = proactive_dispatcher.drain_pending
-        intents.each do |intent|
+        intents.each_with_index do |intent, index|
           result = proactive_dispatcher.dispatch_with_gate(intent)
           unless result[:dispatched]
-            proactive_dispatcher.queue_intent(intent)
-            log.warn("Legion::Gaia requeued proactive intent reason=#{result[:reason]}")
+            requeue_proactive_intents(intents[index..], reason: result[:reason])
             break
           end
           log.info("Legion::Gaia dispatched proactive intent reason=#{intent.dig(:trigger, :reason)}")
         end
       rescue StandardError => e
         handle_exception(e, level: :warn, operation: 'gaia.try_dispatch_pending')
+      end
+
+      def requeue_proactive_intents(intents, reason:)
+        intents.each { |intent| proactive_dispatcher.queue_intent(intent) }
+        log.warn("Legion::Gaia requeued proactive intents count=#{intents.size} reason=#{reason}")
       end
 
       def log_cognitive_markers(result, signals:, observations:)
