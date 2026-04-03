@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [0.9.44] - 2026-04-02
+
+### Fixed
+- Route Teams webhook traffic through `Legion::Gaia.ingest` so webhook-delivered frames use normal signal normalization, session tracking, and interlocutor observation instead of pushing raw frames into the sensory buffer
+
 ## [0.9.43] - 2026-04-02
 
 ### Fixed

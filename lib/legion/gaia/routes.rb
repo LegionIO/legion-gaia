@@ -148,7 +148,7 @@ module Legion
           end
 
           input_frame = adapter.translate_inbound(activity)
-          Legion::Gaia.sensory_buffer&.push(input_frame) if defined?(Legion::Gaia)
+          Legion::Gaia.ingest(input_frame) if defined?(Legion::Gaia) && input_frame
           Legion::Logging.info "API: accepted Teams webhook frame_id=#{input_frame&.id}" if defined?(Legion::Logging)
           json_response({ status: 'accepted', frame_id: input_frame&.id })
         end
