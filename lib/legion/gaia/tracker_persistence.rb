@@ -25,14 +25,23 @@ module Legion
         return unless store
 
         failed = false
+        flushed = 0
         registered_trackers.each_value do |entry|
           tracker = entry[:tracker]
           next unless tracker.dirty?
 
-          failed ||= !flush_tracker(tracker, store: store)
+          if flush_tracker(tracker, store: store)
+            flushed += 1
+          else
+            failed = true
+          end
         end
         @last_flush_at = Time.now.utc unless failed
-        log.info("TrackerPersistence flushed dirty trackers count=#{registered_trackers.size}")
+        if failed
+          log.warn("TrackerPersistence flush_dirty completed with errors flushed=#{flushed}")
+        else
+          log.info("TrackerPersistence flushed dirty trackers flushed=#{flushed}")
+        end
       rescue StandardError => e
         handle_exception(e, level: :warn, operation: 'gaia.tracker_persistence.flush_dirty')
       end
