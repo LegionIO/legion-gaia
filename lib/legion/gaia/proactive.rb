@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require 'legion/logging/helper'
+require_relative 'proactive_delivery'
 
 module Legion
   module Gaia
@@ -8,6 +9,8 @@ module Legion
       extend Legion::Logging::Helper
 
       class << self
+        include ProactiveDelivery
+
         def send_message(channel_id:, content:, user_id: nil, content_type: :text)
           registry = Legion::Gaia.channel_registry
           unless registry
@@ -29,13 +32,20 @@ module Legion
           )
 
           result = registry.deliver(output)
-          if result.is_a?(Hash) && result[:error]
-            log.error("Proactive.send_message failed channel=#{channel_id} error=#{result[:error]}")
-            return result
+          outcome = normalize_delivery_outcome(
+            result,
+            status_key: :sent,
+            frame_id: output.id,
+            channel_id: channel_id,
+            user_id: user_id
+          )
+          unless delivery_success?(outcome)
+            log.error("Proactive.send_message failed channel=#{channel_id} error=#{delivery_failure_label(outcome)}")
+            return outcome
           end
 
           log.info("Proactive.send_message sent frame_id=#{output.id} channel=#{channel_id} user_id=#{user_id}")
-          { sent: true, frame_id: output.id, channel: channel_id }
+          outcome
         rescue StandardError => e
           handle_exception(e, level: :error, operation: 'gaia.proactive.send_message',
                               channel_id: channel_id, user_id: user_id)
@@ -65,13 +75,13 @@ module Legion
                        content_type: content_type
                      )
                    end
-          if result.is_a?(Hash) && result[:error]
+          if delivery_success?(result)
+            log.info("Proactive.send_to_user completed user_id=#{user_id} channel_id=#{channel_id || 'all'}")
+          else
             log.error(
               'Proactive.send_to_user failed ' \
-              "user_id=#{user_id} channel_id=#{channel_id || 'all'} error=#{result[:error]}"
+              "user_id=#{user_id} channel_id=#{channel_id || 'all'} error=#{delivery_failure_label(result)}"
             )
-          else
-            log.info("Proactive.send_to_user completed user_id=#{user_id} channel_id=#{channel_id || 'all'}")
           end
           result
         rescue StandardError => e
@@ -98,7 +108,10 @@ module Legion
 
           channels.each do |ch|
             adapter = registry.adapter_for(ch)
-            next unless adapter
+            unless adapter
+              results[ch] = no_adapter_result(channel_id: ch, status_key: :delivered, user_id: user_id)
+              next
+            end
 
             frame = OutputFrame.new(
               content: content,
@@ -141,21 +154,27 @@ module Legion
             metadata: { proactive: true, target_user: user_id, start_conversation: true }
           )
 
-          if adapter.respond_to?(:deliver_proactive)
-            result = adapter.deliver_proactive(frame)
-            if result.is_a?(Hash) && result[:error]
-              log.error(
-                'Proactive.start_conversation failed ' \
-                "channel=#{channel_id} user_id=#{user_id} error=#{result[:error]}"
-              )
-              return result
-            end
-
-          else
-            registry.deliver(frame)
+          result = if adapter.respond_to?(:deliver_proactive)
+                     adapter.deliver_proactive(frame)
+                   else
+                     registry.deliver(frame)
+                   end
+          outcome = normalize_delivery_outcome(
+            result,
+            status_key: :started,
+            frame_id: frame.id,
+            channel_id: channel_id,
+            user_id: user_id
+          )
+          unless delivery_success?(outcome)
+            log.error(
+              'Proactive.start_conversation failed ' \
+              "channel=#{channel_id} user_id=#{user_id} error=#{delivery_failure_label(outcome)}"
+            )
+            return outcome
           end
           log.info("Proactive.start_conversation started channel=#{channel_id} user_id=#{user_id} frame_id=#{frame.id}")
-          { started: true, channel: channel_id, user_id: user_id }
+          outcome
         rescue StandardError => e
           handle_exception(e, level: :error, operation: 'gaia.proactive.start_conversation',
                               channel_id: channel_id, user_id: user_id)
@@ -176,49 +195,6 @@ module Legion
           end
           log.info("Proactive.broadcast completed channels=#{targets.size}")
           results
-        end
-
-        private
-
-        def deliver_to_user_on_channel(registry:, user_id:, channel_id:, content:, content_type:)
-          adapter = registry.adapter_for(channel_id)
-          return { error: "no adapter for channel: #{channel_id}" } unless adapter
-
-          frame = OutputFrame.new(
-            content: content,
-            content_type: content_type,
-            channel_id: channel_id,
-            metadata: { proactive: true, target_user: user_id }
-          )
-
-          if adapter.respond_to?(:deliver_proactive)
-            result = adapter.deliver_proactive(frame)
-            return result if result.is_a?(Hash) && result[:error]
-          else
-            registry.deliver(frame)
-          end
-
-          { sent: true, frame_id: frame.id, channel: channel_id, user_id: user_id }
-        end
-
-        def deliver_to_user_all_channels(registry:, user_id:, content:, content_type:)
-          channels = registry.active_channels
-          return { error: 'no active channels' } if channels.empty?
-
-          results = {}
-          channels.each do |ch|
-            results[ch] = deliver_to_user_on_channel(
-              registry: registry,
-              user_id: user_id,
-              channel_id: ch,
-              content: content,
-              content_type: content_type
-            )
-          end
-          if results.values.any? { |value| value.is_a?(Hash) && value[:error] }
-            log.error("Proactive.deliver_to_user_all_channels encountered channel errors user_id=#{user_id}")
-          end
-          { sent: true, results: results }
         end
       end
     end

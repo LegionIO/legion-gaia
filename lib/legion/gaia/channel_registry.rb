@@ -40,12 +40,13 @@ module Legion
 
       def deliver(output_frame)
         adapter = adapter_for(output_frame.channel_id)
-        return { delivered: false, reason: :no_adapter } unless adapter
-        return { delivered: false, reason: :adapter_stopped } unless adapter.started?
+        return { delivered: false, reason: :no_adapter, channel_id: output_frame.channel_id } unless adapter
+        unless adapter.started?
+          return { delivered: false, reason: :adapter_stopped, channel_id: output_frame.channel_id }
+        end
 
         rendered = adapter.translate_outbound(output_frame)
-        adapter.deliver(rendered)
-        { delivered: true, channel_id: output_frame.channel_id }
+        normalize_delivery_result(adapter.deliver(rendered), channel_id: output_frame.channel_id)
       end
 
       def start_all
@@ -54,6 +55,19 @@ module Legion
 
       def stop_all
         @mutex.synchronize { @adapters.each_value(&:stop) }
+      end
+
+      private
+
+      def normalize_delivery_result(result, channel_id:)
+        return { delivered: false, reason: :adapter_returned_false, channel_id: channel_id } if result == false
+        return { delivered: true, channel_id: channel_id } unless result.is_a?(Hash)
+
+        normalized = result.dup
+        normalized[:channel_id] ||= channel_id
+        normalized[:delivered] = false if normalized[:error] && !normalized.key?(:delivered)
+        normalized[:delivered] = true unless normalized.key?(:delivered)
+        normalized
       end
     end
   end
