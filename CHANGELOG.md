@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [0.9.41] - 2026-04-02
+
+### Fixed
+- Normalize `RouterBridge#route_outbound` delivery results so adapter-reported error hashes remain undelivered instead of being wrapped as successful outbound delivery
+
 ## [0.9.40] - 2026-04-02
 
 ### Fixed

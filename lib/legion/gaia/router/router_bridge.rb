@@ -59,16 +59,21 @@ module Legion
           end
 
           rendered = adapter.translate_outbound(frame)
-          deliver_result = deliver_output(adapter, rendered, frame)
-          if deliver_result.is_a?(Hash) && deliver_result[:error]
+          deliver_result = normalize_delivery_result(
+            deliver_output(adapter, rendered, frame),
+            channel_id: frame.channel_id,
+            frame_id: frame.id
+          )
+          if deliver_result[:delivered] == false || deliver_result[:error]
             log.error(
               'RouterBridge route_outbound failed ' \
-              "frame_id=#{frame.id} channel_id=#{frame.channel_id} error=#{deliver_result[:error]}"
+              "frame_id=#{frame.id} channel_id=#{frame.channel_id} " \
+              "error=#{deliver_result[:error] || deliver_result[:reason]}"
             )
           else
             log.info("RouterBridge routed outbound frame_id=#{frame.id} channel_id=#{frame.channel_id}")
           end
-          { delivered: true, channel_id: frame.channel_id, frame_id: frame.id }.merge(deliver_result)
+          deliver_result
         end
 
         private
@@ -126,14 +131,32 @@ module Legion
         def deliver_output(adapter, rendered, frame)
           conversation_id = frame.metadata[:conversation_id]
           if adapter.respond_to?(:deliver) && conversation_id
-            result = adapter.deliver(rendered, conversation_id: conversation_id)
-            result.is_a?(Hash) ? result : { raw: result }
+            adapter.deliver(rendered, conversation_id: conversation_id)
           elsif adapter.respond_to?(:deliver)
-            result = adapter.deliver(rendered)
-            result.is_a?(Hash) ? result : { raw: result }
+            adapter.deliver(rendered)
           else
             { error: :adapter_cannot_deliver }
           end
+        end
+
+        def normalize_delivery_result(result, channel_id:, frame_id:)
+          if result == false
+            return {
+              delivered: false,
+              reason: :adapter_returned_false,
+              channel_id: channel_id,
+              frame_id: frame_id
+            }
+          end
+
+          return { delivered: true, channel_id: channel_id, frame_id: frame_id, raw: result } unless result.is_a?(Hash)
+
+          normalized = result.dup
+          normalized[:channel_id] ||= channel_id
+          normalized[:frame_id] ||= frame_id
+          normalized[:delivered] = false if normalized[:error] && !normalized.key?(:delivered)
+          normalized[:delivered] = true unless normalized.key?(:delivered)
+          normalized
         end
 
         def transport_available?

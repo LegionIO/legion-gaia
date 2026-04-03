@@ -83,6 +83,26 @@ RSpec.describe Legion::Gaia::Router::RouterBridge do
         expect(result[:channel_id]).to eq(:cli)
       end
 
+      it 'marks adapter error hashes as undelivered' do
+        failing_adapter = instance_double(Legion::Gaia::Channels::TeamsAdapter,
+                                          channel_id: :teams,
+                                          started?: true)
+        channel_registry.register(failing_adapter)
+        failing_payload = payload.merge(channel_id: :teams, metadata: { conversation_id: 'conv-1' })
+
+        allow(failing_adapter).to receive(:translate_outbound).and_return({ type: 'text', text: 'response text' })
+        allow(failing_adapter).to receive(:deliver).with({ type: 'text', text: 'response text' },
+                                                         conversation_id: 'conv-1').and_return(
+                                                           { error: :no_conversation_reference }
+                                                         )
+
+        result = bridge.route_outbound(failing_payload)
+        expect(result[:delivered]).to be false
+        expect(result[:error]).to eq(:no_conversation_reference)
+        expect(result[:channel_id]).to eq(:teams)
+        expect(result[:frame_id]).to eq('frame-1')
+      end
+
       it 'returns no_adapter for unknown channel' do
         result = bridge.route_outbound(payload.merge(channel_id: :unknown))
         expect(result[:delivered]).to be false
