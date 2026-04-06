@@ -11,6 +11,8 @@ module Legion
         attr_reader :worker_routing, :channel_registry, :started
 
         def initialize(channel_registry:, worker_routing: nil, allowed_worker_ids: [])
+          log.unknown "initialize(channel_registry: #{channel_registry}, " \
+                      "worker_routing: #{worker_routing}, allowed_worker_ids: #{allowed_worker_ids}"
           @channel_registry = channel_registry
           @worker_routing = worker_routing || WorkerRouting.new(allowed_worker_ids: allowed_worker_ids)
           @started = false
@@ -31,6 +33,7 @@ module Legion
         end
 
         def route_inbound(input_frame)
+          log.unknown "route_inbound(input_frame: #{input_frame})"
           return { routed: false, reason: :not_started } unless started?
 
           identity = extract_identity(input_frame)
@@ -44,6 +47,7 @@ module Legion
         end
 
         def route_outbound(payload)
+          log.unknown "route_outbound(payload: #{payload})"
           return { delivered: false, reason: :not_started } unless started?
 
           frame = reconstruct_output_frame(payload)

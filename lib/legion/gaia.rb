@@ -156,6 +156,7 @@ module Legion
           valence_result = result[:results][:emotional_evaluation]
           @last_valences = [valence_result[:valence]] if valence_result.is_a?(Hash) && valence_result[:valence]
           tick_host.last_tick_result = result
+          PhaseWiring.capture_tick_results(result[:results])
           log_cognitive_markers(result, signals: signals, observations: observations)
         end
 

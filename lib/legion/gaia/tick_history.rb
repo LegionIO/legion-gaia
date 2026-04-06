@@ -5,6 +5,8 @@ require 'time'
 module Legion
   module Gaia
     class TickHistory
+      extend Legion::Logging::Helper
+
       MAX_ENTRIES = 200
 
       def initialize

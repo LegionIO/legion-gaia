@@ -4,6 +4,8 @@ require 'securerandom'
 
 module Legion
   module Gaia
+    include Legion::Logging::Helper
+
     InputFrame = ::Data.define(
       :id,
       :content,

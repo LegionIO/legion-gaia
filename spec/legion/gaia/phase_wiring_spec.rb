@@ -441,6 +441,99 @@ RSpec.describe Legion::Gaia::PhaseWiring do
     end
   end
 
+  describe '.build_cognitive_state' do
+    it 'extracts curiosity from working_memory_integration' do
+      prior = { working_memory_integration: { curiosity_intensity: 0.7, active_count: 3 } }
+      state = described_class.build_cognitive_state(prior)
+      expect(state[:curiosity][:intensity]).to eq(0.7)
+      expect(state[:curiosity][:active_count]).to eq(3)
+    end
+
+    it 'extracts mesh from mesh_interface online count' do
+      prior = { mesh_interface: { total: 5, online: 3, message_count: 10 } }
+      state = described_class.build_cognitive_state(prior)
+      expect(state[:mesh][:peer_count]).to eq(3)
+    end
+
+    it 'extracts trust from social_cognition reputation_updates' do
+      prior = { social_cognition: { reputation_updates: [{ composite: 0.8 }, { composite: 0.6 }] } }
+      state = described_class.build_cognitive_state(prior)
+      expect(state[:trust][:avg_composite]).to eq(0.7)
+    end
+
+    it 'extracts emotion arousal from gut_instinct' do
+      prior = { gut_instinct: { signal: :attend, arousal: 0.4 } }
+      state = described_class.build_cognitive_state(prior)
+      expect(state[:emotion][:arousal]).to eq(0.4)
+    end
+
+    it 'extracts prediction from prediction_engine' do
+      prior = { prediction_engine: { confidence: 0.6, mode: :functional_mapping } }
+      state = described_class.build_cognitive_state(prior)
+      expect(state[:prediction][:confidence]).to eq(0.6)
+    end
+
+    it 'passes gut_instinct through directly' do
+      gut = { signal: :heightened, confidence: 0.8 }
+      prior = { gut_instinct: gut }
+      state = described_class.build_cognitive_state(prior)
+      expect(state[:gut]).to eq(gut)
+    end
+
+    it 'returns safe defaults for empty prior_results' do
+      state = described_class.build_cognitive_state({})
+      expect(state[:curiosity][:intensity]).to eq(0.0)
+      expect(state[:mesh]).to eq({})
+      expect(state[:trust]).to eq({})
+      expect(state[:prediction]).to eq({})
+      expect(state[:emotion][:arousal]).to eq(0.0)
+      expect(state[:gut]).to be_nil
+    end
+  end
+
+  describe '.capture_tick_results' do
+    after { described_class.instance_variable_set(:@previous_reflection, {}) }
+
+    it 'stores post_tick_reflection for next tick' do
+      results = { post_tick_reflection: { cognitive_health: 0.85, reflections_generated: 2 } }
+      described_class.capture_tick_results(results)
+      expect(described_class.previous_reflection).to eq(results[:post_tick_reflection])
+    end
+
+    it 'skips storage for skipped reflections' do
+      described_class.capture_tick_results({ post_tick_reflection: { cognitive_health: 0.9 } })
+      described_class.capture_tick_results({ post_tick_reflection: { status: :skipped } })
+      expect(described_class.previous_reflection[:cognitive_health]).to eq(0.9)
+    end
+
+    it 'ignores non-hash results' do
+      described_class.capture_tick_results(nil)
+      expect(described_class.previous_reflection).to eq({})
+    end
+  end
+
+  describe '.extract_reflection_state' do
+    after { described_class.instance_variable_set(:@previous_reflection, {}) }
+
+    it 'returns previous tick reflection data mapped to drive keys' do
+      described_class.capture_tick_results({
+                                             post_tick_reflection: {
+                                               cognitive_health: 0.7,
+                                               reflections_generated: 3,
+                                               new_reflections: [{ severity: :warning }, { severity: :critical }]
+                                             }
+                                           })
+      state = described_class.extract_reflection_state
+      expect(state[:health]).to eq(0.7)
+      expect(state[:pending_adaptations]).to eq(3)
+      expect(state[:recent_severity]).to eq(:critical)
+    end
+
+    it 'returns empty hash when no previous reflection exists' do
+      expect(described_class.extract_reflection_state).to eq({})
+    end
+  end
+
   describe 'action_selection PHASE_ARGS includes bond_state' do
     it 'passes bond_state from partner_reflection' do
       ctx = { prior_results: { partner_reflection: { partner_bond: { stage: :established } } } }

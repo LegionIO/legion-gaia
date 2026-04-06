@@ -97,7 +97,7 @@ module Legion
         gut_instinct: ->(ctx) { { valences: ctx[:valences] || [] } },
         action_selection: lambda { |ctx|
           { tick_results: ctx[:prior_results] || {},
-            cognitive_state: {},
+            cognitive_state: build_cognitive_state(ctx[:prior_results] || {}),
             bond_state: bond_state_from(ctx) }
         },
         working_memory_integration: ->(ctx) { { prior_results: ctx[:prior_results] || {} } },
@@ -133,7 +133,86 @@ module Legion
         }
       }.freeze
 
+      @previous_reflection = {}
+
       module_function
+
+      def previous_reflection
+        @previous_reflection || {}
+      end
+
+      def capture_tick_results(results)
+        return unless results.is_a?(Hash)
+
+        refl = results[:post_tick_reflection]
+        @previous_reflection = refl if refl.is_a?(Hash) && refl[:status] != :skipped
+      end
+
+      def build_cognitive_state(prior_results)
+        {
+          curiosity: extract_curiosity_state(prior_results),
+          reflection: extract_reflection_state,
+          prediction: extract_prediction_state(prior_results),
+          mesh: extract_mesh_state(prior_results),
+          trust: extract_trust_state(prior_results),
+          emotion: extract_emotion_state(prior_results),
+          gut: prior_results[:gut_instinct]
+        }
+      end
+
+      def extract_curiosity_state(prior_results)
+        wmi = prior_results[:working_memory_integration] || {}
+        {
+          intensity: wmi[:curiosity_intensity] || 0.0,
+          active_count: wmi[:active_count] || 0,
+          top_question: wmi.dig(:top_wonders, 0, :question),
+          top_domain: :general
+        }
+      end
+
+      def extract_reflection_state
+        refl = previous_reflection
+        return {} if refl.nil? || refl.empty?
+
+        new_refls = refl[:new_reflections]
+        severity = new_refls.is_a?(Array) ? new_refls.last&.dig(:severity) : nil
+
+        {
+          health: refl[:cognitive_health] || 1.0,
+          pending_adaptations: refl[:reflections_generated] || 0,
+          recent_severity: severity
+        }
+      end
+
+      def extract_prediction_state(prior_results)
+        pred = prior_results[:prediction_engine] || {}
+        return {} if pred[:status] == :skipped || pred.empty?
+
+        { confidence: pred[:confidence] || 1.0 }
+      end
+
+      def extract_mesh_state(prior_results)
+        mesh = prior_results[:mesh_interface] || {}
+        return {} if mesh[:status] == :skipped || mesh.empty?
+
+        { peer_count: mesh[:online] || mesh[:total] || 0 }
+      end
+
+      def extract_trust_state(prior_results)
+        social = prior_results[:social_cognition] || {}
+        updates = social[:reputation_updates]
+        return {} unless updates.is_a?(Array) && !updates.empty?
+
+        composites = updates.filter_map { |u| u[:composite] }
+        return {} if composites.empty?
+
+        { avg_composite: composites.sum.to_f / composites.size }
+      end
+
+      def extract_emotion_state(prior_results)
+        gut = prior_results[:gut_instinct] || {}
+        { arousal: gut[:arousal] || 0.0 }
+      end
 
       def knowledge_setting(key, default)
         return default unless defined?(Legion::Settings) && !Legion::Settings[:gaia].nil?

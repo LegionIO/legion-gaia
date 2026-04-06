@@ -4,9 +4,12 @@ module Legion
   module Gaia
     module Router
       class WorkerRouting
+        include Legion::Logging::Helper
+
         attr_reader :allowed_worker_ids
 
         def initialize(allowed_worker_ids: [])
+          log.unknown "initialize(allowed_worker_ids: #{allowed_worker_ids})"
           @routes = {}
           @allowed_worker_ids = allowed_worker_ids
           @mutex = Mutex.new

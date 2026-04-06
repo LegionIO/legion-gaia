@@ -12,7 +12,8 @@ module Legion
       # Fast in-memory advisory. NEVER makes LLM calls.
       # Returns Hash with optional keys: system_prompt, routing_hint,
       # context_window, tool_hint, suppress, valence
-      def advise(caller:, conversation_id: nil, messages: nil) # rubocop:disable Lint/UnusedMethodArgument
+      def advise(caller:, conversation_id: nil, messages: nil)
+        log.unknown "advise(caller: #{caller}, conversation_id: #{conversation_id}, messages: #{messages}) "
         return nil unless Gaia.started?
 
         advisory = {}
@@ -30,6 +31,7 @@ module Legion
       end
 
       def merge_tick_data!(advisory, tick_result)
+        log.unknown "merge_tick_data!(#{advisory.inspect}, #{tick_result})"
         return unless tick_result && tick_result[:results]
 
         results = tick_result[:results]

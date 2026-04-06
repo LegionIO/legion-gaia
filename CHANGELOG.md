@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+## [0.9.45] - 2026-04-06
+
+### Fixed
+- build real cognitive_state from prior phase results instead of passing empty hash to action_selection
+- add cross-tick reflection storage for corrective drive synthesis
+- add 8 cognitive state extraction methods to PhaseWiring
+
 ## [0.9.44] - 2026-04-02
 
 ### Fixed
