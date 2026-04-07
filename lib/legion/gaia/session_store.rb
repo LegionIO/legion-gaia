@@ -5,7 +5,7 @@ require 'securerandom'
 module Legion
   module Gaia
     class SessionStore
-      UUID_PATTERN = /\A[0-9a-f]{8}-/i
+      UUID_PATTERN = /\A[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\z/i
 
       Session = ::Data.define(:id, :identity, :channel_history, :created_at, :last_active_at) do
         def initialize(identity:, id: SecureRandom.uuid, channel_history: [],
@@ -18,6 +18,7 @@ module Legion
         @sessions = {}
         @identity_index = {}
         @canonical_to_uuid = {}
+        @session_identity_index = {}
         @ttl = ttl
         @mutex = Mutex.new
       end
@@ -37,6 +38,7 @@ module Legion
           session = Session.new(identity: normalized)
           @sessions[session.id] = session
           @identity_index[normalized] = session.id
+          @session_identity_index[session.id] = [normalized]
           @canonical_to_uuid[canonical_name.to_s.downcase] = normalized if canonical_name && uuid?(normalized)
           session
         end
@@ -102,10 +104,13 @@ module Legion
         old_session_id = @identity_index[canonical_key]
         return nil unless old_session_id && @sessions[old_session_id]
 
-        # Migrate string-keyed session to UUID key
-        @identity_index.delete(canonical_key)
+        # Migrate string-keyed session to UUID key.
+        # Keep the canonical string key in @identity_index so callers still
+        # using the old string identity continue to resolve the same session
+        # during the migration window.
         @identity_index[normalized_identity] = old_session_id
         @canonical_to_uuid[canonical_key] = normalized_identity
+        (@session_identity_index[old_session_id] ||= []) << normalized_identity
         old_session_id
       end
 
@@ -116,9 +121,10 @@ module Legion
       def remove_unlocked(session_id)
         session = @sessions.delete(session_id)
         if session
-          removed_keys = @identity_index.select { |_, v| v == session_id }.keys
+          removed_keys = @session_identity_index.delete(session_id) || []
           removed_keys.each { |k| @identity_index.delete(k) }
-          @canonical_to_uuid.delete_if { |_, v| removed_keys.include?(v) }
+          uuid_set = removed_keys.to_set
+          @canonical_to_uuid.delete_if { |_, v| uuid_set.include?(v) }
         end
         session
       end
