@@ -140,6 +140,39 @@ RSpec.describe Legion::Gaia::BondRegistry do
     end
   end
 
+  describe '.partner_entry (§9.6 deterministic selection)' do
+    it 'returns nil when no partner bonds exist' do
+      described_class.register('colleague', bond: :known)
+      expect(described_class.partner_entry).to be_nil
+    end
+
+    it 'returns the single partner entry when only one exists' do
+      described_class.register('esity', bond: :partner)
+      expect(described_class.partner_entry[:identity]).to eq('esity')
+    end
+
+    it 'prefers an entry with channel_identity over one without' do
+      described_class.register('uuid-primary', bond: :partner, priority: :primary)
+      described_class.register('uuid-channel', bond: :partner, channel_identity: 'U_SLACK_999')
+      entry = described_class.partner_entry
+      expect(entry[:identity]).to eq('uuid-channel')
+    end
+
+    it 'prefers priority :primary over :normal when neither has channel_identity' do
+      described_class.register('normal-id', bond: :partner, priority: :normal)
+      described_class.register('primary-id', bond: :partner, priority: :primary)
+      entry = described_class.partner_entry
+      expect(entry[:identity]).to eq('primary-id')
+    end
+
+    it 'falls back to first entry when no channel_identity or primary priority match' do
+      described_class.register('first-id', bond: :partner, priority: :normal)
+      described_class.register('second-id', bond: :partner, priority: :normal)
+      entry = described_class.partner_entry
+      expect(%w[first-id second-id]).to include(entry[:identity])
+    end
+  end
+
   describe '.channel_identity (§9.6)' do
     it 'returns the stored channel_identity when present' do
       described_class.register('a1b2c3d4-0000-0000-0000-aabbccddeeff',
