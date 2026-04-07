@@ -83,7 +83,8 @@ module Legion
         private
 
         def extract_identity(input_frame)
-          input_frame.auth_context[:aad_object_id] ||
+          input_frame.auth_context[:principal_id] ||
+            input_frame.auth_context[:aad_object_id] ||
             input_frame.auth_context[:identity] ||
             input_frame.auth_context[:user_id]
         end

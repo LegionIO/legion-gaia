@@ -388,7 +388,7 @@ RSpec.describe Legion::Gaia do
 
   describe '.ingest with partner observation' do
     before do
-      allow(Legion::Gaia::BondRegistry).to receive(:role).and_return(:unknown)
+      allow(Legion::Gaia::BondRegistry).to receive(:bond).and_return(:unknown)
 
       described_class.instance_variable_set(:@started, true)
       described_class.instance_variable_set(:@sensory_buffer, Legion::Gaia::SensoryBuffer.new)
@@ -422,7 +422,7 @@ RSpec.describe Legion::Gaia do
     end
 
     it 'detects partner role from BondRegistry' do
-      allow(Legion::Gaia::BondRegistry).to receive(:role).with('esity').and_return(:partner)
+      allow(Legion::Gaia::BondRegistry).to receive(:bond).with('esity').and_return(:partner)
 
       frame = Legion::Gaia::InputFrame.new(
         content: 'hello',

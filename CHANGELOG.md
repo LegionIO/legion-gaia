@@ -2,6 +2,20 @@
 
 ## [Unreleased]
 
+## [0.9.46] - 2026-04-06
+
+### Changed
+- BondRegistry: rename `role:` kwarg to `bond:` with backward-compat alias (`role:` accepted, `#role` delegates to `#bond`)
+- BondRegistry: replace plain Hash with `Concurrent::Hash` for thread safety; remove lazy `@bonds ||= {}` init guards
+- BondRegistry: stored hash entries now carry both `:bond` and `:role` keys during migration window
+- BondRegistry: `hydrate_from_apollo` uses `bond:` kwarg internally; call sites updated to use `.bond` method
+- `extract_identity` in `gaia.rb` and `router_bridge.rb`: prefer `principal_id` before `aad_object_id` (dual-read §9.3)
+- `observe_interlocutor`: calls `BondRegistry.bond` instead of `BondRegistry.role`
+- `ProactiveDispatcher`: reads `b[:bond]` instead of `b[:role]` when scanning all_bonds for partner
+- `AuditObserver`: dual-read identity extraction — prefers `:identity`, falls back to `:id` (§9.4)
+- `SessionStore`: UUID detection via `/\A[0-9a-f]{8}-/i`, string identities normalized to lowercase; `find_or_create` gains `canonical_name:` kwarg for session migration; `@canonical_to_uuid` reverse index added; `remove_unlocked` cleans up all index entries for removed session
+- Add `concurrent-ruby >= 1.2` to gemspec dependencies
+
 ## [0.9.45] - 2026-04-06
 
 ### Fixed
