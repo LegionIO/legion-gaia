@@ -148,14 +148,20 @@ module Legion
       def resolve_partner_id
         return nil unless defined?(Legion::Gaia::BondRegistry)
 
-        bond = Legion::Gaia::BondRegistry.all_bonds.find { |b| b[:bond] == :partner }
-        bond&.dig(:identity)&.to_s
+        # Use partner_entry for deterministic selection when multiple partner bonds exist
+        # (§9.6): prefers entries with channel_identity, then primary priority, then first.
+        bond = Legion::Gaia::BondRegistry.partner_entry
+        return nil unless bond
+
+        # Use channel_identity when present: channel APIs (Teams, Slack) need
+        # channel-native user IDs, not principal UUIDs. Falls back to :identity.
+        Legion::Gaia::BondRegistry.channel_identity(bond[:identity])
       end
 
       def resolve_partner_channel
         return nil unless defined?(Legion::Gaia::BondRegistry)
 
-        bond = Legion::Gaia::BondRegistry.all_bonds.find { |b| b[:bond] == :partner }
+        bond = Legion::Gaia::BondRegistry.partner_entry
         bond&.dig(:preferred_channel) || bond&.dig(:last_channel)
       end
 

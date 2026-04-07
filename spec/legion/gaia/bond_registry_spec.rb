@@ -139,4 +139,68 @@ RSpec.describe Legion::Gaia::BondRegistry do
       expect(described_class.partner?('miverso2')).to be true
     end
   end
+
+  describe '.partner_entry (§9.6 deterministic selection)' do
+    it 'returns nil when no partner bonds exist' do
+      described_class.register('colleague', bond: :known)
+      expect(described_class.partner_entry).to be_nil
+    end
+
+    it 'returns the single partner entry when only one exists' do
+      described_class.register('esity', bond: :partner)
+      expect(described_class.partner_entry[:identity]).to eq('esity')
+    end
+
+    it 'prefers an entry with channel_identity over one without' do
+      described_class.register('uuid-primary', bond: :partner, priority: :primary)
+      described_class.register('uuid-channel', bond: :partner, channel_identity: 'U_SLACK_999')
+      entry = described_class.partner_entry
+      expect(entry[:identity]).to eq('uuid-channel')
+    end
+
+    it 'prefers priority :primary over :normal when neither has channel_identity' do
+      described_class.register('normal-id', bond: :partner, priority: :normal)
+      described_class.register('primary-id', bond: :partner, priority: :primary)
+      entry = described_class.partner_entry
+      expect(entry[:identity]).to eq('primary-id')
+    end
+
+    it 'falls back to earliest-registered entry when no channel_identity or primary priority match' do
+      described_class.register('second-id', bond: :partner, priority: :normal)
+      sleep(0.001)
+      described_class.register('first-id', bond: :partner, priority: :normal)
+      entry = described_class.partner_entry
+      # 'second-id' registered first (:since is earlier), so it wins the tie-breaker
+      expect(entry[:identity]).to eq('second-id')
+    end
+  end
+
+  describe '.channel_identity (§9.6)' do
+    it 'returns the stored channel_identity when present' do
+      described_class.register('a1b2c3d4-0000-0000-0000-aabbccddeeff',
+                               bond: :partner, channel_identity: 'U12345')
+      expect(described_class.channel_identity('a1b2c3d4-0000-0000-0000-aabbccddeeff')).to eq('U12345')
+    end
+
+    it 'falls back to :identity when no channel_identity was stored' do
+      described_class.register('esity', bond: :partner, priority: :primary)
+      expect(described_class.channel_identity('esity')).to eq('esity')
+    end
+
+    it 'returns nil for unregistered identities' do
+      expect(described_class.channel_identity('nobody')).to be_nil
+    end
+
+    it 'stores channel_identity in the bond hash entry' do
+      described_class.register('uuid-1', bond: :partner, channel_identity: 'T09876')
+      entry = described_class.all_bonds.find { |b| b[:identity] == 'uuid-1' }
+      expect(entry[:channel_identity]).to eq('T09876')
+    end
+
+    it 'stores nil channel_identity when not provided' do
+      described_class.register('esity', bond: :partner)
+      entry = described_class.all_bonds.find { |b| b[:identity] == 'esity' }
+      expect(entry[:channel_identity]).to be_nil
+    end
+  end
 end

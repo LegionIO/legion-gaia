@@ -134,6 +134,55 @@ RSpec.describe Legion::Gaia::ProactiveDispatcher do
     end
   end
 
+  describe '#resolve_partner_id (§9.6 channel-identity routing)' do
+    context 'when no partner bond is registered' do
+      before { Legion::Gaia::BondRegistry.reset! }
+      after  { Legion::Gaia::BondRegistry.reset! }
+
+      it 'returns nil' do
+        expect(dispatcher.send(:resolve_partner_id)).to be_nil
+      end
+    end
+
+    context 'when partner bond has no channel_identity' do
+      before do
+        Legion::Gaia::BondRegistry.reset!
+        Legion::Gaia::BondRegistry.register('esity', bond: :partner)
+      end
+      after { Legion::Gaia::BondRegistry.reset! }
+
+      it 'falls back to the identity string' do
+        expect(dispatcher.send(:resolve_partner_id)).to eq('esity')
+      end
+    end
+
+    context 'when partner bond has a channel_identity (UUID principal + channel-native ID)' do
+      let(:uuid) { 'a1b2c3d4-1111-0000-0000-000000000001' }
+
+      before do
+        Legion::Gaia::BondRegistry.reset!
+        Legion::Gaia::BondRegistry.register(uuid, bond: :partner, channel_identity: 'U_SLACK_123')
+      end
+      after { Legion::Gaia::BondRegistry.reset! }
+
+      it 'returns the channel-native identity for delivery' do
+        expect(dispatcher.send(:resolve_partner_id)).to eq('U_SLACK_123')
+      end
+
+      it 'does not return the principal UUID to channel APIs' do
+        expect(dispatcher.send(:resolve_partner_id)).not_to eq(uuid)
+      end
+    end
+
+    context 'when BondRegistry is not defined' do
+      before { hide_const('Legion::Gaia::BondRegistry') }
+
+      it 'returns nil' do
+        expect(dispatcher.send(:resolve_partner_id)).to be_nil
+      end
+    end
+  end
+
   describe '#resolve_partner_channel (Fix 6)' do
     context 'when BondRegistry is not defined' do
       before { hide_const('Legion::Gaia::BondRegistry') }
@@ -145,7 +194,7 @@ RSpec.describe Legion::Gaia::ProactiveDispatcher do
 
     context 'when BondRegistry has no partner bond' do
       before do
-        allow(Legion::Gaia::BondRegistry).to receive(:all_bonds).and_return([])
+        allow(Legion::Gaia::BondRegistry).to receive(:partner_entry).and_return(nil)
       end
 
       it 'returns nil' do
@@ -155,11 +204,9 @@ RSpec.describe Legion::Gaia::ProactiveDispatcher do
 
     context 'when partner bond has a preferred_channel' do
       before do
-        allow(Legion::Gaia::BondRegistry).to receive(:all_bonds).and_return([
-                                                                              { bond: :partner, role: :partner,
-                                                                                identity: 'esity',
-                                                                                preferred_channel: :teams }
-                                                                            ])
+        allow(Legion::Gaia::BondRegistry).to receive(:partner_entry).and_return(
+          { bond: :partner, role: :partner, identity: 'esity', preferred_channel: :teams }
+        )
       end
 
       it 'returns the preferred_channel' do
@@ -169,11 +216,9 @@ RSpec.describe Legion::Gaia::ProactiveDispatcher do
 
     context 'when partner bond has a last_channel but no preferred_channel' do
       before do
-        allow(Legion::Gaia::BondRegistry).to receive(:all_bonds).and_return([
-                                                                              { bond: :partner, role: :partner,
-                                                                                identity: 'esity',
-                                                                                last_channel: :slack }
-                                                                            ])
+        allow(Legion::Gaia::BondRegistry).to receive(:partner_entry).and_return(
+          { bond: :partner, role: :partner, identity: 'esity', last_channel: :slack }
+        )
       end
 
       it 'falls back to last_channel' do
@@ -181,17 +226,30 @@ RSpec.describe Legion::Gaia::ProactiveDispatcher do
       end
     end
 
-    context 'when non-partner bond exists but no partner bond' do
+    context 'when BondRegistry returns nil from partner_entry' do
       before do
-        allow(Legion::Gaia::BondRegistry).to receive(:all_bonds).and_return([
-                                                                              { bond: :colleague, role: :colleague,
-                                                                                identity: 'someone',
-                                                                                preferred_channel: :cli }
-                                                                            ])
+        allow(Legion::Gaia::BondRegistry).to receive(:partner_entry).and_return(nil)
       end
 
       it 'returns nil' do
         expect(dispatcher.send(:resolve_partner_channel)).to be_nil
+      end
+    end
+  end
+
+  describe '#resolve_partner_id with multiple partner bonds (§9.6 deterministic selection)' do
+    context 'when multiple partner bonds exist and one has channel_identity' do
+      let(:uuid) { 'a1b2c3d4-0000-0000-0000-preferred' }
+
+      before do
+        Legion::Gaia::BondRegistry.reset!
+        Legion::Gaia::BondRegistry.register('primary-only', bond: :partner, priority: :primary)
+        Legion::Gaia::BondRegistry.register(uuid, bond: :partner, channel_identity: 'U_PREFERRED')
+      end
+      after { Legion::Gaia::BondRegistry.reset! }
+
+      it 'selects the entry with channel_identity regardless of priority order' do
+        expect(dispatcher.send(:resolve_partner_id)).to eq('U_PREFERRED')
       end
     end
   end

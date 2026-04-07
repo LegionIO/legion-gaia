@@ -12,14 +12,15 @@ module Legion
 
       module_function
 
-      def register(identity, bond: nil, role: nil, priority: :normal)
+      def register(identity, bond: nil, role: nil, priority: :normal, channel_identity: nil)
         effective_bond = (bond || role || :unknown).to_sym
         @bonds[identity.to_s] = {
           identity: identity.to_s,
           bond: effective_bond,
           role: effective_bond,
           priority: priority.to_sym,
-          since: Time.now.utc
+          since: Time.now.utc,
+          channel_identity: channel_identity&.to_s
         }
         log.info("BondRegistry registered identity=#{identity} bond=#{effective_bond} priority=#{priority}")
       end
@@ -33,12 +34,39 @@ module Legion
         bond(identity)
       end
 
+      # Returns the channel-native identity for the given principal identity.
+      # Falls back to the principal identity itself when no channel_identity was stored.
+      # Proactive delivery paths MUST use this method to avoid sending messages
+      # to a UUID that channel APIs (Teams, Slack) do not recognize.
+      def channel_identity(identity)
+        entry = @bonds[identity.to_s]
+        return nil unless entry
+
+        entry[:channel_identity] || entry[:identity]
+      end
+
       def partner?(identity)
         bond(identity) == :partner
       end
 
       def all_bonds
         @bonds.values
+      end
+
+      # Returns the single best partner bond entry using deterministic selection:
+      #   1. Prefer entries that have an explicit channel_identity stored (§9.6 guarantee)
+      #   2. Then prefer entries with priority: :primary
+      #   3. Otherwise return the earliest-registered entry (sort by :since, then :identity)
+      # Sorting by :since then :identity ensures a stable result regardless of Concurrent::Hash
+      # enumeration order, which is not guaranteed.
+      def partner_entry
+        partners = @bonds.values.select { |b| b[:bond] == :partner }
+        return nil if partners.empty?
+
+        sorted = partners.sort_by { |b| [b[:since], b[:identity]] }
+        sorted.find { |b| b[:channel_identity] } ||
+          sorted.find { |b| b[:priority] == :primary } ||
+          sorted.first
       end
 
       def hydrate_from_apollo(store: nil)
