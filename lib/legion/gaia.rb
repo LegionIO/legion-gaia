@@ -374,11 +374,14 @@ module Legion
         ctx = input_frame.auth_context
         return nil if ctx.nil? || ctx.empty?
 
-        ctx[:aad_object_id] || ctx[:identity] || ctx[:user_id]
+        ctx[:principal_id] ||
+          ctx[:aad_object_id] ||
+          ctx[:identity] ||
+          ctx[:user_id]
       end
 
       def observe_interlocutor(input_frame, identity)
-        role = BondRegistry.role(identity.to_s)
+        role = BondRegistry.bond(identity.to_s)
 
         observation = {
           identity: identity.to_s,

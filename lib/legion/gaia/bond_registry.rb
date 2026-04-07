@@ -1,33 +1,43 @@
 # frozen_string_literal: true
 
 require 'legion/logging/helper'
+require 'concurrent/hash'
 
 module Legion
   module Gaia
     module BondRegistry
       extend Legion::Logging::Helper
 
+      @bonds = Concurrent::Hash.new
+
       module_function
 
-      def register(identity, role:, priority: :normal)
-        @bonds ||= {}
-        @bonds[identity.to_s] = { identity: identity.to_s, role: role.to_sym, priority: priority.to_sym,
-                                  since: Time.now.utc }
-        log.info("BondRegistry registered identity=#{identity} role=#{role} priority=#{priority}")
+      def register(identity, bond: nil, role: nil, priority: :normal)
+        effective_bond = (bond || role || :unknown).to_sym
+        @bonds[identity.to_s] = {
+          identity: identity.to_s,
+          bond: effective_bond,
+          role: effective_bond,
+          priority: priority.to_sym,
+          since: Time.now.utc
+        }
+        log.info("BondRegistry registered identity=#{identity} bond=#{effective_bond} priority=#{priority}")
       end
 
-      def partner?(identity)
-        role(identity) == :partner
+      def bond(identity)
+        entry = @bonds[identity.to_s]
+        entry ? entry[:bond] : :unknown
       end
 
       def role(identity)
-        @bonds ||= {}
-        entry = @bonds[identity.to_s]
-        entry ? entry[:role] : :unknown
+        bond(identity)
+      end
+
+      def partner?(identity)
+        bond(identity) == :partner
       end
 
       def all_bonds
-        @bonds ||= {}
         @bonds.values
       end
 
@@ -44,7 +54,7 @@ module Legion
           identities = extract_identity_keys(content)
           priority = content.match?(/primary/i) ? :primary : :normal
 
-          identities.each { |id| register(id, role: :partner, priority: priority) }
+          identities.each { |id| register(id, bond: :partner, priority: priority) }
         end
         log.info("BondRegistry hydrated entries=#{result[:results].size}")
       rescue StandardError => e
@@ -52,7 +62,7 @@ module Legion
       end
 
       def reset!
-        @bonds = {}
+        @bonds = Concurrent::Hash.new
         log.debug('BondRegistry reset')
       end
 

@@ -156,7 +156,7 @@ RSpec.describe Legion::Gaia::ProactiveDispatcher do
     context 'when partner bond has a preferred_channel' do
       before do
         allow(Legion::Gaia::BondRegistry).to receive(:all_bonds).and_return([
-                                                                              { role: :partner,
+                                                                              { bond: :partner, role: :partner,
                                                                                 identity: 'esity',
                                                                                 preferred_channel: :teams }
                                                                             ])
@@ -170,7 +170,7 @@ RSpec.describe Legion::Gaia::ProactiveDispatcher do
     context 'when partner bond has a last_channel but no preferred_channel' do
       before do
         allow(Legion::Gaia::BondRegistry).to receive(:all_bonds).and_return([
-                                                                              { role: :partner,
+                                                                              { bond: :partner, role: :partner,
                                                                                 identity: 'esity',
                                                                                 last_channel: :slack }
                                                                             ])
@@ -184,7 +184,7 @@ RSpec.describe Legion::Gaia::ProactiveDispatcher do
     context 'when non-partner bond exists but no partner bond' do
       before do
         allow(Legion::Gaia::BondRegistry).to receive(:all_bonds).and_return([
-                                                                              { role: :colleague,
+                                                                              { bond: :colleague, role: :colleague,
                                                                                 identity: 'someone',
                                                                                 preferred_channel: :cli }
                                                                             ])

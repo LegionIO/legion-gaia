@@ -148,14 +148,14 @@ module Legion
       def resolve_partner_id
         return nil unless defined?(Legion::Gaia::BondRegistry)
 
-        bond = Legion::Gaia::BondRegistry.all_bonds.find { |b| b[:role] == :partner }
+        bond = Legion::Gaia::BondRegistry.all_bonds.find { |b| b[:bond] == :partner }
         bond&.dig(:identity)&.to_s
       end
 
       def resolve_partner_channel
         return nil unless defined?(Legion::Gaia::BondRegistry)
 
-        bond = Legion::Gaia::BondRegistry.all_bonds.find { |b| b[:role] == :partner }
+        bond = Legion::Gaia::BondRegistry.all_bonds.find { |b| b[:bond] == :partner }
         bond&.dig(:preferred_channel) || bond&.dig(:last_channel)
       end
 

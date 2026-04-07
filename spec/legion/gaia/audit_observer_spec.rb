@@ -75,4 +75,44 @@ RSpec.describe Legion::Gaia::AuditObserver do
       expect(described_class.instance.user_preferences('user:matt')).to eq({})
     end
   end
+
+  describe 'dual-read identity extraction (§9.4)' do
+    it 'uses :identity when :id is absent' do
+      event = {
+        caller: { requested_by: { identity: 'user:matt' } },
+        routing: { provider: :anthropic },
+        tools_used: [], timestamp: Time.now
+      }
+      described_class.instance.process_event(event)
+      prefs = described_class.instance.user_preferences('user:matt')
+      expect(prefs[:routing]).to include(provider: :anthropic)
+    end
+
+    it 'uses :identity over :id for canonical_name key (preference key stability)' do
+      event = {
+        caller: { requested_by: { identity: 'user:matt', id: 'some-uuid-1234' } },
+        routing: { provider: :anthropic },
+        tools_used: [], timestamp: Time.now
+      }
+      described_class.instance.process_event(event)
+      prefs = described_class.instance.user_preferences('user:matt')
+      expect(prefs[:routing]).to include(provider: :anthropic)
+    end
+
+    it 'falls back to :id when :identity is absent' do
+      event = {
+        caller: { requested_by: { id: 'fallback-uuid-5678' } },
+        routing: { provider: :openai },
+        tools_used: [], timestamp: Time.now
+      }
+      described_class.instance.process_event(event)
+      prefs = described_class.instance.user_preferences('fallback-uuid-5678')
+      expect(prefs[:routing]).to include(provider: :openai)
+    end
+
+    it 'does not error when caller is absent' do
+      event = { routing: { provider: :anthropic }, tools_used: [], timestamp: Time.now }
+      expect { described_class.instance.process_event(event) }.not_to raise_error
+    end
+  end
 end

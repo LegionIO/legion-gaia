@@ -24,7 +24,7 @@ module Legion
           record_tool_patterns(event)
           record_quality(event)
         end
-        identity = event.dig(:caller, :requested_by, :identity)
+        identity = extract_caller_identity(event)
         log.debug(
           'AuditObserver processed event ' \
           "identity=#{identity || 'unknown'} tools=#{Array(event[:tools_used]).size}"
@@ -62,8 +62,13 @@ module Legion
 
       private
 
+      def extract_caller_identity(event)
+        rb = event.dig(:caller, :requested_by) || {}
+        rb[:identity] || rb[:id]
+      end
+
       def record_routing_preference(event)
-        identity = event.dig(:caller, :requested_by, :identity)
+        identity = extract_caller_identity(event)
         return unless identity
 
         provider = event.dig(:routing, :provider)

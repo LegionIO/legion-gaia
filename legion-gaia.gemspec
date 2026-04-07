@@ -27,6 +27,7 @@ Gem::Specification.new do |spec|
   }
 
   spec.add_dependency 'base64'
+  spec.add_dependency 'concurrent-ruby', '>= 1.2'
   spec.add_dependency 'legion-json', '>= 1.2.0'
   spec.add_dependency 'legion-logging', '>= 1.5.0'
   spec.add_dependency 'legion-settings', '>= 1.3.12'
