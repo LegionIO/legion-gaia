@@ -56,15 +56,17 @@ module Legion
       # Returns the single best partner bond entry using deterministic selection:
       #   1. Prefer entries that have an explicit channel_identity stored (§9.6 guarantee)
       #   2. Then prefer entries with priority: :primary
-      #   3. Otherwise return the first partner entry found
-      # This avoids non-deterministic delivery when multiple partner identities are registered.
+      #   3. Otherwise return the earliest-registered entry (sort by :since, then :identity)
+      # Sorting by :since then :identity ensures a stable result regardless of Concurrent::Hash
+      # enumeration order, which is not guaranteed.
       def partner_entry
         partners = @bonds.values.select { |b| b[:bond] == :partner }
         return nil if partners.empty?
 
-        partners.find { |b| b[:channel_identity] } ||
-          partners.find { |b| b[:priority] == :primary } ||
-          partners.first
+        sorted = partners.sort_by { |b| [b[:since], b[:identity]] }
+        sorted.find { |b| b[:channel_identity] } ||
+          sorted.find { |b| b[:priority] == :primary } ||
+          sorted.first
       end
 
       def hydrate_from_apollo(store: nil)

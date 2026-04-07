@@ -165,11 +165,13 @@ RSpec.describe Legion::Gaia::BondRegistry do
       expect(entry[:identity]).to eq('primary-id')
     end
 
-    it 'falls back to first entry when no channel_identity or primary priority match' do
-      described_class.register('first-id', bond: :partner, priority: :normal)
+    it 'falls back to earliest-registered entry when no channel_identity or primary priority match' do
       described_class.register('second-id', bond: :partner, priority: :normal)
+      sleep(0.001)
+      described_class.register('first-id', bond: :partner, priority: :normal)
       entry = described_class.partner_entry
-      expect(%w[first-id second-id]).to include(entry[:identity])
+      # 'second-id' registered first (:since is earlier), so it wins the tie-breaker
+      expect(entry[:identity]).to eq('second-id')
     end
   end
 
