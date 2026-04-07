@@ -139,4 +139,33 @@ RSpec.describe Legion::Gaia::BondRegistry do
       expect(described_class.partner?('miverso2')).to be true
     end
   end
+
+  describe '.channel_identity (§9.6)' do
+    it 'returns the stored channel_identity when present' do
+      described_class.register('a1b2c3d4-0000-0000-0000-aabbccddeeff',
+                               bond: :partner, channel_identity: 'U12345')
+      expect(described_class.channel_identity('a1b2c3d4-0000-0000-0000-aabbccddeeff')).to eq('U12345')
+    end
+
+    it 'falls back to :identity when no channel_identity was stored' do
+      described_class.register('esity', bond: :partner, priority: :primary)
+      expect(described_class.channel_identity('esity')).to eq('esity')
+    end
+
+    it 'returns nil for unregistered identities' do
+      expect(described_class.channel_identity('nobody')).to be_nil
+    end
+
+    it 'stores channel_identity in the bond hash entry' do
+      described_class.register('uuid-1', bond: :partner, channel_identity: 'T09876')
+      entry = described_class.all_bonds.find { |b| b[:identity] == 'uuid-1' }
+      expect(entry[:channel_identity]).to eq('T09876')
+    end
+
+    it 'stores nil channel_identity when not provided' do
+      described_class.register('esity', bond: :partner)
+      entry = described_class.all_bonds.find { |b| b[:identity] == 'esity' }
+      expect(entry[:channel_identity]).to be_nil
+    end
+  end
 end

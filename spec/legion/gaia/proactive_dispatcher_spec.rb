@@ -134,6 +134,55 @@ RSpec.describe Legion::Gaia::ProactiveDispatcher do
     end
   end
 
+  describe '#resolve_partner_id (§9.6 channel-identity routing)' do
+    context 'when no partner bond is registered' do
+      before { Legion::Gaia::BondRegistry.reset! }
+      after  { Legion::Gaia::BondRegistry.reset! }
+
+      it 'returns nil' do
+        expect(dispatcher.send(:resolve_partner_id)).to be_nil
+      end
+    end
+
+    context 'when partner bond has no channel_identity' do
+      before do
+        Legion::Gaia::BondRegistry.reset!
+        Legion::Gaia::BondRegistry.register('esity', bond: :partner)
+      end
+      after { Legion::Gaia::BondRegistry.reset! }
+
+      it 'falls back to the identity string' do
+        expect(dispatcher.send(:resolve_partner_id)).to eq('esity')
+      end
+    end
+
+    context 'when partner bond has a channel_identity (UUID principal + channel-native ID)' do
+      let(:uuid) { 'a1b2c3d4-1111-0000-0000-000000000001' }
+
+      before do
+        Legion::Gaia::BondRegistry.reset!
+        Legion::Gaia::BondRegistry.register(uuid, bond: :partner, channel_identity: 'U_SLACK_123')
+      end
+      after { Legion::Gaia::BondRegistry.reset! }
+
+      it 'returns the channel-native identity for delivery' do
+        expect(dispatcher.send(:resolve_partner_id)).to eq('U_SLACK_123')
+      end
+
+      it 'does not return the principal UUID to channel APIs' do
+        expect(dispatcher.send(:resolve_partner_id)).not_to eq(uuid)
+      end
+    end
+
+    context 'when BondRegistry is not defined' do
+      before { hide_const('Legion::Gaia::BondRegistry') }
+
+      it 'returns nil' do
+        expect(dispatcher.send(:resolve_partner_id)).to be_nil
+      end
+    end
+  end
+
   describe '#resolve_partner_channel (Fix 6)' do
     context 'when BondRegistry is not defined' do
       before { hide_const('Legion::Gaia::BondRegistry') }

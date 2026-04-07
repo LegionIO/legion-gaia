@@ -149,7 +149,12 @@ module Legion
         return nil unless defined?(Legion::Gaia::BondRegistry)
 
         bond = Legion::Gaia::BondRegistry.all_bonds.find { |b| b[:bond] == :partner }
-        bond&.dig(:identity)&.to_s
+        return nil unless bond
+
+        # Use channel_identity when present (§9.6): channel APIs (Teams, Slack) need
+        # channel-native user IDs, not principal UUIDs. Falls back to :identity for
+        # entries registered without an explicit channel_identity.
+        Legion::Gaia::BondRegistry.channel_identity(bond[:identity])
       end
 
       def resolve_partner_channel

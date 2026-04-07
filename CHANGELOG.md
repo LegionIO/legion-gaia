@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+## [0.9.47] - 2026-04-07
+
+### Added
+- `BondRegistry.register` gains optional `channel_identity:` kwarg to store channel-native user IDs (Slack `U*`, Teams user ID) separate from principal UUID (§9.6)
+- `BondRegistry.channel_identity(identity)` method returns the channel-native ID for delivery, falling back to the stored `identity` when no explicit `channel_identity` was registered
+- `ProactiveDispatcher#resolve_partner_id` now routes via `BondRegistry.channel_identity` so proactive delivery sends to channel-native IDs rather than principal UUIDs; prevents channel API failures when the bond was registered with a UUID principal
+
 ## [0.9.46] - 2026-04-06
 
 ### Changed
