@@ -37,6 +37,7 @@ module Legion
         association_walk: { ext: :Memory, runner: :Consolidation, fn: :hebbian_link },
         contradiction_resolution: { ext: :Conflict, runner: :Conflict, fn: :active_conflicts },
         agenda_formation: { ext: :Curiosity, runner: :Curiosity, fn: :form_agenda },
+        curiosity_execution: { ext: :Curiosity, runner: :Curiosity, fn: :self_inquire },
         consolidation_commit: { ext: :Memory, runner: :Consolidation, fn: :migrate_tier },
         knowledge_promotion: { ext: :Apollo, runner: :Knowledge, fn: :handle_ingest },
         dream_reflection: { ext: :Reflection, runner: :Reflection, fn: :reflect },
@@ -44,7 +45,33 @@ module Legion
           { ext: :Social, runner: :Attachment, fn: :reflect_on_bonds },
           { ext: :Social, runner: :Calibration, fn: :sync_partner_knowledge }
         ],
-        dream_narration: { ext: :Narrator, runner: :Narrator, fn: :narrate }
+        dream_narration: { ext: :Narrator, runner: :Narrator, fn: :narrate },
+
+        # lex-agentic-imagination
+        dream_cycle: { ext: :Dream,        runner: :DreamCycle, fn: :execute_dream_cycle },
+        creativity_tick: { ext: :Creativity, runner: :Creativity, fn: :creative_tick },
+        lucid_dream: { ext: :Lucidity, runner: :CognitiveLucidity, fn: :begin_dream },
+
+        # lex-agentic-defense
+        epistemic_vigilance: { ext: :EpistemicVigilance, runner: :EpistemicVigilance, fn: :assess_epistemic_claim },
+
+        # lex-agentic-inference
+        predictive_processing: { ext: :PredictiveProcessing, runner: :PredictiveProcessing, fn: :predict_from_model },
+        free_energy: { ext: :FreeEnergy, runner: :FreeEnergy, fn: :minimize_free_energy },
+
+        # lex-agentic-self
+        metacognition: { ext: :Metacognition, runner: :Metacognition, fn: :introspect },
+        default_mode_network: { ext: :DefaultModeNetwork, runner: :DefaultModeNetwork,
+                                fn: :generate_idle_thought },
+
+        # lex-agentic-executive
+        prospective_memory: { ext: :ProspectiveMemory, runner: :ProspectiveMemory, fn: :monitor_intention },
+
+        # lex-agentic-language
+        inner_speech: { ext: :InnerSpeech, runner: :InnerSpeech, fn: :inner_speak },
+
+        # lex-agentic-integration
+        global_workspace: { ext: :GlobalWorkspace, runner: :GlobalWorkspace, fn: :run_competition }
       }.freeze
 
       PHASE_ARGS = {
@@ -87,10 +114,20 @@ module Legion
         },
         mesh_interface: ->(_ctx) { {} },
         social_cognition: lambda { |ctx|
+          if Array(ctx[:signals]).empty? && partner_observations_from(ctx).empty?
+            return { skip: true,
+                     reason: :idle_no_signals }
+          end
+
           { tick_results: ctx[:prior_results] || {},
             human_observations: partner_observations_from(ctx) }
         },
         theory_of_mind: lambda { |ctx|
+          if Array(ctx[:signals]).empty? && partner_observations_from(ctx).empty?
+            return { skip: true,
+                     reason: :idle_no_signals }
+          end
+
           { tick_results: ctx[:prior_results] || {},
             human_observations: partner_observations_from(ctx) }
         },
@@ -115,6 +152,7 @@ module Legion
         },
         contradiction_resolution: ->(_ctx) { {} },
         agenda_formation: ->(_ctx) { {} },
+        curiosity_execution: ->(_ctx) { { max_wonders: 1 } },
         consolidation_commit: ->(_ctx) { {} },
         knowledge_promotion: lambda { |ctx|
           content = build_promotion_content(ctx[:prior_results] || {})
@@ -130,7 +168,36 @@ module Legion
         },
         dream_narration: lambda { |ctx|
           { tick_results: ctx[:prior_results] || {}, cognitive_state: { source: :dream } }
-        }
+        },
+
+        # lex-agentic-imagination
+        dream_cycle: ->(_ctx) { {} },
+        creativity_tick: ->(ctx)  { { tick_results: ctx[:prior_results] || {} } },
+        lucid_dream: ->(_ctx) { { theme: :reflection, content: 'autonomous dream cycle' } },
+
+        # lex-agentic-defense
+        epistemic_vigilance: ->(_ctx) { { claim_id: nil } },
+
+        # lex-agentic-inference
+        predictive_processing: lambda { |ctx|
+          { domain: ctx.dig(:prior_results, :memory_retrieval, :domain) || :general, context: {} }
+        },
+        free_energy: ->(_ctx) { { belief_id: nil, mode: :perceptual } },
+
+        # lex-agentic-self
+        metacognition: ->(ctx) { { tick_results: ctx[:prior_results] || {}, subsystem_states: {} } },
+        default_mode_network: ->(_ctx) { {} },
+
+        # lex-agentic-executive
+        prospective_memory: ->(_ctx) { { intention_id: nil } },
+
+        # lex-agentic-language
+        inner_speech: lambda { |ctx|
+          { content: ctx.dig(:prior_results, :action_selection, :goal).to_s, mode: :narrating, topic: :general }
+        },
+
+        # lex-agentic-integration
+        global_workspace: ->(_ctx) { {} }
       }.freeze
 
       @previous_reflection = {}

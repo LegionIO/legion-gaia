@@ -27,8 +27,8 @@ RSpec.describe Legion::Gaia::PhaseWiring do
       end
     end
 
-    it 'has 25 total phases' do
-      expect(described_class::PHASE_MAP.size).to eq(25)
+    it 'has 37 total phases' do
+      expect(described_class::PHASE_MAP.size).to eq(37)
     end
 
     it 'each mapping has ext, runner, and fn keys' do
@@ -401,11 +401,12 @@ RSpec.describe Legion::Gaia::PhaseWiring do
       expect(result[:human_observations]).to eq([{ identity: 'esity' }])
     end
 
-    it 'defaults to empty array when no observations' do
+    it 'skips social_cognition when idle with no observations' do
       args_lambda = described_class::PHASE_ARGS[:social_cognition]
       ctx = { prior_results: {}, state: {}, signals: [], current_signal: nil, valences: {} }
       result = args_lambda.call(ctx)
-      expect(result[:human_observations]).to eq([])
+      expect(result[:skip]).to eq(true)
+      expect(result[:reason]).to eq(:idle_no_signals)
     end
   end
 
