@@ -38,6 +38,7 @@ module Legion
     ABSENCE_SIGNAL_COOLDOWN  = 1800
     ABSENCE_SIGNAL_SALIENCE  = 0.75
     ABSENCE_SIGNAL_TEXT      = 'partner absence exceeded expected pattern'
+    ABSENCE_PATTERN_CACHE_TTL = 60
 
     class << self # rubocop:disable Metrics/ClassLength
       include Legion::Gaia::Logging
@@ -102,6 +103,8 @@ module Legion
         @partner_observations = nil
         @partner_absence_misses = 0
         @last_absence_signal_at = nil
+        @absence_pattern_cache = nil
+        @absence_pattern_checked_at = nil
         @last_valences = nil
         @last_response_at = nil
         @tick_history = nil
@@ -252,6 +255,8 @@ module Legion
         @partner_observations = []
         @partner_absence_misses = 0
         @last_absence_signal_at = nil
+        @absence_pattern_cache = nil
+        @absence_pattern_checked_at = nil
         @tick_history = TickHistory.new
         @tick_count = 0
         @started_at = Time.now.utc
@@ -541,11 +546,18 @@ module Legion
       end
 
       def partner_absence_exceeds_pattern?
+        if @absence_pattern_checked_at &&
+           (Time.now.utc - @absence_pattern_checked_at) < ABSENCE_PATTERN_CACHE_TTL
+          return @absence_pattern_cache == true
+        end
+
         runner = @registry&.runner_instances&.dig(:Social_Attachment)
         return false unless runner.respond_to?(:reflect_on_bonds)
 
         result = runner.reflect_on_bonds(tick_results: {}, bond_summary: {})
-        result.dig(:partner_bond, :absence_exceeds_pattern) == true
+        @absence_pattern_cache = result.dig(:partner_bond, :absence_exceeds_pattern) == true
+        @absence_pattern_checked_at = Time.now.utc
+        @absence_pattern_cache
       rescue StandardError => e
         handle_exception(e, level: :debug, operation: 'gaia.partner_absence_exceeds_pattern')
         false

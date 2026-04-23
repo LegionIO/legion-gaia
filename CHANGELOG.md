@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+## [0.9.48] - 2026-04-23
+
+### Fixed
+- Cache `partner_absence_exceeds_pattern?` result with 60s TTL to stop Apollo::Local query loop — `reflect_on_bonds` was querying SQLite FTS twice per heartbeat tick (1/sec) with zero results, causing sustained high CPU load
+
+### Added
+- Wire 12 new cognitive phases into PHASE_MAP and PHASE_ARGS: `curiosity_execution`, `dream_cycle`, `creativity_tick`, `lucid_dream`, `epistemic_vigilance`, `predictive_processing`, `free_energy`, `metacognition`, `default_mode_network`, `prospective_memory`, `inner_speech`, `global_workspace`
+- Idle-skip guards on `social_cognition` and `theory_of_mind` — skip when no signals and no partner observations
+- `POST /api/gaia/ingest` REST endpoint for pushing content into the GAIA sensory buffer
+
 ## [0.9.47] - 2026-04-07
 
 ### Added

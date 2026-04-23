@@ -61,6 +61,7 @@ module Legion
         register_buffer_route(app)
         register_sessions_route(app)
         register_teams_webhook_route(app)
+        register_ingest_route(app)
       end
 
       def self.register_status_route(app)
@@ -173,9 +174,35 @@ module Legion
         nil
       end
 
+      def self.register_ingest_route(app)
+        app.post '/api/gaia/ingest' do
+          halt 503, json_error('gaia_unavailable', 'gaia is not started', status_code: 503) unless gaia_available?
+
+          body = Legion::JSON.load(request.body.read)
+          content  = body[:content] || body['content']
+          identity = body[:identity] || body['identity'] || 'unknown'
+          channel  = (body[:channel_id] || body['channel_id'] || 'cli').to_sym
+
+          halt 400, json_error('missing_content', 'content is required', status_code: 400) if content.to_s.empty?
+
+          frame = Legion::Gaia::InputFrame.new(
+            content: content,
+            channel_id: channel,
+            content_type: :text,
+            auth_context: { identity: identity },
+            metadata: { source_type: :human_direct, salience: 0.8 }
+          )
+
+          Legion::Gaia.ingest(frame)
+          Legion::Logging.info "API: gaia ingest frame_id=#{frame.id} identity=#{identity}" if defined?(Legion::Logging)
+          json_response({ status: 'accepted', frame_id: frame.id })
+        end
+      end
+
       class << self
         private :register_status_route, :register_ticks_route, :register_channels_route,
-                :register_buffer_route, :register_sessions_route, :register_teams_webhook_route
+                :register_buffer_route, :register_sessions_route, :register_teams_webhook_route,
+                :register_ingest_route
       end
     end
   end
