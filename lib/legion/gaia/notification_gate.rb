@@ -73,6 +73,14 @@ module Legion
         @delay_queue.size
       end
 
+      def status
+        {
+          schedule: !@schedule_evaluator.quiet?,
+          presence: @presence_evaluator.availability,
+          behavioral: @behavioral_evaluator.notification_score
+        }
+      end
+
       private
 
       def priority_overrides?(frame)

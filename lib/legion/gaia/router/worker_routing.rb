@@ -60,6 +60,7 @@ module Legion
 
           worker = Legion::Data::Model::DigitalWorker.first(entra_oid: identity)
           return nil unless worker&.active?
+          return nil unless worker_allowed?(worker.worker_id)
 
           register(identity: identity, worker_id: worker.worker_id)
           worker.worker_id

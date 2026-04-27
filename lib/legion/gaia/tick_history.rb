@@ -24,8 +24,8 @@ module Legion
           {
             timestamp: timestamp.freeze,
             phase: phase_name.to_s.freeze,
-            duration_ms: phase_data[:elapsed_ms],
-            status: phase_data[:status]
+            duration_ms: phase_data[:elapsed_ms] || phase_data[:duration_ms] || 0.0,
+            status: phase_data[:status] || :completed
           }.freeze
         end
 

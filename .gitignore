@@ -9,4 +9,5 @@
 /tmp/
 /.idea/
 *.key
+*.gem
 .rspec_status

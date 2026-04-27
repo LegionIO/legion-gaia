@@ -3,7 +3,7 @@
 require 'json'
 
 RSpec.describe Legion::Gaia::Channels::Teams::WebhookHandler do
-  let(:adapter) { Legion::Gaia::Channels::TeamsAdapter.new(app_id: 'test-app-id') }
+  let(:adapter) { Legion::Gaia::Channels::TeamsAdapter.new }
   subject(:handler) { described_class.new(adapter) }
 
   let(:message_activity) do
@@ -93,15 +93,18 @@ RSpec.describe Legion::Gaia::Channels::Teams::WebhookHandler do
     end
 
     context 'with auth validation' do
+      let(:adapter) { Legion::Gaia::Channels::TeamsAdapter.new(app_id: 'test-app-id') }
+
+      it 'rejects missing auth when an app_id is configured' do
+        result = handler.handle(request_body: message_activity)
+        expect(result[:status]).to eq(401)
+        expect(result[:type]).to eq(:missing_auth)
+      end
+
       it 'rejects invalid token when auth_header provided' do
         result = handler.handle(request_body: message_activity, auth_header: 'Bearer invalid-token')
         expect(result[:status]).to eq(401)
         expect(result[:type]).to eq(:auth_failed)
-      end
-
-      it 'skips auth when no auth_header provided' do
-        result = handler.handle(request_body: message_activity)
-        expect(result[:status]).to eq(200)
       end
     end
   end

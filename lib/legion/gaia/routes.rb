@@ -138,7 +138,6 @@ module Legion
             Legion::Logging.debug "API: POST /api/channels/teams/webhook params=#{params.keys}"
           end
           body = request.body.read
-          activity = Legion::JSON.load(body)
 
           adapter = Routes.teams_adapter
           unless adapter
@@ -148,19 +147,20 @@ module Legion
             halt 503, json_response({ error: 'teams adapter not available' }, status_code: 503)
           end
 
-          input_frame = adapter.translate_inbound(activity)
-          unless input_frame
+          result = Legion::Gaia::Channels::Teams::WebhookHandler.new(adapter).handle(
+            request_body: body,
+            auth_header: request.env['HTTP_AUTHORIZATION']
+          )
+          unless result[:status].to_i == 200
             if defined?(Legion::Logging)
-              Legion::Logging.warn 'API POST /api/channels/teams/webhook returned 422: ' \
-                                   'unsupported or malformed Teams activity'
+              Legion::Logging.warn "API POST /api/channels/teams/webhook returned #{result[:status]}: #{result[:type]}"
             end
-            halt 422, json_error('invalid_teams_activity', 'unsupported or malformed Teams activity',
-                                 status_code: 422)
+            halt result[:status], json_response({ error: result[:type], detail: result[:detail] },
+                                                status_code: result[:status])
           end
 
-          Legion::Gaia.ingest(input_frame) if defined?(Legion::Gaia)
-          Legion::Logging.info "API: accepted Teams webhook frame_id=#{input_frame.id}" if defined?(Legion::Logging)
-          json_response({ status: 'accepted', frame_id: input_frame.id })
+          Legion::Logging.info "API: accepted Teams webhook frame_id=#{result[:frame_id]}" if defined?(Legion::Logging)
+          json_response({ status: 'accepted', frame_id: result[:frame_id] })
         end
       end
 

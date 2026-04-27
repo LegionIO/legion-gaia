@@ -76,4 +76,21 @@ RSpec.describe Legion::Gaia::Router::WorkerRouting do
       end
     end
   end
+
+  describe '#resolve_from_db' do
+    let(:digital_worker_model) { class_double('DigitalWorker') }
+    let(:worker) { instance_double('DigitalWorkerRow', active?: true, worker_id: 'w3') }
+
+    before do
+      stub_const('Legion::Data::Model::DigitalWorker', digital_worker_model)
+      allow(digital_worker_model).to receive(:first).with(entra_oid: 'oid-1').and_return(worker)
+    end
+
+    it 'returns nil when DB-backed worker resolution finds a disallowed worker' do
+      routing = described_class.new(allowed_worker_ids: %w[w1 w2])
+
+      expect(routing.resolve_from_db('oid-1')).to be_nil
+      expect(routing.resolve_worker_id('oid-1')).to be_nil
+    end
+  end
 end

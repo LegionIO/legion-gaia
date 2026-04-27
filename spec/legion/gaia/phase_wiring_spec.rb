@@ -217,7 +217,8 @@ RSpec.describe Legion::Gaia::PhaseWiring do
 
       handlers = described_class.build_phase_handlers(instances)
       result = handlers[:sensory_processing].call(state: {}, signals: [], prior_results: {})
-      expect(result).to eq({ filtered: true })
+      expect(result).to include(filtered: true, status: :completed)
+      expect(result[:elapsed_ms]).to be_a(Float)
     end
 
     it 'coalesces multi-handler hash results into a single hash for a phase' do
@@ -238,7 +239,8 @@ RSpec.describe Legion::Gaia::PhaseWiring do
       handlers = described_class.build_phase_handlers(instances)
       expect(handlers).to have_key(:working_memory_integration)
       result = handlers[:working_memory_integration].call(state: {}, signals: [], prior_results: {})
-      expect(result).to eq({ curiosity_intensity: 0.7, health_score: 1.0 })
+      expect(result).to include(curiosity_intensity: 0.7, health_score: 1.0, status: :completed)
+      expect(result[:elapsed_ms]).to be_a(Float)
     end
 
     it 'wires a phase when only the synapse handler is present' do
@@ -266,7 +268,8 @@ RSpec.describe Legion::Gaia::PhaseWiring do
       handlers = described_class.build_phase_handlers(instances)
       result = handlers[:knowledge_retrieval].call(state: {}, signals: [], prior_results: {})
 
-      expect(result).to eq({ status: :skipped, reason: :phase_wiring_skip })
+      expect(result).to include(status: :skipped, reason: :phase_wiring_skip)
+      expect(result[:elapsed_ms]).to be_a(Float)
     end
 
     it 'passes normalized prior results to downstream single-handler phases' do
@@ -287,7 +290,24 @@ RSpec.describe Legion::Gaia::PhaseWiring do
       }
       result = handlers[:action_selection].call(state: {}, signals: [], prior_results: prior_results)
 
-      expect(result).to eq({ curiosity_intensity: 0.8, health_score: 0.95 })
+      expect(result).to include(curiosity_intensity: 0.8, health_score: 0.95, status: :completed)
+      expect(result[:elapsed_ms]).to be_a(Float)
+    end
+
+    it 'returns failed phase status when a handler raises' do
+      test_module = Module.new do
+        def filter_signals(**)
+          raise 'phase failure'
+        end
+      end
+      host = Legion::Gaia::RunnerHost.new(test_module)
+      instances = { Attention_Attention: host }
+
+      handlers = described_class.build_phase_handlers(instances)
+      result = handlers[:sensory_processing].call(state: {}, signals: [], prior_results: {})
+
+      expect(result).to include(status: :failed, error: 'RuntimeError', message: 'phase failure')
+      expect(result[:elapsed_ms]).to be_a(Float)
     end
   end
 

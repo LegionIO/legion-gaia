@@ -10,6 +10,7 @@ module Legion
           connected: false,
           enabled: true,
           heartbeat_interval: 1,
+          shutdown: { heartbeat_wait_timeout: 30.0, heartbeat_wait_log_interval: 5.0 },
           channels: default_channels,
           router: { mode: false, allowed_worker_ids: [] },
           session: { persistence: 'auto', ttl: 86_400 },

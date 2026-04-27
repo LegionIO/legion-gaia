@@ -53,6 +53,13 @@ RSpec.describe Legion::Gaia::TickHistory do
       expect(entry[:status]).to eq(:skipped)
     end
 
+    it 'defaults missing status and duration to UI-safe values' do
+      history.record({ results: { prediction_engine: {} } })
+      entry = history.recent(limit: 1).first
+      expect(entry[:status]).to eq(:completed)
+      expect(entry[:duration_ms]).to eq(0.0)
+    end
+
     it 'stores an ISO8601 timestamp' do
       history.record({ results: { identity_entropy_check: { elapsed_ms: 1, status: :ok } } })
       entry = history.recent(limit: 1).first

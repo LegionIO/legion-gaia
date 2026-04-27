@@ -57,7 +57,7 @@ RSpec.describe Legion::Gaia::Routes do
 
   def build_post_route_context(body:)
     ctx = Object.new
-    request = double('request', body: StringIO.new(body))
+    request = double('request', body: StringIO.new(body), env: {})
 
     ctx.define_singleton_method(:request) { request }
     ctx.define_singleton_method(:params) { {} }
@@ -162,7 +162,7 @@ RSpec.describe Legion::Gaia::Routes do
         metadata: { source_type: :human_direct, direct_address: true }
       )
     end
-    let(:adapter) { instance_double(Legion::Gaia::Channels::TeamsAdapter) }
+    let(:adapter) { instance_double(Legion::Gaia::Channels::TeamsAdapter, app_id: nil) }
 
     before do
       allow(Legion::Gaia::Routes).to receive(:teams_adapter).and_return(adapter)
@@ -170,7 +170,7 @@ RSpec.describe Legion::Gaia::Routes do
 
     it 'routes webhook frames through Gaia.ingest' do
       allow(adapter).to receive(:translate_inbound)
-        .with(hash_including(type: 'message', text: 'hello gaia'))
+        .with(hash_including('type' => 'message', 'text' => 'hello gaia'))
         .and_return(input_frame)
       allow(Legion::Gaia).to receive(:sensory_buffer).and_return(instance_double(Legion::Gaia::SensoryBuffer))
 
@@ -192,6 +192,17 @@ RSpec.describe Legion::Gaia::Routes do
 
       expect(result).not_to be_nil
       expect(result.first).to eq(503)
+    end
+
+    it 'halts when webhook authentication fails' do
+      auth_adapter = instance_double(Legion::Gaia::Channels::TeamsAdapter, app_id: 'app-id')
+      allow(Legion::Gaia::Routes).to receive(:teams_adapter).and_return(auth_adapter)
+
+      ctx = build_post_route_context(body: Legion::JSON.dump(activity))
+      result = catch(:halt) { ctx.instance_exec(&webhook_block) }
+
+      expect(result).not_to be_nil
+      expect(result.first).to eq(401)
     end
   end
 end

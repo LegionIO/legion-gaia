@@ -404,14 +404,16 @@ module Legion
 
         arg_builder = PHASE_ARGS[phase]
         lambda { |state:, signals:, prior_results:, **context|
-          execute_phase_handler(
-            active,
-            arg_builder,
-            state: state,
-            signals: signals,
-            prior_results: prior_results,
-            context: context
-          )
+          timed_phase_result(phase) do
+            execute_phase_handler(
+              active,
+              arg_builder,
+              state: state,
+              signals: signals,
+              prior_results: prior_results,
+              context: context
+            )
+          end
         }
       end
 
@@ -445,6 +447,31 @@ module Legion
 
         results = active.map { |handler| handler[:instance].send(handler[:fn], **args) }
         normalize_phase_result(results)
+      end
+
+      def timed_phase_result(phase)
+        started_at = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+        result = yield
+        annotate_phase_result(result, status: phase_status(result), started_at: started_at)
+      rescue StandardError => e
+        handle_exception(e, level: :warn, operation: 'gaia.phase_wiring.phase_handler', phase: phase)
+        annotate_phase_result({ error: e.class.name, message: e.message }, status: :failed, started_at: started_at)
+      end
+
+      def annotate_phase_result(result, status:, started_at:)
+        elapsed_ms = ((Process.clock_gettime(Process::CLOCK_MONOTONIC) - started_at) * 1000.0).round(3)
+        payload = result.is_a?(Hash) ? result.dup : { value: result }
+        payload[:status] ||= status
+        payload[:elapsed_ms] ||= elapsed_ms
+        payload
+      end
+
+      def phase_status(result)
+        return result[:status] if result.is_a?(Hash) && result[:status]
+        return :skipped if result.is_a?(Hash) && result[:skip]
+        return :skipped if result.is_a?(Hash) && result[:skipped]
+
+        :completed
       end
 
       def phase_handler_context(state:, signals:, normalized_results:, prior_results:, context:)
