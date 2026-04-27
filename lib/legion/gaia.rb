@@ -58,6 +58,8 @@ module Legion
 
       def boot(mode: nil)
         @mode = mode || (settings&.dig(:router, :mode) ? :router : :agent)
+        @shutting_down = false
+        @active_heartbeats = 0
         log.info("Legion::Gaia booting mode=#{@mode}")
 
         if router_mode?
@@ -83,8 +85,13 @@ module Legion
       def shutdown
         log.info('Legion::Gaia shutting down')
 
-        @started = false
-        @tick_unavailable_warned = false
+        heartbeat_mutex.synchronize do
+          @shutting_down = true
+          @started = false
+          @tick_unavailable_warned = false
+          heartbeat_condition.wait(heartbeat_mutex) while @active_heartbeats.to_i.positive?
+        end
+
         settings_hash = settings
         settings_hash[:connected] = false if settings_hash
 
@@ -110,12 +117,17 @@ module Legion
         @tick_history = nil
         @tick_count = nil
         @started_at = nil
+        @active_heartbeats = 0
 
         log.info('Legion::Gaia shut down')
       end
 
       def started?
         @started == true
+      end
+
+      def shutting_down?
+        heartbeat_mutex.synchronize { @shutting_down == true }
       end
 
       def settings
@@ -127,55 +139,59 @@ module Legion
       end
 
       def heartbeat(**)
-        return { error: :not_started } unless started?
+        return { error: :not_started } unless begin_heartbeat
 
-        signals = @sensory_buffer.drain
-        @registry.ensure_wired
+        begin
+          signals = @sensory_buffer.drain
+          @registry.ensure_wired
 
-        tick_host = @registry.tick_host
-        unless tick_host
-          unless @tick_unavailable_warned
-            log.warn('[gaia] lex-tick not available, will retry next heartbeat')
-            @tick_unavailable_warned = true
+          tick_host = @registry.tick_host
+          unless tick_host
+            unless @tick_unavailable_warned
+              log.warn('[gaia] lex-tick not available, will retry next heartbeat')
+              @tick_unavailable_warned = true
+            end
+            return { error: :no_tick_extension }
           end
-          return { error: :no_tick_extension }
+          @tick_unavailable_warned = false if @tick_unavailable_warned
+
+          phase_handlers = quiescing_phase_handlers(@registry.phase_handlers)
+
+          log.debug("[gaia] heartbeat signals=#{signals.size} wired_phases=#{phase_handlers.size}")
+
+          observations = @partner_observations.dup
+          @partner_observations = []
+
+          result = tick_host.execute_tick(signals: signals, phase_handlers: phase_handlers,
+                                          partner_observations: observations)
+
+          @tick_history&.record(result)
+          @tick_count = (@tick_count || 0) + 1
+
+          if result.is_a?(Hash) && result[:results]
+            valence_result = result[:results][:emotional_evaluation]
+            @last_valences = [valence_result[:valence]] if valence_result.is_a?(Hash) && valence_result[:valence]
+            tick_host.last_tick_result = result
+            PhaseWiring.capture_tick_results(result[:results])
+            log_cognitive_markers(result, signals: signals, observations: observations)
+          end
+
+          check_partner_absence(observations, phase_handlers)
+
+          feed_notification_gate(result)
+          @output_router&.process_delayed
+
+          maybe_flush_trackers
+
+          if result.is_a?(Hash) && result[:results]
+            process_dream_proactive(result[:results])
+            try_dispatch_pending
+          end
+
+          result
+        ensure
+          finish_heartbeat
         end
-        @tick_unavailable_warned = false if @tick_unavailable_warned
-
-        phase_handlers = @registry.phase_handlers
-
-        log.debug("[gaia] heartbeat signals=#{signals.size} wired_phases=#{phase_handlers.size}")
-
-        observations = @partner_observations.dup
-        @partner_observations = []
-
-        result = tick_host.execute_tick(signals: signals, phase_handlers: phase_handlers,
-                                        partner_observations: observations)
-
-        @tick_history&.record(result)
-        @tick_count = (@tick_count || 0) + 1
-
-        if result.is_a?(Hash) && result[:results]
-          valence_result = result[:results][:emotional_evaluation]
-          @last_valences = [valence_result[:valence]] if valence_result.is_a?(Hash) && valence_result[:valence]
-          tick_host.last_tick_result = result
-          PhaseWiring.capture_tick_results(result[:results])
-          log_cognitive_markers(result, signals: signals, observations: observations)
-        end
-
-        check_partner_absence(observations, phase_handlers)
-
-        feed_notification_gate(result)
-        @output_router&.process_delayed
-
-        maybe_flush_trackers
-
-        if result.is_a?(Hash) && result[:results]
-          process_dream_proactive(result[:results])
-          try_dispatch_pending
-        end
-
-        result
       end
 
       def ingest(input_frame)
@@ -240,6 +256,46 @@ module Legion
       end
 
       private
+
+      def heartbeat_mutex
+        @heartbeat_mutex ||= Mutex.new
+      end
+
+      def heartbeat_condition
+        @heartbeat_condition ||= ConditionVariable.new
+      end
+
+      def begin_heartbeat
+        heartbeat_mutex.synchronize do
+          return false unless @started == true && @shutting_down != true
+
+          @active_heartbeats = (@active_heartbeats || 0) + 1
+          true
+        end
+      end
+
+      def finish_heartbeat
+        heartbeat_mutex.synchronize do
+          @active_heartbeats = [@active_heartbeats.to_i - 1, 0].max
+          heartbeat_condition.broadcast if @active_heartbeats.zero?
+        end
+      end
+
+      def quiescing_phase_handlers(phase_handlers)
+        return phase_handlers unless phase_handlers.is_a?(Hash)
+
+        phase_handlers.transform_values do |handler|
+          next handler unless handler.respond_to?(:call)
+
+          lambda do |*args, **kwargs, &block|
+            if shutting_down?
+              { skipped: true, reason: :gaia_shutting_down }
+            else
+              handler.call(*args, **kwargs, &block)
+            end
+          end
+        end
+      end
 
       def register_routes
         return unless defined?(Legion::API) && Legion::API.respond_to?(:register_library_routes)

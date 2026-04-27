@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require 'timeout'
+
 RSpec.describe Legion::Gaia do
   before do
     stub_const('Legion::Logging', logging_stub)
@@ -79,6 +81,44 @@ RSpec.describe Legion::Gaia do
       expect(described_class.sensory_buffer).to be_nil
       expect(described_class.registry).to be_nil
     end
+
+    it 'waits for an in-flight heartbeat before reporting shutdown complete' do
+      described_class.boot
+      registry = described_class.registry
+      tick_host = instance_double('TickHost')
+      heartbeat_entered = Queue.new
+      release_heartbeat = Queue.new
+      shutdown_completed = Queue.new
+
+      allow(registry).to receive(:tick_host).and_return(tick_host)
+      allow(registry).to receive(:phase_handlers).and_return({})
+      allow(tick_host).to receive(:execute_tick) do
+        heartbeat_entered << true
+        release_heartbeat.pop
+        { results: {} }
+      end
+      allow(tick_host).to receive(:last_tick_result=)
+
+      heartbeat_thread = Thread.new { described_class.heartbeat }
+      Timeout.timeout(2) { heartbeat_entered.pop }
+
+      shutdown_thread = Thread.new do
+        described_class.shutdown
+        shutdown_completed << true
+      end
+
+      Timeout.timeout(2) { sleep 0.01 until described_class.shutting_down? }
+      expect(shutdown_completed.empty?).to be true
+
+      release_heartbeat << true
+      heartbeat_thread.join
+      shutdown_thread.join
+      expect(shutdown_completed.empty?).to be false
+    ensure
+      release_heartbeat << true if defined?(release_heartbeat)
+      heartbeat_thread&.join(1)
+      shutdown_thread&.join(1)
+    end
   end
 
   describe '.heartbeat' do
@@ -135,6 +175,90 @@ RSpec.describe Legion::Gaia do
         expect(logger).to receive(:warn).with(msg).once
         described_class.heartbeat
       end
+    end
+
+    it 'does not start a new heartbeat after shutdown begins' do
+      described_class.boot
+      registry = described_class.registry
+      tick_host = instance_double('TickHost')
+      heartbeat_entered = Queue.new
+      release_heartbeat = Queue.new
+      execute_count = 0
+      execute_count_mutex = Mutex.new
+
+      allow(registry).to receive(:tick_host).and_return(tick_host)
+      allow(registry).to receive(:phase_handlers).and_return({})
+      allow(tick_host).to receive(:execute_tick) do
+        count = execute_count_mutex.synchronize do
+          execute_count += 1
+        end
+        if count == 1
+          heartbeat_entered << true
+          release_heartbeat.pop
+        end
+        { results: {} }
+      end
+      allow(tick_host).to receive(:last_tick_result=)
+
+      heartbeat_thread = Thread.new { described_class.heartbeat }
+      Timeout.timeout(2) { heartbeat_entered.pop }
+      shutdown_thread = Thread.new { described_class.shutdown }
+      Timeout.timeout(2) { sleep 0.01 until described_class.shutting_down? }
+
+      expect(described_class.heartbeat).to eq({ error: :not_started })
+
+      release_heartbeat << true
+      heartbeat_thread.join
+      shutdown_thread.join
+      expect(execute_count).to eq(1)
+    ensure
+      release_heartbeat << true if defined?(release_heartbeat)
+      heartbeat_thread&.join(1)
+      shutdown_thread&.join(1)
+    end
+
+    it 'does not invoke phase handlers after shutdown starts' do
+      described_class.boot
+      registry = described_class.registry
+      tick_host = instance_double('TickHost')
+      heartbeat_entered = Queue.new
+      release_phase_call = Queue.new
+      phase_invoked = false
+
+      phase_handler = lambda do |**|
+        phase_invoked = true
+        { invoked: true }
+      end
+
+      allow(registry).to receive(:tick_host).and_return(tick_host)
+      allow(registry).to receive(:phase_handlers).and_return({ prediction_engine: phase_handler })
+      allow(tick_host).to receive(:execute_tick) do |phase_handlers:, **|
+        heartbeat_entered << true
+        release_phase_call.pop
+        phase_result = phase_handlers[:prediction_engine].call(
+          state: {},
+          signals: [],
+          prior_results: {},
+          context: {}
+        )
+        { results: { prediction_engine: phase_result } }
+      end
+      allow(tick_host).to receive(:last_tick_result=)
+
+      heartbeat_thread = Thread.new { described_class.heartbeat }
+      Timeout.timeout(2) { heartbeat_entered.pop }
+      shutdown_thread = Thread.new { described_class.shutdown }
+      Timeout.timeout(2) { sleep 0.01 until described_class.shutting_down? }
+
+      release_phase_call << true
+      heartbeat_thread.join
+      shutdown_thread.join
+
+      expect(phase_invoked).to be false
+    ensure
+      release_phase_call << true if defined?(release_phase_call)
+      heartbeat_thread&.join(1)
+      shutdown_thread&.join(1)
     end
   end
 

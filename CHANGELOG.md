@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [0.9.49] - 2026-04-27
+
+### Fixed
+- Quiesce GAIA heartbeat execution during shutdown so new heartbeats cannot start once shutdown begins, shutdown waits for active heartbeat work to finish, and phase handlers are skipped after shutdown starts.
+
 ## [0.9.48] - 2026-04-23
 
 ### Fixed
