@@ -5,11 +5,18 @@ require 'json'
 RSpec.describe Legion::Gaia::Channels::Teams::BotFrameworkAuth do
   let(:app_id) { 'test-app-id-12345' }
   let(:now) { Time.now.to_i }
+  let(:rsa_key) { OpenSSL::PKey::RSA.generate(2048) }
 
-  def build_jwt(header_hash, payload_hash)
+  def build_jwt(header_hash, payload_hash, key: nil)
     h = Base64.urlsafe_encode64(JSON.dump(header_hash), padding: false)
     p = Base64.urlsafe_encode64(JSON.dump(payload_hash), padding: false)
-    "#{h}.#{p}.fake-signature"
+    signature = if key
+                  key.sign(OpenSSL::Digest.new('SHA256'), "#{h}.#{p}")
+                else
+                  'fake-signature'
+                end
+    s = Base64.urlsafe_encode64(signature, padding: false)
+    "#{h}.#{p}.#{s}"
   end
 
   describe '.validate_token' do
@@ -34,7 +41,7 @@ RSpec.describe Legion::Gaia::Channels::Teams::BotFrameworkAuth do
     end
 
     context 'with valid JWT structure' do
-      let(:header) { { alg: 'RS256', typ: 'JWT' } }
+      let(:header) { { alg: 'RS256', typ: 'JWT', kid: 'key-1' } }
       let(:valid_payload) do
         {
           'iss' => 'https://api.botframework.com',
@@ -47,8 +54,12 @@ RSpec.describe Legion::Gaia::Channels::Teams::BotFrameworkAuth do
         }
       end
 
+      before do
+        allow(described_class).to receive(:public_key_for).and_return(rsa_key.public_key)
+      end
+
       it 'returns valid with correct claims' do
-        token = build_jwt(header, valid_payload)
+        token = build_jwt(header, valid_payload, key: rsa_key)
         result = described_class.validate_token(token, app_id: app_id)
         expect(result[:valid]).to be true
         expect(result[:entra_oid]).to eq('user-oid-123')
@@ -58,9 +69,15 @@ RSpec.describe Legion::Gaia::Channels::Teams::BotFrameworkAuth do
 
       it 'returns azp when appid is absent' do
         payload = valid_payload.merge('appid' => nil, 'azp' => 'azp-id')
-        token = build_jwt(header, payload)
+        token = build_jwt(header, payload, key: rsa_key)
         result = described_class.validate_token(token, app_id: app_id)
         expect(result[:app_id]).to eq('azp-id')
+      end
+
+      it 'rejects forged signatures' do
+        token = build_jwt(header, valid_payload)
+        result = described_class.validate_token(token, app_id: app_id)
+        expect(result).to eq({ valid: false, error: :invalid_signature })
       end
 
       it 'rejects expired tokens' do
@@ -93,7 +110,7 @@ RSpec.describe Legion::Gaia::Channels::Teams::BotFrameworkAuth do
 
       it 'accepts emulator issuer when allowed' do
         payload = valid_payload.merge('iss' => 'https://sts.windows.net/d6d49420-f39b-4df7-a1dc-d59a935871db/')
-        token = build_jwt(header, payload)
+        token = build_jwt(header, payload, key: rsa_key)
         result = described_class.validate_token(token, app_id: app_id, allow_emulator: true)
         expect(result[:valid]).to be true
       end

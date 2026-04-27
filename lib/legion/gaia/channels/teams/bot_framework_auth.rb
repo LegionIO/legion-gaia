@@ -4,6 +4,7 @@ require 'net/http'
 require 'uri'
 require 'openssl'
 require 'base64'
+require 'json'
 require 'legion/logging/helper'
 
 module Legion
@@ -33,6 +34,8 @@ module Legion
 
             validation = validate_claims(payload, app_id: app_id, allow_emulator: allow_emulator)
             return validation unless validation[:valid]
+
+            return { valid: false, error: :invalid_signature } unless signature_valid?(header, parts)
 
             {
               valid: true,
@@ -64,13 +67,64 @@ module Legion
           end
 
           def decode_jwt_segment(segment)
-            remainder = segment.length % 4
-            padded = remainder.zero? ? segment : segment + ('=' * (4 - remainder))
-            decoded = Base64.urlsafe_decode64(padded)
+            decoded = decode_base64url(segment)
             ::JSON.parse(decoded)
           rescue StandardError => e
             handle_exception(e, level: :debug, operation: 'gaia.channels.teams.bot_framework_auth.decode_jwt_segment')
             nil
+          end
+
+          def signature_valid?(header, parts)
+            return false unless header['alg'] == 'RS256'
+
+            public_key = public_key_for(header)
+            return false unless public_key
+
+            signature = decode_base64url(parts[2])
+            signing_input = parts[0, 2].join('.')
+            public_key.verify(OpenSSL::Digest.new('SHA256'), signature, signing_input)
+          rescue StandardError => e
+            handle_exception(e, level: :debug, operation: 'gaia.channels.teams.bot_framework_auth.signature_valid')
+            false
+          end
+
+          def public_key_for(header)
+            kid = header['kid']
+            return nil if kid.to_s.empty?
+
+            key = jwks_keys.find { |candidate| candidate['kid'] == kid }
+            return nil unless key
+
+            certificate = Array(key['x5c']).first
+            return nil unless certificate
+
+            OpenSSL::X509::Certificate.new(Base64.decode64(certificate)).public_key
+          end
+
+          def jwks_keys
+            now = Time.now.to_i
+            cache = @jwks_cache
+            return cache[:keys] if cache && cache[:expires_at] > now
+
+            metadata = fetch_json(OPENID_METADATA_URL)
+            jwks_uri = metadata['jwks_uri']
+            keys = fetch_json(jwks_uri).fetch('keys', [])
+            @jwks_cache = { keys: keys, expires_at: now + JWKS_CACHE_TTL }
+            keys
+          end
+
+          def fetch_json(url)
+            uri = URI(url)
+            response = Net::HTTP.get_response(uri)
+            raise "HTTP #{response.code}" unless response.is_a?(Net::HTTPSuccess)
+
+            ::JSON.parse(response.body)
+          end
+
+          def decode_base64url(segment)
+            remainder = segment.length % 4
+            padded = remainder.zero? ? segment : segment + ('=' * (4 - remainder))
+            Base64.urlsafe_decode64(padded)
           end
 
           def token_time_valid?(payload)

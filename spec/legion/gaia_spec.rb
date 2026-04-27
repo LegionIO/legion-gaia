@@ -461,6 +461,7 @@ RSpec.describe Legion::Gaia do
       expect(status).to have_key(:extensions_loaded)
       expect(status).to have_key(:wired_phases)
       expect(status).to have_key(:buffer_depth)
+      expect(status[:notification_gate]).to include(:schedule, :presence, :behavioral)
     end
   end
 

@@ -116,6 +116,22 @@ RSpec.describe Legion::Gaia::NotificationGate do
     end
   end
 
+  describe '#status' do
+    subject(:gate) { described_class.new }
+
+    it 'returns schedule, presence, and behavioral gate state for /api/gaia/status' do
+      allow(gate.schedule_evaluator).to receive(:quiet?).and_return(false)
+      gate.update_presence(availability: 'Away')
+      gate.update_behavioral(arousal: 0.4)
+
+      expect(gate.status).to eq({
+                                  schedule: true,
+                                  presence: 'Away',
+                                  behavioral: 0.4
+                                })
+    end
+  end
+
   describe 'when enabled: false' do
     subject(:gate) { described_class.new(settings: { notifications: { enabled: false } }) }
 

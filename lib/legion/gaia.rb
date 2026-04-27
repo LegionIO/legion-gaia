@@ -396,10 +396,20 @@ module Legion
             active_count: @session_store&.size || 0,
             ttl: ttl
           },
+          notification_gate: notification_gate_status,
           uptime_seconds: @started_at ? (Time.now.utc - @started_at).to_i : nil
         }
         status.merge!(registry_status) unless router_mode?
         status
+      end
+
+      def notification_gate_status
+        return { schedule: nil, presence: nil, behavioral: nil } unless @notification_gate.respond_to?(:status)
+
+        @notification_gate.status
+      rescue StandardError => e
+        handle_exception(e, level: :debug, operation: 'gaia.notification_gate_status')
+        { schedule: nil, presence: nil, behavioral: nil }
       end
 
       def tick_mode_from_host

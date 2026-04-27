@@ -19,7 +19,9 @@ module Legion
             activity = parse_activity(request_body)
             return error_response(:invalid_payload, 'Could not parse activity') unless activity
 
-            if adapter.app_id && auth_header
+            if adapter.app_id
+              return error_response(:missing_auth, 'Authorization header is required') if auth_header.to_s.empty?
+
               token = extract_bearer_token(auth_header)
               validation = adapter.validate_inbound(token)
               return error_response(:auth_failed, validation[:error]) unless validation[:valid]
