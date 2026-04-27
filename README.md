@@ -1,18 +1,19 @@
 # Legion::Gaia
 
-GAIA is the cognitive coordination layer for LegionIO. It owns the heartbeat loop, phase wiring, sensory buffer, channel adapters, notification gate, and router bridge that let agentic extensions behave like one coherent runtime.
+GAIA is the cognitive coordination layer for LegionIO. It turns channel input, extension runners, memory, notification policy, and router transport into one continuously ticking agent runtime.
 
 **Version:** 0.9.50
 
 ## What GAIA Does
 
-- Boots the cognitive runtime and discovers available agentic extensions.
-- Drains inbound channel signals into a bounded sensory buffer.
-- Runs the active tick and dream-cycle phase pipeline through `lex-tick`.
-- Normalizes phase results for status, timing, logging, and API observability.
-- Routes responses through CLI, Microsoft Teams, Slack, or a central router.
+- Boots the cognitive runtime, discovers available agentic extensions, and wires phase handlers.
+- Drains inbound CLI, Microsoft Teams, Slack, and API input into a bounded sensory buffer.
+- Runs active tick and dream-cycle phase pipelines through `lex-tick`.
+- Normalizes phase results with stable `status` and `elapsed_ms` metadata for UI and logs.
+- Routes responses locally or through a hub-and-spoke GAIA router.
 - Applies schedule, presence, and behavioral notification gates before delivery.
-- Tracks sessions, partner observations, tick history, and lightweight status for Interlink.
+- Tracks sessions, partner observations, tick history, and status for Interlink.
+- Quiesces cleanly during shutdown so late heartbeat work does not write into closed services.
 
 ## Runtime Shape
 
@@ -44,7 +45,7 @@ Those fields feed `/api/gaia/ticks` for operator-facing tick stream observabilit
 gem 'legion-gaia'
 ```
 
-`legion-gaia` depends on the core LegionIO libraries plus the agentic extension set used by the cognitive pipeline, including `lex-tick`, `legion-apollo`, and the consolidated `lex-agentic-*` gems.
+`legion-gaia` depends on the core LegionIO libraries plus the agentic extension set used by the cognitive pipeline, including `lex-tick`, `legion-apollo`, and the consolidated `lex-agentic-*` gems. Channel-specific delivery depends on the matching extension, such as `lex-microsoft_teams` or `lex-slack`.
 
 ## Basic Usage
 
@@ -74,6 +75,7 @@ GAIA reads `Legion::Settings[:gaia]` when available and falls back to `Legion::G
 gaia:
   enabled: true
   heartbeat_interval: 1
+  connected: false
   shutdown:
     heartbeat_wait_timeout: 30.0
     heartbeat_wait_log_interval: 5.0
@@ -105,7 +107,18 @@ gaia:
   session:
     persistence: auto
     ttl: 86400
+  output:
+    mobile_max_length: 500
+    suggest_channel_switch: true
+  knowledge:
+    retrieval_limit: 5
+    retrieval_min_confidence: 0.3
+    memory_retrieval_limit: 10
+    memory_audit_limit: 20
+    memory_skip_threshold: 0.8
 ```
+
+`connected` is managed by GAIA at boot and shutdown. Set `router.mode` to true on private agent processes that should publish through a central router; boot the public router with `Legion::Gaia.boot(mode: :router)`.
 
 ## Cognitive Phases
 
@@ -115,7 +128,7 @@ GAIA wires two phase groups.
 
 **Dream cycle:** memory audit, association walk, contradiction resolution, agenda formation, curiosity execution, consolidation commit, knowledge promotion, dream reflection, partner reflection, dream narration, dream cycle, creativity tick, lucid dream, epistemic vigilance, predictive processing, free energy, metacognition, default mode network, prospective memory, inner speech, and global workspace.
 
-Phase handlers may skip expensive work when idle. Skipped phases still produce status and timing metadata so the tick stream remains complete.
+Phase handlers may skip expensive work when idle or while GAIA is shutting down. Skipped phases still produce status and timing metadata so the tick stream remains complete.
 
 ## HTTP API
 
@@ -168,7 +181,18 @@ Returns recent phase events:
 
 ### `POST /api/channels/teams/webhook`
 
-Accepts Microsoft Teams Bot Framework activities. When a Teams `app_id` is configured, requests must include a bearer token. GAIA validates the JWT claims and verifies the signature against Bot Framework signing keys before translating and ingesting the activity.
+Accepts Microsoft Teams Bot Framework activities. The route delegates to `Legion::Gaia::Channels::Teams::WebhookHandler`, then ingests translated message activities through `Legion::Gaia.ingest`.
+
+When a Teams `app_id` is configured, requests must include a bearer token. GAIA validates JWT claims and verifies the signature against Bot Framework signing keys before translating or ingesting the activity. Missing or invalid authorization returns `401`.
+
+Non-message Teams activities are intentionally acknowledged without entering cognition:
+
+| Activity | Behavior |
+| --- | --- |
+| `message` | Translated to an `InputFrame` and ingested. |
+| `conversationUpdate` | Stored for proactive delivery and acknowledged. |
+| `invoke` | Acknowledged for Bot Framework compatibility. |
+| Other activity types | Acknowledged and ignored. |
 
 ### `POST /api/gaia/ingest`
 
@@ -182,7 +206,7 @@ Pushes a normalized content payload into the sensory buffer without going throug
 | Teams | Bot Framework activity ingestion and proactive delivery | Validates bearer tokens when `app_id` is set. |
 | Slack | Slack-style rich text and threaded delivery | Uses the shared channel abstraction. |
 
-Adapters translate format only. Cognitive interpretation happens downstream in the tick pipeline.
+Adapters translate format and delivery semantics only. Cognitive interpretation happens downstream in the tick pipeline.
 
 ## Notification Gate
 
@@ -196,7 +220,7 @@ Urgent or critical frames can bypass quiet-hour delays through `priority_overrid
 
 ## Router Mode
 
-GAIA supports hub-and-spoke deployments where a public router relays traffic to private agents over Legion transport.
+GAIA supports hub-and-spoke deployments where a public router relays traffic to private agents over Legion transport. This keeps channel-facing ingress on the public side while private agents do the cognitive work.
 
 ```ruby
 # Public router process
@@ -214,7 +238,24 @@ Bot Framework -> GAIA router -> Legion transport -> GAIA agent -> Legion transpo
 
 ## Shutdown Semantics
 
-`Legion::Gaia.shutdown` marks the runtime as quiescing before tearing down components. New heartbeats are blocked, active heartbeat work is allowed to finish, and phase handlers skip once shutdown begins. `shutdown.heartbeat_wait_timeout` bounds how long shutdown waits for in-flight heartbeat work before logging a warning and continuing; `shutdown.heartbeat_wait_log_interval` controls wait-progress logs.
+`Legion::Gaia.shutdown` marks the runtime as quiescing before tearing down components:
+
+1. New heartbeats are blocked.
+2. Active heartbeat work is allowed to drain.
+3. Phase handlers return `{ status: :skipped, reason: :gaia_shutting_down }` once shutdown starts.
+4. Trackers and channel/router bridges are flushed or stopped.
+5. Runtime references are cleared.
+
+`shutdown.heartbeat_wait_timeout` bounds how long shutdown waits for in-flight heartbeat work before logging a warning and continuing. `shutdown.heartbeat_wait_log_interval` controls wait-progress logs.
+
+This prevents routine shutdown from producing late writes to closed data/logging resources while still avoiding an indefinite process hang if a heartbeat blocks inside extension work.
+
+## Operational Notes
+
+- `/api/gaia/status` is the lightweight liveness/status surface used by Interlink.
+- `/api/gaia/ticks` is the phase-observability stream; every event should have a non-null `duration_ms` and `status`.
+- Teams webhook auth is enforced only when `channels.teams.app_id` is configured, which preserves local/dev usage while protecting configured bots.
+- Built gem artifacts are not tracked in this repo. Build artifacts belong in release output, not source control.
 
 ## Development
 
