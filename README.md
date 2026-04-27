@@ -74,6 +74,9 @@ GAIA reads `Legion::Settings[:gaia]` when available and falls back to `Legion::G
 gaia:
   enabled: true
   heartbeat_interval: 1
+  shutdown:
+    heartbeat_wait_timeout: 30.0
+    heartbeat_wait_log_interval: 5.0
   channels:
     cli:
       enabled: true
@@ -211,7 +214,7 @@ Bot Framework -> GAIA router -> Legion transport -> GAIA agent -> Legion transpo
 
 ## Shutdown Semantics
 
-`Legion::Gaia.shutdown` marks the runtime as quiescing before tearing down components. New heartbeats are blocked, active heartbeat work is allowed to finish, and phase handlers skip once shutdown begins. This prevents late shutdown work from writing to closed data/logging resources.
+`Legion::Gaia.shutdown` marks the runtime as quiescing before tearing down components. New heartbeats are blocked, active heartbeat work is allowed to finish, and phase handlers skip once shutdown begins. `shutdown.heartbeat_wait_timeout` bounds how long shutdown waits for in-flight heartbeat work before logging a warning and continuing; `shutdown.heartbeat_wait_log_interval` controls wait-progress logs.
 
 ## Development
 

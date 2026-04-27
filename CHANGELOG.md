@@ -7,11 +7,13 @@
 ### Added
 - Expose `notification_gate` state in `Legion::Gaia.status` so Interlink can render schedule, presence, and behavioral gate values.
 - Add phase-level `elapsed_ms` and stable status annotations (`completed`, `skipped`, `failed`) to GAIA phase handlers, with UI-safe defaults in tick history.
+- Add configurable shutdown heartbeat wait timeout and progress logging.
 
 ### Fixed
 - Require Teams webhook requests to pass through `WebhookHandler` authentication from the API route and reject missing authorization headers when a Teams app ID is configured.
 - Verify Bot Framework JWT signatures against the published signing keys instead of accepting unsigned or forged claim payloads.
 - Enforce router worker allowlists on DB-backed worker resolution.
+- Return status-shaped skipped phase results during shutdown and reuse quiescing phase wrappers across heartbeats.
 
 ### Removed
 - Remove the tracked `legion-gaia-0.9.10.gem` build artifact from the repository.

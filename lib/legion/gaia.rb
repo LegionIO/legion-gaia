@@ -60,6 +60,7 @@ module Legion
         @mode = mode || (settings&.dig(:router, :mode) ? :router : :agent)
         @shutting_down = false
         @active_heartbeats = 0
+        @quiescing_phase_handlers_cache = nil
         log.info("Legion::Gaia booting mode=#{@mode}")
 
         if router_mode?
@@ -89,7 +90,7 @@ module Legion
           @shutting_down = true
           @started = false
           @tick_unavailable_warned = false
-          heartbeat_condition.wait(heartbeat_mutex) while @active_heartbeats.to_i.positive?
+          wait_for_active_heartbeats
         end
 
         settings_hash = settings
@@ -118,6 +119,7 @@ module Legion
         @tick_count = nil
         @started_at = nil
         @active_heartbeats = 0
+        @quiescing_phase_handlers_cache = nil
 
         log.info('Legion::Gaia shut down')
       end
@@ -281,20 +283,66 @@ module Legion
         end
       end
 
+      def wait_for_active_heartbeats
+        deadline = Time.now + shutdown_heartbeat_wait_timeout
+        next_log_at = Time.now
+
+        while @active_heartbeats.to_i.positive?
+          now = Time.now
+          break if now >= deadline
+
+          if now >= next_log_at
+            log.info("Legion::Gaia waiting for active heartbeats count=#{@active_heartbeats}")
+            next_log_at = now + shutdown_heartbeat_wait_log_interval
+          end
+
+          heartbeat_condition.wait(heartbeat_mutex, [deadline - now, 0.1].min)
+        end
+
+        return unless @active_heartbeats.to_i.positive?
+
+        log.warn(
+          'Legion::Gaia shutdown heartbeat wait timed out ' \
+          "active_heartbeats=#{@active_heartbeats} timeout_s=#{shutdown_heartbeat_wait_timeout}"
+        )
+      end
+
+      def shutdown_heartbeat_wait_timeout
+        configured_positive_float(settings&.dig(:shutdown, :heartbeat_wait_timeout), 30.0)
+      end
+
+      def shutdown_heartbeat_wait_log_interval
+        configured_positive_float(settings&.dig(:shutdown, :heartbeat_wait_log_interval), 5.0)
+      end
+
+      def configured_positive_float(value, fallback)
+        numeric = value.to_f
+        numeric.positive? ? numeric : fallback
+      end
+
       def quiescing_phase_handlers(phase_handlers)
         return phase_handlers unless phase_handlers.is_a?(Hash)
+        return @quiescing_phase_handlers_cache[:wrapped] if cached_quiescing_handlers?(phase_handlers)
 
-        phase_handlers.transform_values do |handler|
+        wrapped = phase_handlers.transform_values do |handler|
           next handler unless handler.respond_to?(:call)
 
           lambda do |*args, **kwargs, &block|
             if shutting_down?
-              { skipped: true, reason: :gaia_shutting_down }
+              { status: :skipped, reason: :gaia_shutting_down }
             else
               handler.call(*args, **kwargs, &block)
             end
           end
         end
+
+        @quiescing_phase_handlers_cache = { source: phase_handlers, wrapped: wrapped }
+        wrapped
+      end
+
+      def cached_quiescing_handlers?(phase_handlers)
+        cache = @quiescing_phase_handlers_cache
+        cache.is_a?(Hash) && cache[:source].equal?(phase_handlers)
       end
 
       def register_routes

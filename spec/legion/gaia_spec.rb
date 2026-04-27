@@ -83,6 +83,9 @@ RSpec.describe Legion::Gaia do
     end
 
     it 'waits for an in-flight heartbeat before reporting shutdown complete' do
+      heartbeat_thread = nil
+      release_heartbeat = nil
+      shutdown_thread = nil
       described_class.boot
       registry = described_class.registry
       tick_host = instance_double('TickHost')
@@ -115,9 +118,38 @@ RSpec.describe Legion::Gaia do
       shutdown_thread.join
       expect(shutdown_completed.empty?).to be false
     ensure
-      release_heartbeat << true if defined?(release_heartbeat)
+      release_heartbeat << true if release_heartbeat
       heartbeat_thread&.join(1)
       shutdown_thread&.join(1)
+    end
+
+    it 'continues shutdown after the heartbeat wait timeout expires' do
+      heartbeat_thread = nil
+      described_class.boot
+      registry = described_class.registry
+      tick_host = instance_double('TickHost')
+      heartbeat_entered = Queue.new
+      release_heartbeat = Queue.new
+
+      allow(described_class).to receive(:shutdown_heartbeat_wait_timeout).and_return(0.01)
+      allow(described_class).to receive(:shutdown_heartbeat_wait_log_interval).and_return(0.01)
+      allow(registry).to receive(:tick_host).and_return(tick_host)
+      allow(registry).to receive(:phase_handlers).and_return({})
+      allow(tick_host).to receive(:execute_tick) do
+        heartbeat_entered << true
+        release_heartbeat.pop
+        { results: {} }
+      end
+      allow(tick_host).to receive(:last_tick_result=)
+
+      heartbeat_thread = Thread.new { described_class.heartbeat }
+      Timeout.timeout(2) { heartbeat_entered.pop }
+
+      expect { Timeout.timeout(1) { described_class.shutdown } }.not_to raise_error
+      expect(described_class.started?).to be false
+    ensure
+      release_heartbeat << true if release_heartbeat
+      heartbeat_thread&.join(1)
     end
   end
 
@@ -178,6 +210,9 @@ RSpec.describe Legion::Gaia do
     end
 
     it 'does not start a new heartbeat after shutdown begins' do
+      heartbeat_thread = nil
+      release_heartbeat = nil
+      shutdown_thread = nil
       described_class.boot
       registry = described_class.registry
       tick_host = instance_double('TickHost')
@@ -212,12 +247,15 @@ RSpec.describe Legion::Gaia do
       shutdown_thread.join
       expect(execute_count).to eq(1)
     ensure
-      release_heartbeat << true if defined?(release_heartbeat)
+      release_heartbeat << true if release_heartbeat
       heartbeat_thread&.join(1)
       shutdown_thread&.join(1)
     end
 
     it 'does not invoke phase handlers after shutdown starts' do
+      heartbeat_thread = nil
+      release_phase_call = nil
+      shutdown_thread = nil
       described_class.boot
       registry = described_class.registry
       tick_host = instance_double('TickHost')
@@ -256,9 +294,31 @@ RSpec.describe Legion::Gaia do
 
       expect(phase_invoked).to be false
     ensure
-      release_phase_call << true if defined?(release_phase_call)
+      release_phase_call << true if release_phase_call
       heartbeat_thread&.join(1)
       shutdown_thread&.join(1)
+    end
+
+    it 'uses status-shaped skip results for quiescing phase handlers' do
+      described_class.boot
+      handlers = { prediction_engine: ->(**) { { invoked: true } } }
+      wrapped = described_class.send(:quiescing_phase_handlers, handlers)
+
+      described_class.instance_variable_set(:@shutting_down, true)
+
+      expect(wrapped[:prediction_engine].call).to eq({ status: :skipped, reason: :gaia_shutting_down })
+    end
+
+    it 'memoizes quiescing phase wrappers for the active handler map' do
+      described_class.boot
+      handlers = { prediction_engine: ->(**) { { invoked: true } } }
+
+      first = described_class.send(:quiescing_phase_handlers, handlers)
+      second = described_class.send(:quiescing_phase_handlers, handlers)
+      third = described_class.send(:quiescing_phase_handlers, handlers.dup)
+
+      expect(second).to equal(first)
+      expect(third).not_to equal(first)
     end
   end
 
