@@ -450,7 +450,7 @@ module Legion
       end
 
       def timed_phase_result(phase)
-        started_at = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+        started_at = ::Process.clock_gettime(::Process::CLOCK_MONOTONIC)
         result = yield
         annotate_phase_result(result, status: phase_status(result), started_at: started_at)
       rescue StandardError => e
@@ -459,7 +459,7 @@ module Legion
       end
 
       def annotate_phase_result(result, status:, started_at:)
-        elapsed_ms = ((Process.clock_gettime(Process::CLOCK_MONOTONIC) - started_at) * 1000.0).round(3)
+        elapsed_ms = ((::Process.clock_gettime(::Process::CLOCK_MONOTONIC) - started_at) * 1000.0).round(3)
         payload = result.is_a?(Hash) ? result.dup : { value: result }
         payload[:status] ||= status
         payload[:elapsed_ms] ||= elapsed_ms

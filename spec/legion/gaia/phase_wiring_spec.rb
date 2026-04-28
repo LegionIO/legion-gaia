@@ -309,6 +309,23 @@ RSpec.describe Legion::Gaia::PhaseWiring do
       expect(result).to include(status: :failed, error: 'RuntimeError', message: 'phase failure')
       expect(result[:elapsed_ms]).to be_a(Float)
     end
+
+    it 'uses top-level Process for phase timing when Legion::Process exists' do
+      stub_const('Legion::Process', Module.new)
+      test_module = Module.new do
+        def filter_signals(**)
+          { filtered: true }
+        end
+      end
+      host = Legion::Gaia::RunnerHost.new(test_module)
+      instances = { Attention_Attention: host }
+
+      handlers = described_class.build_phase_handlers(instances)
+      result = handlers[:sensory_processing].call(state: {}, signals: [], prior_results: {})
+
+      expect(result).to include(filtered: true, status: :completed)
+      expect(result[:elapsed_ms]).to be_a(Float)
+    end
   end
 
   describe '.collect_valences' do

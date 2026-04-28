@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [0.9.51] - 2026-04-27
+
+### Fixed
+- Qualify GAIA phase timing with top-level `::Process` so phase handlers do not fail when `Legion::Process` exists.
+
 ## [0.9.50] - 2026-04-27
 
 ### Added
