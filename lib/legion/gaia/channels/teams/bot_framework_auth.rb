@@ -102,15 +102,17 @@ module Legion
           end
 
           def jwks_keys
-            now = Time.now.to_i
-            cache = @jwks_cache
-            return cache[:keys] if cache && cache[:expires_at] > now
+            jwks_mutex.synchronize do
+              now = Time.now.to_i
+              cache = @jwks_cache
+              return cache[:keys] if cache && cache[:expires_at] > now
 
-            metadata = fetch_json(OPENID_METADATA_URL)
-            jwks_uri = metadata['jwks_uri']
-            keys = fetch_json(jwks_uri).fetch('keys', [])
-            @jwks_cache = { keys: keys, expires_at: now + JWKS_CACHE_TTL }
-            keys
+              metadata = fetch_json(OPENID_METADATA_URL)
+              jwks_uri = metadata['jwks_uri']
+              keys = fetch_json(jwks_uri).fetch('keys', [])
+              @jwks_cache = { keys: keys, expires_at: now + JWKS_CACHE_TTL }
+              keys
+            end
           end
 
           def fetch_json(url)
@@ -146,11 +148,22 @@ module Legion
             issuer = payload['iss']
             valid_issuers = [BOT_FRAMEWORK_ISSUER]
             valid_issuers << EMULATOR_ISSUER if allow_emulator
-            valid_issuers.any? { |i| issuer&.start_with?(i) || issuer == i }
+            valid_issuers.any? { |valid_issuer| issuer_matches?(issuer, valid_issuer) }
           end
 
           def check_issuer(payload, _allow_emulator)
             { valid: false, error: :invalid_issuer, issuer: payload['iss'] }
+          end
+
+          def issuer_matches?(issuer, valid_issuer)
+            return false if issuer.to_s.empty?
+
+            prefix = valid_issuer.end_with?('/') ? valid_issuer : "#{valid_issuer}/"
+            issuer == valid_issuer || issuer.start_with?(prefix)
+          end
+
+          def jwks_mutex
+            @jwks_mutex ||= Mutex.new
           end
         end
       end

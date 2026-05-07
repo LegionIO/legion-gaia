@@ -2,6 +2,6 @@
 
 module Legion
   module Gaia
-    VERSION = '0.9.51'
+    VERSION = '0.9.52'
   end
 end

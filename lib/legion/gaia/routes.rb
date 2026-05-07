@@ -10,7 +10,7 @@
 module Legion
   module Gaia
     module Routes
-      def self.registered(app)
+      def self.registered(app) # rubocop:disable Metrics/AbcSize, Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity
         app.helpers do # rubocop:disable Metrics/BlockLength
           unless method_defined?(:gaia_available?)
             define_method(:gaia_available?) do
@@ -47,9 +47,9 @@ module Legion
           end
 
           unless method_defined?(:json_error)
-            define_method(:json_error) do |code, message, status_code: 400|
+            define_method(:json_error) do |code, message, status_code: nil|
               content_type :json
-              status status_code
+              status status_code if status_code
               Legion::JSON.dump({ error: { code: code, message: message } })
             end
           end
@@ -76,7 +76,7 @@ module Legion
 
       def self.register_ticks_route(app)
         app.get '/api/gaia/ticks' do
-          halt 503, json_error('gaia_unavailable', 'gaia is not started', status_code: 503) unless gaia_available?
+          halt 503, json_error('gaia_unavailable', 'gaia is not started') unless gaia_available?
 
           max_limit =
             if defined?(Legion::Gaia::TickHistory) && Legion::Gaia::TickHistory.const_defined?(:MAX_ENTRIES)
@@ -93,7 +93,7 @@ module Legion
 
       def self.register_channels_route(app)
         app.get '/api/gaia/channels' do
-          halt 503, json_error('gaia_unavailable', 'gaia is not started', status_code: 503) unless gaia_available?
+          halt 503, json_error('gaia_unavailable', 'gaia is not started') unless gaia_available?
 
           registry = Legion::Gaia.channel_registry
           return json_response({ channels: [] }) unless registry
@@ -109,7 +109,7 @@ module Legion
 
       def self.register_buffer_route(app)
         app.get '/api/gaia/buffer' do
-          halt 503, json_error('gaia_unavailable', 'gaia is not started', status_code: 503) unless gaia_available?
+          halt 503, json_error('gaia_unavailable', 'gaia is not started') unless gaia_available?
 
           buffer = Legion::Gaia.sensory_buffer
           json_response({
@@ -122,7 +122,7 @@ module Legion
 
       def self.register_sessions_route(app)
         app.get '/api/gaia/sessions' do
-          halt 503, json_error('gaia_unavailable', 'gaia is not started', status_code: 503) unless gaia_available?
+          halt 503, json_error('gaia_unavailable', 'gaia is not started') unless gaia_available?
 
           store = Legion::Gaia.session_store
           json_response({
@@ -176,14 +176,14 @@ module Legion
 
       def self.register_ingest_route(app)
         app.post '/api/gaia/ingest' do
-          halt 503, json_error('gaia_unavailable', 'gaia is not started', status_code: 503) unless gaia_available?
+          halt 503, json_error('gaia_unavailable', 'gaia is not started') unless gaia_available?
 
           body = Legion::JSON.load(request.body.read)
           content  = body[:content] || body['content']
           identity = body[:identity] || body['identity'] || 'unknown'
           channel  = (body[:channel_id] || body['channel_id'] || 'cli').to_sym
 
-          halt 400, json_error('missing_content', 'content is required', status_code: 400) if content.to_s.empty?
+          halt 400, json_error('missing_content', 'content is required') if content.to_s.empty?
 
           frame = Legion::Gaia::InputFrame.new(
             content: content,

@@ -23,43 +23,57 @@ module Legion
         @dispatch_log    = []
         @pending_buffer  = []
         @last_ignored_at = nil
+        @mutex           = Mutex.new
       end
 
       def can_dispatch?
-        prune_old_dispatches!
-        return false if @dispatch_log.size >= @max_per_day
-        return false if @dispatch_log.any? && (Time.now.utc - @dispatch_log.last[:at]) < @min_interval
-        return false if @last_ignored_at && (Time.now.utc - @last_ignored_at) < @ignore_cooldown
+        @mutex.synchronize do
+          prune_old_dispatches!
+          return false if @dispatch_log.size >= @max_per_day
+          return false if @dispatch_log.any? && (Time.now.utc - @dispatch_log.last[:at]) < @min_interval
+          return false if @last_ignored_at && (Time.now.utc - @last_ignored_at) < @ignore_cooldown
+        end
 
         true
       end
 
       def record_dispatch!
-        prune_old_dispatches!
-        @dispatch_log << { at: Time.now.utc }
-        log.info("ProactiveDispatcher recorded dispatch count=#{@dispatch_log.size}")
+        count = @mutex.synchronize do
+          prune_old_dispatches!
+          @dispatch_log << { at: Time.now.utc }
+          @dispatch_log.size
+        end
+        log.info("ProactiveDispatcher recorded dispatch count=#{count}")
       end
 
       def record_ignored!
-        @last_ignored_at = Time.now.utc
+        @mutex.synchronize { @last_ignored_at = Time.now.utc }
         log.info('ProactiveDispatcher recorded ignored interaction')
       end
 
       def dispatches_today
-        prune_old_dispatches!
-        @dispatch_log.size
+        @mutex.synchronize do
+          prune_old_dispatches!
+          @dispatch_log.size
+        end
       end
 
       def queue_intent(intent)
-        @pending_buffer << intent
-        @pending_buffer.shift while @pending_buffer.size > MAX_PENDING
+        pending = @mutex.synchronize do
+          @pending_buffer << intent
+          @pending_buffer.shift while @pending_buffer.size > MAX_PENDING
+          @pending_buffer.size
+        end
         log.info("ProactiveDispatcher queued intent reason=#{intent.dig(:trigger,
-                                                                        :reason)} pending=#{@pending_buffer.size}")
+                                                                        :reason)} pending=#{pending}")
       end
 
       def drain_pending
-        drained = @pending_buffer.dup
-        @pending_buffer.clear
+        drained = @mutex.synchronize do
+          copy = @pending_buffer.dup
+          @pending_buffer.clear
+          copy
+        end
         log.info("ProactiveDispatcher drained pending count=#{drained.size}") if drained.any?
         drained
       end

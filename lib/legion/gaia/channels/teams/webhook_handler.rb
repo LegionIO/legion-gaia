@@ -91,7 +91,8 @@ module Legion
           end
 
           def error_response(type, detail)
-            { status: 401, type: type, detail: detail }
+            status = %i[missing_auth auth_failed].include?(type) ? 401 : 400
+            { status: status, type: type, detail: detail }
           end
         end
       end

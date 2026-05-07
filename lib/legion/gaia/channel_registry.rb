@@ -5,12 +5,14 @@ module Legion
     class ChannelRegistry
       def initialize
         @adapters = {}
+        @deliver_signature_cache = {}
         @mutex = Mutex.new
       end
 
       def register(adapter)
         @mutex.synchronize do
           @adapters[adapter.channel_id] = adapter
+          @deliver_signature_cache.delete(adapter.class)
         end
       end
 
@@ -46,7 +48,8 @@ module Legion
         end
 
         rendered = adapter.translate_outbound(output_frame)
-        normalize_delivery_result(adapter.deliver(rendered), channel_id: output_frame.channel_id)
+        normalize_delivery_result(deliver_to_adapter(adapter, rendered, output_frame),
+                                  channel_id: output_frame.channel_id)
       end
 
       def start_all
@@ -58,6 +61,34 @@ module Legion
       end
 
       private
+
+      def deliver_to_adapter(adapter, rendered, output_frame)
+        conversation_id = output_frame.metadata[:conversation_id]
+        if conversation_id && deliver_accepts_conversation_id?(adapter)
+          adapter.deliver(rendered, conversation_id: conversation_id)
+        else
+          adapter.deliver(rendered)
+        end
+      end
+
+      def deliver_accepts_conversation_id?(adapter)
+        adapter_class = adapter.class
+        @mutex.synchronize do
+          return @deliver_signature_cache[adapter_class] if @deliver_signature_cache.key?(adapter_class)
+        end
+
+        accepts_conversation_id = deliver_parameters(adapter).any? do |type, name|
+          %i[key keyreq].include?(type) && name == :conversation_id
+        end
+        @mutex.synchronize { @deliver_signature_cache[adapter_class] = accepts_conversation_id }
+        accepts_conversation_id
+      end
+
+      def deliver_parameters(adapter)
+        adapter.class.instance_method(:deliver).parameters
+      rescue StandardError
+        adapter.method(:deliver).parameters
+      end
 
       def normalize_delivery_result(result, channel_id:)
         return { delivered: false, reason: :adapter_returned_false, channel_id: channel_id } if result == false

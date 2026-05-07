@@ -9,7 +9,7 @@ module Legion
         attr_reader :allowed_worker_ids
 
         def initialize(allowed_worker_ids: [])
-          log.unknown "initialize(allowed_worker_ids: #{allowed_worker_ids})"
+          log.debug "initialize(allowed_worker_ids: #{allowed_worker_ids})"
           @routes = {}
           @allowed_worker_ids = allowed_worker_ids
           @mutex = Mutex.new

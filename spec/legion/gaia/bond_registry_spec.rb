@@ -44,6 +44,13 @@ RSpec.describe Legion::Gaia::BondRegistry do
         expect(described_class.bond('esity')).to eq(:unknown)
       end
     end
+
+    it 'stores preferred and last channel metadata' do
+      described_class.register('esity', bond: :partner, preferred_channel: :teams, last_channel: :slack)
+      entry = described_class.all_bonds.find { |b| b[:identity] == 'esity' }
+      expect(entry[:preferred_channel]).to eq(:teams)
+      expect(entry[:last_channel]).to eq(:slack)
+    end
   end
 
   describe '.bond' do
@@ -125,6 +132,23 @@ RSpec.describe Legion::Gaia::BondRegistry do
       expect(described_class.partner?('miverso2')).to be true
     end
 
+    it 'restores channel identity and channel metadata from Apollo Local seed data' do
+      stub_apollo = double('Apollo::Local')
+      seed_content = "Identity keys: partner-uuid\nBond type: partner\n" \
+                     "Channel identity: U_TEAMS_1\nPreferred channel: teams\nLast channel: slack"
+      allow(stub_apollo).to receive(:query).and_return(
+        success: true,
+        results: [{ content: seed_content, tags: %w[partner bond self-knowledge] }]
+      )
+
+      described_class.hydrate_from_apollo(store: stub_apollo)
+      entry = described_class.partner_entry
+
+      expect(entry[:channel_identity]).to eq('U_TEAMS_1')
+      expect(entry[:preferred_channel]).to eq(:teams)
+      expect(entry[:last_channel]).to eq(:slack)
+    end
+
     it 'handles missing Apollo gracefully' do
       expect { described_class.hydrate_from_apollo(store: nil) }.not_to raise_error
       expect(described_class.all_bonds).to be_empty
@@ -201,6 +225,29 @@ RSpec.describe Legion::Gaia::BondRegistry do
       described_class.register('esity', bond: :partner)
       entry = described_class.all_bonds.find { |b| b[:identity] == 'esity' }
       expect(entry[:channel_identity]).to be_nil
+    end
+  end
+
+  describe '.record_channel' do
+    it 'updates the last seen channel for an existing bond' do
+      described_class.register('aad-1', bond: :partner)
+      described_class.record_channel('aad-1', channel_id: :teams, channel_identity: 'teams-user-1')
+      entry = described_class.partner_entry
+
+      expect(entry[:last_channel]).to eq(:teams)
+      expect(entry[:preferred_channel]).to eq(:teams)
+      expect(entry[:channel_identity]).to eq('teams-user-1')
+    end
+
+    it 'stores an updated entry instead of mutating the previous hash in place' do
+      described_class.register('aad-1', bond: :partner)
+      original_entry = described_class.all_bonds.find { |entry| entry[:identity] == 'aad-1' }
+
+      updated_entry = described_class.record_channel('aad-1', channel_id: :teams)
+
+      expect(updated_entry).not_to equal(original_entry)
+      expect(original_entry[:last_channel]).to be_nil
+      expect(updated_entry[:last_channel]).to eq(:teams)
     end
   end
 end

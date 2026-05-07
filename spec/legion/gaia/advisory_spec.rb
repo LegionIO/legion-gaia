@@ -52,10 +52,44 @@ RSpec.describe Legion::Gaia::Advisory do
       expect(result[:tool_hint]).to be_nil
     end
 
-    it 'never raises, returns nil on error' do
+    it 'never raises, returns empty hash on error' do
       allow(Legion::Gaia).to receive(:started?).and_raise(StandardError, 'boom')
       result = described_class.advise(conversation_id: 'c', messages: [], caller: {})
-      expect(result).to be_nil
+      expect(result).to eq({})
+    end
+
+    it 'handles string-keyed tool predictions' do
+      allow(Legion::Gaia).to receive(:started?).and_return(true)
+      allow(Legion::Gaia).to receive(:last_valences).and_return(nil)
+      allow(Legion::Gaia).to receive(:registry).and_return(
+        double(tick_host: double(
+          last_tick_result: {
+            results: {
+              prediction_engine: { predictions: [{ 'tool' => 'read_file', 'confidence' => 0.9 }] }
+            }
+          }
+        ))
+      )
+
+      result = described_class.advise(conversation_id: 'c', messages: [], caller: {})
+      expect(result[:tool_hint]).to eq(['read_file'])
+    end
+
+    it 'normalizes routing hints to provider and model keys' do
+      allow(Legion::Gaia).to receive(:started?).and_return(true)
+      allow(Legion::Gaia).to receive(:last_valences).and_return(nil)
+      allow(Legion::Gaia).to receive(:registry).and_return(
+        double(tick_host: double(
+          last_tick_result: {
+            results: {
+              post_tick_reflection: { routing_preference: { 'provider' => :anthropic, model: :sonnet } }
+            }
+          }
+        ))
+      )
+
+      result = described_class.advise(conversation_id: 'c', messages: [], caller: {})
+      expect(result[:routing_hint]).to eq(provider: 'anthropic', model: 'sonnet')
     end
 
     describe 'with observer data' do
@@ -79,7 +113,7 @@ RSpec.describe Legion::Gaia::Advisory do
           caller: { requested_by: { identity: 'user:matt', type: :user } }
         )
 
-        expect(result[:routing_hint]).to include(provider: :claude)
+        expect(result[:routing_hint]).to include(provider: 'claude')
       end
 
       it 'includes learned tool predictions from observer' do

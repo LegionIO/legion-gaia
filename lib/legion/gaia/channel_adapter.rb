@@ -63,7 +63,7 @@ module Legion
       protected
 
       def build_intent_metadata(content)
-        require_relative 'intent_classifier' unless defined?(IntentClassifier)
+        require_relative 'intent_classifier' unless defined?(Legion::Gaia::IntentClassifier)
         classification = IntentClassifier.classify_with_engagement(content)
         {
           interaction_intent: classification[:intent],

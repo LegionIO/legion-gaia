@@ -131,5 +131,23 @@ RSpec.describe Legion::Gaia::NotificationGate::ScheduleEvaluator do
         expect { evaluator.quiet?(at: time) }.not_to raise_error
       end
     end
+
+    context 'with Southern Hemisphere DST fallback' do
+      before { hide_const('TZInfo') if defined?(TZInfo) }
+
+      subject(:evaluator) do
+        described_class.new(schedule: [{
+                              days: %w[wed],
+                              start: '20:30',
+                              end: '21:30',
+                              timezone: 'Australia/Sydney'
+                            }])
+      end
+
+      it 'applies DST during Sydney summer months' do
+        time = Time.utc(2026, 11, 4, 10, 0, 0)
+        expect(evaluator.quiet?(at: time)).to be true
+      end
+    end
   end
 end

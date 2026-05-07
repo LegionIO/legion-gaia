@@ -214,13 +214,21 @@ RSpec.describe Legion::Gaia::Workflow::Instance do
       expect(instance.transition(:indexed, score: 0.1)).to be false
     end
 
-    it 'still raises InvalidTransition (programmer error)' do
-      expect { instance.transition(:indexed) }
+    it 'returns false when the transition is invalid' do
+      expect(instance.transition(:indexed)).to be false
+    end
+
+    it 'returns false when the target state is unknown' do
+      expect(instance.transition(:ghost)).to be false
+    end
+
+    it 'raises invalid transition when strict mode is requested' do
+      expect { instance.transition(:indexed, strict: true) }
         .to raise_error(Legion::Gaia::Workflow::InvalidTransition)
     end
 
-    it 'still raises UnknownState (programmer error)' do
-      expect { instance.transition(:ghost) }
+    it 'raises unknown state when strict mode is requested' do
+      expect { instance.transition(:ghost, strict: true) }
         .to raise_error(Legion::Gaia::Workflow::UnknownState)
     end
   end

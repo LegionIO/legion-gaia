@@ -12,7 +12,6 @@ module Legion
       def initialize
         @user_prefs = {}
         @tool_patterns = {}
-        @quality_log  = []
         @mutex        = Mutex.new
       end
 
@@ -22,7 +21,6 @@ module Legion
         @mutex.synchronize do
           record_routing_preference(event)
           record_tool_patterns(event)
-          record_quality(event)
         end
         identity = extract_caller_identity(event)
         log.debug(
@@ -46,8 +44,7 @@ module Legion
           prefs = @user_prefs[identity] || {}
           {
             routing_preference: prefs[:routing],
-            tool_predictions: top_tools_for_patterns,
-            quality_signals: recent_quality
+            tool_predictions: top_tools_for_patterns
           }
         end
       end
@@ -56,7 +53,6 @@ module Legion
         @mutex.synchronize do
           @user_prefs.clear
           @tool_patterns.clear
-          @quality_log.clear
         end
       end
 
@@ -95,21 +91,8 @@ module Legion
         end
       end
 
-      def record_quality(event)
-        @quality_log << {
-          provider: event.dig(:routing, :provider),
-          tokens: event[:tokens],
-          timestamp: event[:timestamp]
-        }
-        @quality_log.shift if @quality_log.length > 100
-      end
-
       def top_tools_for_patterns
         @tool_patterns.sort_by { |_, v| -v[:count] }.first(10).to_h
-      end
-
-      def recent_quality
-        @quality_log.last(10)
       end
     end
   end

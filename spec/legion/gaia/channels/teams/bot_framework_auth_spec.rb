@@ -101,6 +101,13 @@ RSpec.describe Legion::Gaia::Channels::Teams::BotFrameworkAuth do
         expect(result[:error]).to eq(:invalid_issuer)
       end
 
+      it 'rejects issuer subdomain spoofing' do
+        payload = valid_payload.merge('iss' => 'https://api.botframework.com.attacker.com')
+        token = build_jwt(header, payload)
+        result = described_class.validate_token(token, app_id: app_id)
+        expect(result[:error]).to eq(:invalid_issuer)
+      end
+
       it 'rejects wrong audience' do
         payload = valid_payload.merge('aud' => 'wrong-app-id')
         token = build_jwt(header, payload)

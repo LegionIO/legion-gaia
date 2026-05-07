@@ -67,6 +67,18 @@ RSpec.describe Legion::Gaia::SessionStore do
         expect(third).not_to be_nil
       end
 
+      it 'cleans the canonical key after a migrated session expires' do
+        expiring_store = described_class.new(ttl: 0)
+        string_session = expiring_store.find_or_create(identity: 'esity')
+        expiring_store.find_or_create(identity: uuid, canonical_name: 'esity')
+        sleep(0.01)
+
+        expiring_store.prune_expired
+        fresh = expiring_store.find_or_create(identity: 'esity')
+
+        expect(fresh.id).not_to eq(string_session.id)
+      end
+
       it 'creates new session if no string session exists to migrate' do
         session = store.find_or_create(identity: uuid, canonical_name: 'esity')
         expect(session.identity).to eq(uuid)

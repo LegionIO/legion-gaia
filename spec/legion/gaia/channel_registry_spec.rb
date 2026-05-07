@@ -88,6 +88,48 @@ RSpec.describe Legion::Gaia::ChannelRegistry do
       expect(result[:error]).to eq(:network_error)
       expect(result[:channel_id]).to eq(:cli)
     end
+
+    it 'passes conversation_id to adapters that accept it' do
+      teams_adapter = Legion::Gaia::Channels::TeamsAdapter.new
+      teams_adapter.start
+      frame = Legion::Gaia::OutputFrame.new(
+        content: 'hello',
+        channel_id: :teams,
+        metadata: { conversation_id: 'conv-1' }
+      )
+
+      registry.register(teams_adapter)
+      allow(teams_adapter).to receive(:translate_outbound).with(frame).and_return({ type: 'text', text: 'hello' })
+      allow(teams_adapter).to receive(:deliver).with({ type: 'text', text: 'hello' },
+                                                     conversation_id: 'conv-1').and_return({ delivered: true })
+
+      result = registry.deliver(frame)
+      expect(result[:delivered]).to be true
+    end
+
+    it 'caches conversation_id signature detection per adapter class' do
+      adapter_class = Class.new do
+        def channel_id = :cached
+        def started? = true
+        def translate_outbound(frame) = frame.content
+
+        def deliver(rendered,
+                    conversation_id: nil)
+          { delivered: true, rendered: rendered, conversation_id: conversation_id }
+        end
+      end
+      adapter = adapter_class.new
+      frame = Legion::Gaia::OutputFrame.new(
+        content: 'hello',
+        channel_id: :cached,
+        metadata: { conversation_id: 'conv-1' }
+      )
+
+      registry.register(adapter)
+      expect(adapter_class).to receive(:instance_method).with(:deliver).once.and_call_original
+
+      2.times { expect(registry.deliver(frame)[:delivered]).to be true }
+    end
   end
 
   describe '#start_all / #stop_all' do

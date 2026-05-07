@@ -12,13 +12,15 @@ module Legion
       module_function
 
       def register_tracker(name, tracker:, tags:)
-        @trackers ||= {}
-        @trackers[name] = { tracker: tracker, tags: tags }
+        mutex.synchronize do
+          @trackers ||= {}
+          @trackers[name] = { tracker: tracker, tags: tags }
+        end
         log.info("TrackerPersistence registered tracker=#{name} tags=#{Array(tags).join(',')}")
       end
 
       def registered_trackers
-        @trackers || {}
+        mutex.synchronize { (@trackers || {}).dup }
       end
 
       def flush_dirty(store: nil)
@@ -26,7 +28,8 @@ module Legion
 
         failed = false
         flushed = 0
-        registered_trackers.each_value do |entry|
+        entries = registered_trackers.values
+        entries.each do |entry|
           tracker = entry[:tracker]
           next unless tracker.dirty?
 
@@ -36,7 +39,7 @@ module Legion
             failed = true
           end
         end
-        @last_flush_at = Time.now.utc unless failed
+        mutex.synchronize { @last_flush_at = Time.now.utc } unless failed
         if failed
           log.warn("TrackerPersistence flush_dirty completed with errors flushed=#{flushed}")
         else
@@ -50,11 +53,12 @@ module Legion
         return unless store
 
         failed = false
-        registered_trackers.each_value do |entry|
+        entries = registered_trackers.values
+        entries.each do |entry|
           failed ||= !flush_tracker(entry[:tracker], store: store)
         end
-        @last_flush_at = Time.now.utc unless failed
-        log.info("TrackerPersistence flushed all trackers count=#{registered_trackers.size}")
+        mutex.synchronize { @last_flush_at = Time.now.utc } unless failed
+        log.info("TrackerPersistence flushed all trackers count=#{entries.size}")
       rescue StandardError => e
         handle_exception(e, level: :warn, operation: 'gaia.tracker_persistence.flush_all')
       end
@@ -71,18 +75,22 @@ module Legion
       end
 
       def last_flush_at
-        @last_flush_at
+        mutex.synchronize { @last_flush_at }
       end
 
       def should_flush?
-        return true if @last_flush_at.nil?
+        mutex.synchronize do
+          return true if @last_flush_at.nil?
 
-        (Time.now.utc - @last_flush_at) >= FLUSH_INTERVAL
+          (Time.now.utc - @last_flush_at) >= FLUSH_INTERVAL
+        end
       end
 
       def reset!
-        @trackers = {}
-        @last_flush_at = nil
+        mutex.synchronize do
+          @trackers = {}
+          @last_flush_at = nil
+        end
       end
 
       def flush_tracker(tracker, store:)
@@ -118,6 +126,11 @@ module Legion
         true
       end
       private_class_method :upsert_succeeded?
+
+      def mutex
+        @mutex ||= Mutex.new
+      end
+      private_class_method :mutex
     end
   end
 end

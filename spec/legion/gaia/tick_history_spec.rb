@@ -60,10 +60,10 @@ RSpec.describe Legion::Gaia::TickHistory do
       expect(entry[:duration_ms]).to eq(0.0)
     end
 
-    it 'stores an ISO8601 timestamp' do
+    it 'stores an ISO8601 timestamp with millisecond precision' do
       history.record({ results: { identity_entropy_check: { elapsed_ms: 1, status: :ok } } })
       entry = history.recent(limit: 1).first
-      expect(entry[:timestamp]).to match(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z/)
+      expect(entry[:timestamp]).to match(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z/)
     end
 
     it 'skips phase entries whose data is not a hash' do

@@ -7,8 +7,8 @@ RSpec.describe Legion::Gaia::NotificationGate::BehavioralEvaluator do
   subject(:evaluator) { described_class.new }
 
   describe '#notification_score' do
-    it 'returns 1.0 with no signals' do
-      expect(evaluator.notification_score).to eq(1.0)
+    it 'returns 0.0 with no signals' do
+      expect(evaluator.notification_score).to eq(0.0)
     end
 
     it 'lowers score when arousal is low' do
@@ -35,9 +35,15 @@ RSpec.describe Legion::Gaia::NotificationGate::BehavioralEvaluator do
   end
 
   describe '#should_deliver?' do
-    it 'delivers normal priority when score is high' do
+    it 'delays normal priority when arousal is high' do
       evaluator.update_arousal(1.0)
       evaluator.update_idle_seconds(0)
+      expect(evaluator.should_deliver?(priority: :normal)).to be false
+    end
+
+    it 'delivers normal priority when arousal is low and idle is high' do
+      evaluator.update_arousal(0.0)
+      evaluator.update_idle_seconds(3600)
       expect(evaluator.should_deliver?(priority: :normal)).to be true
     end
 

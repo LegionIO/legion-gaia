@@ -235,6 +235,18 @@ RSpec.describe Legion::Gaia::ProactiveDispatcher do
         expect(dispatcher.send(:resolve_partner_channel)).to be_nil
       end
     end
+
+    context 'when BondRegistry stores a preferred channel' do
+      before do
+        Legion::Gaia::BondRegistry.reset!
+        Legion::Gaia::BondRegistry.register('esity', bond: :partner, preferred_channel: :teams)
+      end
+      after { Legion::Gaia::BondRegistry.reset! }
+
+      it 'resolves the stored preferred channel without stubbing' do
+        expect(dispatcher.send(:resolve_partner_channel)).to eq(:teams)
+      end
+    end
   end
 
   describe '#resolve_partner_id with multiple partner bonds (§9.6 deterministic selection)' do

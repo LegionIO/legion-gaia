@@ -11,8 +11,8 @@ module Legion
         attr_reader :worker_routing, :channel_registry, :started
 
         def initialize(channel_registry:, worker_routing: nil, allowed_worker_ids: [])
-          log.unknown "initialize(channel_registry: #{channel_registry}, " \
-                      "worker_routing: #{worker_routing}, allowed_worker_ids: #{allowed_worker_ids}"
+          log.debug "initialize(channel_registry: #{channel_registry}, " \
+                    "worker_routing: #{worker_routing}, allowed_worker_ids: #{allowed_worker_ids}"
           @channel_registry = channel_registry
           @worker_routing = worker_routing || WorkerRouting.new(allowed_worker_ids: allowed_worker_ids)
           @started = false
@@ -20,10 +20,12 @@ module Legion
 
         def start
           @started = true
+          subscribe_outbound if transport_available?
           log.info("RouterBridge started workers=#{@worker_routing.size}")
         end
 
         def stop
+          @outbound_consumer&.cancel if @outbound_consumer.respond_to?(:cancel)
           @started = false
           log.info('RouterBridge stopped')
         end
@@ -33,7 +35,7 @@ module Legion
         end
 
         def route_inbound(input_frame)
-          log.unknown "route_inbound(input_frame: #{input_frame})"
+          log.debug "route_inbound(input_frame: #{input_frame})"
           return { routed: false, reason: :not_started } unless started?
 
           identity = extract_identity(input_frame)
@@ -47,7 +49,7 @@ module Legion
         end
 
         def route_outbound(payload)
-          log.unknown "route_outbound(payload: #{payload})"
+          log.debug "route_outbound(payload: #{payload})"
           return { delivered: false, reason: :not_started } unless started?
 
           frame = reconstruct_output_frame(payload)
@@ -82,6 +84,31 @@ module Legion
 
         private
 
+        def subscribe_outbound
+          queue = Transport::Queues::Outbound.new
+          @outbound_consumer = queue.subscribe(manual_ack: true, block: false) do |delivery_info, _metadata, payload|
+            message = decode_payload(payload)
+            unless message
+              queue.reject(delivery_info.delivery_tag, requeue: false)
+              next
+            end
+
+            delivery_result = route_outbound(message)
+            if delivery_result.is_a?(Hash) && delivery_result[:delivered] == true && !delivery_result[:error]
+              queue.acknowledge(delivery_info.delivery_tag)
+            else
+              log.warn(
+                'RouterBridge outbound delivery not acknowledged ' \
+                "reason=#{delivery_result[:reason] || delivery_result[:error] || :unknown}"
+              )
+              queue.reject(delivery_info.delivery_tag, requeue: true)
+            end
+          rescue StandardError => e
+            handle_exception(e, level: :error, operation: 'gaia.router.router_bridge.subscribe_outbound')
+            queue.reject(delivery_info.delivery_tag, requeue: false)
+          end
+        end
+
         def extract_identity(input_frame)
           input_frame.auth_context[:principal_id] ||
             input_frame.auth_context[:aad_object_id] ||
@@ -108,13 +135,23 @@ module Legion
 
         def offline_response(input_frame)
           identity = extract_identity(input_frame)
+          offline_result = OfflineHandler.handle_offline_delivery(input_frame, worker_id: identity || :unassigned)
           log.warn("RouterBridge could not route inbound frame_id=#{input_frame.id} identity=#{identity}")
           {
             routed: false,
             reason: :worker_not_found,
             identity: identity,
-            frame_id: input_frame.id
+            frame_id: input_frame.id,
+            queued: offline_result[:queued]
           }
+        end
+
+        def decode_payload(raw)
+          parsed = Legion::JSON.load(raw)
+          parsed.is_a?(Hash) ? parsed : nil
+        rescue StandardError => e
+          handle_exception(e, level: :warn, operation: 'gaia.router.router_bridge.decode_payload')
+          nil
         end
 
         def reconstruct_output_frame(payload)

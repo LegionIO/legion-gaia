@@ -90,6 +90,17 @@ RSpec.describe Legion::Gaia::NotificationGate::DelayQueue do
     end
   end
 
+  describe '#requeue' do
+    it 'preserves the original queued_at while incrementing retry_count' do
+      queued_at = Time.now.utc - 14_401
+      queue.requeue(frame: frame, queued_at: queued_at, retry_count: 2)
+
+      entry = queue.pending.first
+      expect(entry[:queued_at]).to eq(queued_at)
+      expect(entry[:retry_count]).to eq(3)
+    end
+  end
+
   describe '#flush' do
     it 'returns all entries' do
       3.times { queue.enqueue(frame) }

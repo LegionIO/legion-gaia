@@ -25,14 +25,14 @@ module Legion
           signals << arousal_signal if @arousal
           signals << idle_signal if @idle_seconds
 
-          return 1.0 if signals.empty?
+          return 0.0 if signals.empty?
 
           signals.sum / signals.size
         end
 
         def should_deliver?(priority: :normal)
           base = PRIORITY_BASE_THRESHOLD[priority] || PRIORITY_BASE_THRESHOLD[:normal]
-          effective_threshold = base + ((1.0 - notification_score) * THRESHOLD_MODIFIER)
+          effective_threshold = base + (notification_score * THRESHOLD_MODIFIER)
           priority_value(priority) >= effective_threshold
         end
 
