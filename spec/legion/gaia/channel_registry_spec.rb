@@ -106,6 +106,30 @@ RSpec.describe Legion::Gaia::ChannelRegistry do
       result = registry.deliver(frame)
       expect(result[:delivered]).to be true
     end
+
+    it 'caches conversation_id signature detection per adapter class' do
+      adapter_class = Class.new do
+        def channel_id = :cached
+        def started? = true
+        def translate_outbound(frame) = frame.content
+
+        def deliver(rendered,
+                    conversation_id: nil)
+          { delivered: true, rendered: rendered, conversation_id: conversation_id }
+        end
+      end
+      adapter = adapter_class.new
+      frame = Legion::Gaia::OutputFrame.new(
+        content: 'hello',
+        channel_id: :cached,
+        metadata: { conversation_id: 'conv-1' }
+      )
+
+      registry.register(adapter)
+      expect(adapter_class).to receive(:instance_method).with(:deliver).once.and_call_original
+
+      2.times { expect(registry.deliver(frame)[:delivered]).to be true }
+    end
   end
 
   describe '#start_all / #stop_all' do

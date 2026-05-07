@@ -238,5 +238,16 @@ RSpec.describe Legion::Gaia::BondRegistry do
       expect(entry[:preferred_channel]).to eq(:teams)
       expect(entry[:channel_identity]).to eq('teams-user-1')
     end
+
+    it 'stores an updated entry instead of mutating the previous hash in place' do
+      described_class.register('aad-1', bond: :partner)
+      original_entry = described_class.all_bonds.find { |entry| entry[:identity] == 'aad-1' }
+
+      updated_entry = described_class.record_channel('aad-1', channel_id: :teams)
+
+      expect(updated_entry).not_to equal(original_entry)
+      expect(original_entry[:last_channel]).to be_nil
+      expect(updated_entry[:last_channel]).to eq(:teams)
+    end
   end
 end

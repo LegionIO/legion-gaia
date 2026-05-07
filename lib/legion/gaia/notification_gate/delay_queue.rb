@@ -26,7 +26,7 @@ module Legion
           @mutex.synchronize do
             evicted = nil
             evicted = @entries.shift if @entries.size >= @max_size
-            @entries << entry.merge(queued_at: Time.now.utc, retry_count: entry[:retry_count].to_i + 1)
+            @entries << entry.merge(retry_count: entry[:retry_count].to_i + 1)
             evicted
           end
         end

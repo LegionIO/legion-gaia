@@ -137,11 +137,37 @@ RSpec.describe Legion::Gaia::Router::RouterBridge do
         double('consumer', cancel: true)
       end
       allow(outbound_queue).to receive(:acknowledge)
+      allow(outbound_queue).to receive(:reject)
 
       bridge.start
 
       expect(cli_adapter.last_output).to eq('hello')
       expect(outbound_queue).to have_received(:acknowledge).with('tag-1')
+    end
+
+    it 'requeues outbound payloads when delivery fails' do
+      outbound_queue = double('OutboundQueue')
+      outbound_class = double('OutboundClass', new: outbound_queue)
+      delivery_info = double('delivery_info', delivery_tag: 'tag-2')
+      payload = Legion::JSON.dump({ id: 'frame-3', content: 'hello', content_type: :text, channel_id: :missing })
+
+      stub_const('Legion::Gaia::Router::Transport', Module.new) unless defined?(Legion::Gaia::Router::Transport)
+      stub_const('Legion::Gaia::Router::Transport::Queues', Module.new)
+      stub_const('Legion::Gaia::Router::Transport::Queues::Outbound', outbound_class)
+      allow(bridge).to receive(:transport_available?).and_return(true)
+      allow(outbound_queue).to receive(:subscribe) do |manual_ack:, block:, &handler|
+        expect(manual_ack).to be true
+        expect(block).to be false
+        handler.call(delivery_info, nil, payload)
+        double('consumer', cancel: true)
+      end
+      allow(outbound_queue).to receive(:acknowledge)
+      allow(outbound_queue).to receive(:reject)
+
+      bridge.start
+
+      expect(outbound_queue).not_to have_received(:acknowledge)
+      expect(outbound_queue).to have_received(:reject).with('tag-2', requeue: true)
     end
   end
 end

@@ -88,11 +88,24 @@ module Legion
           queue = Transport::Queues::Outbound.new
           @outbound_consumer = queue.subscribe(manual_ack: true, block: false) do |delivery_info, _metadata, payload|
             message = decode_payload(payload)
-            route_outbound(message) if message
-            queue.acknowledge(delivery_info.delivery_tag)
+            unless message
+              queue.reject(delivery_info.delivery_tag, requeue: false)
+              next
+            end
+
+            delivery_result = route_outbound(message)
+            if delivery_result.is_a?(Hash) && delivery_result[:delivered] == true && !delivery_result[:error]
+              queue.acknowledge(delivery_info.delivery_tag)
+            else
+              log.warn(
+                'RouterBridge outbound delivery not acknowledged ' \
+                "reason=#{delivery_result[:reason] || delivery_result[:error] || :unknown}"
+              )
+              queue.reject(delivery_info.delivery_tag, requeue: true)
+            end
           rescue StandardError => e
             handle_exception(e, level: :error, operation: 'gaia.router.router_bridge.subscribe_outbound')
-            queue.reject(delivery_info.delivery_tag)
+            queue.reject(delivery_info.delivery_tag, requeue: false)
           end
         end
 

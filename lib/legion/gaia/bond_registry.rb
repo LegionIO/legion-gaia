@@ -9,23 +9,37 @@ module Legion
       extend Legion::Logging::Helper
 
       @bonds = Concurrent::Hash.new
+      @mutex = Mutex.new
 
       module_function
 
       def register(identity, bond: nil, role: nil, priority: :normal, channel_identity: nil,
                    preferred_channel: nil, last_channel: nil)
         effective_bond = (bond || role || :unknown).to_sym
-        @bonds[identity.to_s] = {
+        @mutex.synchronize do
+          @bonds[identity.to_s] = build_entry(
+            identity,
+            bond: effective_bond,
+            priority: priority,
+            channel_identity: channel_identity,
+            preferred_channel: preferred_channel,
+            last_channel: last_channel
+          )
+        end
+        log.info("BondRegistry registered identity=#{identity} bond=#{effective_bond} priority=#{priority}")
+      end
+
+      def build_entry(identity, bond:, priority:, channel_identity:, preferred_channel:, last_channel:)
+        {
           identity: identity.to_s,
-          bond: effective_bond,
-          role: effective_bond,
+          bond: bond,
+          role: bond,
           priority: priority.to_sym,
           since: Time.now.utc,
           channel_identity: channel_identity&.to_s,
           preferred_channel: preferred_channel&.to_sym,
           last_channel: last_channel&.to_sym
         }
-        log.info("BondRegistry registered identity=#{identity} bond=#{effective_bond} priority=#{priority}")
       end
 
       def bond(identity)
@@ -57,14 +71,18 @@ module Legion
       end
 
       def record_channel(identity, channel_id:, channel_identity: nil)
-        entry = @bonds[identity.to_s]
-        return nil unless entry
+        @mutex.synchronize do
+          entry = @bonds[identity.to_s]
+          return nil unless entry
 
-        channel = channel_id&.to_sym
-        entry[:last_channel] = channel if channel
-        entry[:preferred_channel] ||= channel if channel
-        entry[:channel_identity] ||= channel_identity.to_s if channel_identity
-        entry
+          channel = channel_id&.to_sym
+          updated = entry.merge(
+            last_channel: channel || entry[:last_channel],
+            preferred_channel: entry[:preferred_channel] || channel,
+            channel_identity: entry[:channel_identity] || channel_identity&.to_s
+          )
+          @bonds[identity.to_s] = updated
+        end
       end
 
       # Returns the single best partner bond entry using deterministic selection:
@@ -110,7 +128,7 @@ module Legion
       end
 
       def reset!
-        @bonds = Concurrent::Hash.new
+        @mutex.synchronize { @bonds = Concurrent::Hash.new }
         log.debug('BondRegistry reset')
       end
 
@@ -137,7 +155,8 @@ module Legion
         match[1].split(/[,\s]+/).first&.strip
       end
 
-      private_class_method :extract_identity_keys, :extract_channel_identity, :extract_channel, :first_match_value
+      private_class_method :build_entry, :extract_identity_keys, :extract_channel_identity, :extract_channel,
+                           :first_match_value
     end
   end
 end

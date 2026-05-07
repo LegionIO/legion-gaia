@@ -5,12 +5,14 @@ module Legion
     class ChannelRegistry
       def initialize
         @adapters = {}
+        @deliver_signature_cache = {}
         @mutex = Mutex.new
       end
 
       def register(adapter)
         @mutex.synchronize do
           @adapters[adapter.channel_id] = adapter
+          @deliver_signature_cache.delete(adapter.class)
         end
       end
 
@@ -70,14 +72,22 @@ module Legion
       end
 
       def deliver_accepts_conversation_id?(adapter)
-        parameters = adapter.class.instance_method(:deliver).parameters
-        parameters.any? do |type, name|
+        adapter_class = adapter.class
+        @mutex.synchronize do
+          return @deliver_signature_cache[adapter_class] if @deliver_signature_cache.key?(adapter_class)
+        end
+
+        accepts_conversation_id = deliver_parameters(adapter).any? do |type, name|
           %i[key keyreq].include?(type) && name == :conversation_id
         end
+        @mutex.synchronize { @deliver_signature_cache[adapter_class] = accepts_conversation_id }
+        accepts_conversation_id
+      end
+
+      def deliver_parameters(adapter)
+        adapter.class.instance_method(:deliver).parameters
       rescue StandardError
-        adapter.method(:deliver).parameters.any? do |type, name|
-          %i[key keyreq].include?(type) && name == :conversation_id
-        end
+        adapter.method(:deliver).parameters
       end
 
       def normalize_delivery_result(result, channel_id:)

@@ -8,6 +8,7 @@
 - Close the 2026-05-06 GAIA gap-analysis findings across advisory generation, Bot Framework JWT issuer validation, router outbound delivery, offline queuing, proactive partner channels, notification gating, Teams delivery, and shared-state synchronization.
 - Normalize advisory routing hints, support string-keyed tool predictions, and return a stable empty advisory hash when advisory generation fails.
 - Replace high-severity `log.unknown` message tracing with debug logging to avoid production PII log flooding.
+- Harden PR review follow-up behavior for outbound queue acknowledgements, delayed notification TTL preservation, atomic bond channel metadata updates, and adapter delivery-signature caching.
 
 ## [0.9.51] - 2026-04-27
 
