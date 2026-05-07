@@ -206,6 +206,10 @@ module Legion
         session = @session_store&.find_or_create(identity: identity || :anonymous)
         @session_store&.touch(session.id, channel_id: input_frame.channel_id) if session
 
+        if identity
+          BondRegistry.record_channel(identity.to_s, channel_id: input_frame.channel_id,
+                                                     channel_identity: channel_identity(input_frame))
+        end
         observe_interlocutor(input_frame, identity) if identity && identity != :anonymous
 
         log.info(
@@ -387,8 +391,6 @@ module Legion
       end
 
       def boot_agent_bridge
-        return unless settings&.dig(:router, :mode)
-
         worker_id = settings&.dig(:router, :worker_id)
         return unless worker_id
 
@@ -499,6 +501,11 @@ module Legion
           ctx[:user_id]
       end
 
+      def channel_identity(input_frame)
+        ctx = input_frame.auth_context || {}
+        ctx[:channel_identity] || ctx[:user_id] || ctx[:identity]
+      end
+
       def observe_interlocutor(input_frame, identity)
         role = BondRegistry.bond(identity.to_s)
 
@@ -544,7 +551,7 @@ module Legion
           },
           domain_tags: ['partner_interaction', observation[:channel].to_s],
           origin: :direct_experience,
-          emotional_valence: @last_valences&.dig(0, :urgency).to_s,
+          emotional_valence: @last_valences&.first&.inspect,
           emotional_intensity: 0.5,
           confidence: 0.8
         )

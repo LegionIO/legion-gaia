@@ -87,8 +87,17 @@ RSpec.describe Legion::Gaia::Channels::Teams::WebhookHandler do
     context 'with invalid payload' do
       it 'returns error for unparseable body' do
         result = handler.handle(request_body: 'not json at all {{{')
-        expect(result[:status]).to eq(401)
+        expect(result[:status]).to eq(400)
         expect(result[:type]).to eq(:invalid_payload)
+      end
+    end
+
+    context 'when translation fails' do
+      it 'returns bad request instead of auth failure' do
+        allow(adapter).to receive(:translate_inbound).and_return(nil)
+        result = handler.handle(request_body: message_activity)
+        expect(result[:status]).to eq(400)
+        expect(result[:type]).to eq(:translate_failed)
       end
     end
 

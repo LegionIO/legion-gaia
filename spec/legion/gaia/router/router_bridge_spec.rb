@@ -46,6 +46,8 @@ RSpec.describe Legion::Gaia::Router::RouterBridge do
         result = bridge.route_inbound(input_frame)
         expect(result[:routed]).to be false
         expect(result[:reason]).to eq(:worker_not_found)
+        expect(result[:queued]).to be true
+        expect(Legion::Gaia::OfflineHandler.pending_count('oid-1')).to eq(1)
       end
 
       it 'routes to registered worker' do
@@ -114,6 +116,32 @@ RSpec.describe Legion::Gaia::Router::RouterBridge do
         expect(result[:delivered]).to be false
         expect(result[:reason]).to eq(:no_adapter)
       end
+    end
+  end
+
+  describe '#start with transport available' do
+    it 'subscribes the outbound queue and routes delivered payloads' do
+      outbound_queue = double('OutboundQueue')
+      outbound_class = double('OutboundClass', new: outbound_queue)
+      delivery_info = double('delivery_info', delivery_tag: 'tag-1')
+      payload = Legion::JSON.dump({ id: 'frame-2', content: 'hello', content_type: :text, channel_id: :cli })
+
+      stub_const('Legion::Gaia::Router::Transport', Module.new) unless defined?(Legion::Gaia::Router::Transport)
+      stub_const('Legion::Gaia::Router::Transport::Queues', Module.new)
+      stub_const('Legion::Gaia::Router::Transport::Queues::Outbound', outbound_class)
+      allow(bridge).to receive(:transport_available?).and_return(true)
+      allow(outbound_queue).to receive(:subscribe) do |manual_ack:, block:, &handler|
+        expect(manual_ack).to be true
+        expect(block).to be false
+        handler.call(delivery_info, nil, payload)
+        double('consumer', cancel: true)
+      end
+      allow(outbound_queue).to receive(:acknowledge)
+
+      bridge.start
+
+      expect(cli_adapter.last_output).to eq('hello')
+      expect(outbound_queue).to have_received(:acknowledge).with('tag-1')
     end
   end
 end

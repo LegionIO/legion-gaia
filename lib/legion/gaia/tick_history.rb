@@ -17,12 +17,12 @@ module Legion
       def record(tick_result)
         return unless tick_result.is_a?(Hash) && tick_result[:results].is_a?(Hash)
 
-        timestamp = Time.now.utc.iso8601
+        timestamp = Time.now.utc.iso8601(3).freeze
         new_events = tick_result[:results].filter_map do |phase_name, phase_data|
           next unless phase_data.is_a?(Hash)
 
           {
-            timestamp: timestamp.freeze,
+            timestamp: timestamp,
             phase: phase_name.to_s.freeze,
             duration_ms: phase_data[:elapsed_ms] || phase_data[:duration_ms] || 0.0,
             status: phase_data[:status] || :completed

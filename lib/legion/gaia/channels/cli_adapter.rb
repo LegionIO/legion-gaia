@@ -15,6 +15,7 @@ module Legion
         def initialize
           super(channel_id: :cli, capabilities: CAPABILITIES)
           @output_buffer = []
+          @mutex = Mutex.new
         end
 
         def translate_inbound(raw_input)
@@ -35,22 +36,24 @@ module Legion
         end
 
         def deliver(rendered_content)
-          @output_buffer << rendered_content
+          @mutex.synchronize { @output_buffer << rendered_content }
           rendered_content
         end
 
         def drain_output
-          output = @output_buffer.dup
-          @output_buffer.clear
-          output
+          @mutex.synchronize do
+            output = @output_buffer.dup
+            @output_buffer.clear
+            output
+          end
         end
 
         def last_output
-          @output_buffer.last
+          @mutex.synchronize { @output_buffer.last }
         end
 
         def output_buffer_size
-          @output_buffer.size
+          @mutex.synchronize { @output_buffer.size }
         end
       end
     end

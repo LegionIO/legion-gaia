@@ -555,6 +555,21 @@ RSpec.describe Legion::Gaia do
       expect(status[:mode]).to eq(:router)
       expect(status[:router_routes]).to eq(0)
     end
+
+    it 'boots agent bridge when worker_id is configured without router mode' do
+      settings = described_class.settings.merge(router: described_class.settings[:router].merge(
+        mode: false,
+        worker_id: 'worker-a'
+      ))
+      allow(described_class).to receive(:settings).and_return(settings)
+      mock_bridge = instance_double(Legion::Gaia::Router::AgentBridge, start: true, stop: true)
+      allow(Legion::Gaia::Router::AgentBridge).to receive(:new).with(worker_id: 'worker-a').and_return(mock_bridge)
+
+      described_class.boot(mode: :agent)
+
+      expect(Legion::Gaia::Router::AgentBridge).to have_received(:new).with(worker_id: 'worker-a')
+      expect(mock_bridge).to have_received(:start)
+    end
   end
 
   describe '.respond with agent_bridge' do
@@ -619,6 +634,25 @@ RSpec.describe Legion::Gaia do
       obs = described_class.partner_observations.first
       expect(obs[:bond_role]).to eq(:partner)
       expect(obs[:channel]).to eq(:teams)
+    end
+
+    it 'records the last channel and channel-native identity for known bonds' do
+      allow(Legion::Gaia::BondRegistry).to receive(:bond).and_call_original
+      Legion::Gaia::BondRegistry.reset!
+      Legion::Gaia::BondRegistry.register('aad-123', bond: :partner)
+
+      frame = Legion::Gaia::InputFrame.new(
+        content: 'hello',
+        channel_id: :teams,
+        auth_context: { aad_object_id: 'aad-123', user_id: 'teams-user-123' }
+      )
+      described_class.ingest(frame)
+
+      entry = Legion::Gaia::BondRegistry.partner_entry
+      expect(entry[:last_channel]).to eq(:teams)
+      expect(entry[:channel_identity]).to eq('teams-user-123')
+    ensure
+      Legion::Gaia::BondRegistry.reset!
     end
 
     it 'extracts identity from aad_object_id fallback' do

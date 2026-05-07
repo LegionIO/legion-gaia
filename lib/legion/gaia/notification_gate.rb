@@ -54,14 +54,22 @@ module Legion
       end
 
       def process_delayed
-        expired = @delay_queue.drain_expired
-        deliverable = expired.map { |e| e[:frame] }
+        candidates = @delay_queue.drain_expired
 
         unless @schedule_evaluator.quiet?
           flushed = @delay_queue.flush
-          deliverable.concat(flushed.map { |e| e[:frame] })
+          candidates.concat(flushed)
         end
 
+        deliverable = []
+        candidates.each do |entry|
+          frame = entry[:frame]
+          if evaluate(frame) == :deliver
+            deliverable << frame
+          else
+            @delay_queue.requeue(entry)
+          end
+        end
         deliverable
       end
 

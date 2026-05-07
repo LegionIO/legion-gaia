@@ -39,6 +39,10 @@ module Legion
           Australia/Sydney Australia/Melbourne Pacific/Auckland
         ].freeze
 
+        SOUTHERN_DST_ZONES = %w[
+          Australia/Sydney Australia/Melbourne Pacific/Auckland
+        ].freeze
+
         def initialize(schedule: [])
           @schedule = normalize_schedule(schedule)
         end
@@ -88,22 +92,22 @@ module Legion
         def localize(time, timezone)
           return time unless timezone
 
-          offset = tz_offset(timezone)
+          offset = tz_offset(timezone, time)
           offset ? time.getlocal(offset) : time
         end
 
-        def tz_offset(timezone)
+        def tz_offset(timezone, time = Time.now)
           return nil unless timezone
-          return tzinfo_offset(timezone) if defined?(TZInfo)
+          return tzinfo_offset(timezone, time) if defined?(TZInfo)
 
           base = STANDARD_OFFSETS[timezone]
           return nil unless base
 
-          dst_active? && DST_ZONES.include?(timezone) ? dst_shift(base) : base
+          dst_active?(timezone, time) && DST_ZONES.include?(timezone) ? dst_shift(base) : base
         end
 
-        def tzinfo_offset(timezone)
-          hours = TZInfo::Timezone.get(timezone).current_period.utc_total_offset / 3600.0
+        def tzinfo_offset(timezone, time)
+          hours = TZInfo::Timezone.get(timezone).period_for_utc(time.utc).utc_total_offset / 3600.0
           sign = hours.negative? ? '-' : '+'
           abs_h = hours.abs.to_i
           abs_m = ((hours.abs % 1) * 60).round
@@ -124,9 +128,11 @@ module Legion
           format('%<sign>s%<h>02d:%<m>02d', sign: new_sign, h: abs_total / 60, m: abs_total % 60)
         end
 
-        def dst_active?
-          m = Time.now.utc.month
-          m.between?(3, 11)
+        def dst_active?(timezone, time)
+          month = time.utc.month
+          return month >= 10 || month <= 4 if SOUTHERN_DST_ZONES.include?(timezone)
+
+          month.between?(3, 11)
         end
       end
     end

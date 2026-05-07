@@ -21,37 +21,41 @@ module Legion
         end
 
         def agent_online?(worker_id)
-          presence = presence_store[worker_id]
+          presence = mutex.synchronize { presence_store[worker_id] }
           return false unless presence
 
           (Time.now - presence[:last_seen]) < offline_threshold
         end
 
         def record_presence(worker_id)
-          presence_store[worker_id] = { last_seen: Time.now }
+          mutex.synchronize { presence_store[worker_id] = { last_seen: Time.now } }
           log.debug("OfflineHandler recorded presence worker_id=#{worker_id}")
         end
 
         def pending_count(worker_id)
-          pending_store[worker_id]&.size || 0
+          mutex.synchronize { pending_store[worker_id]&.size || 0 }
         end
 
         def drain_pending(worker_id)
-          drained = pending_store.delete(worker_id) || []
+          drained = mutex.synchronize { pending_store.delete(worker_id) || [] }
           log.info("OfflineHandler drained pending worker_id=#{worker_id} count=#{drained.size}") if drained.any?
           drained
         end
 
         def reset!
-          @presence_store = {}
-          @pending_store = {}
+          mutex.synchronize do
+            @presence_store = {}
+            @pending_store = {}
+          end
         end
 
         private
 
         def queue_message(frame, worker_id)
-          pending_store[worker_id] ||= []
-          pending_store[worker_id] << { frame: frame, queued_at: Time.now }
+          mutex.synchronize do
+            pending_store[worker_id] ||= []
+            pending_store[worker_id] << { frame: frame, queued_at: Time.now }
+          end
         end
 
         def notify_sender(frame)
@@ -91,6 +95,10 @@ module Legion
 
         def pending_store
           @pending_store ||= {}
+        end
+
+        def mutex
+          @mutex ||= Mutex.new
         end
       end
     end

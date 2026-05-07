@@ -110,7 +110,7 @@ module Legion
         # during the migration window.
         @identity_index[normalized_identity] = old_session_id
         @canonical_to_uuid[canonical_key] = normalized_identity
-        (@session_identity_index[old_session_id] ||= []) << normalized_identity
+        (@session_identity_index[old_session_id] ||= []).push(canonical_key, normalized_identity).uniq!
         old_session_id
       end
 

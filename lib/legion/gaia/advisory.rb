@@ -13,7 +13,7 @@ module Legion
       # Returns Hash with optional keys: system_prompt, routing_hint,
       # context_window, tool_hint, suppress, valence
       def advise(caller:, conversation_id: nil, messages: nil)
-        log.unknown "advise(caller: #{caller}, conversation_id: #{conversation_id}, messages: #{messages}) "
+        log.debug "advise(caller: #{caller}, conversation_id: #{conversation_id}, messages: #{messages}) "
         return nil unless Gaia.started?
 
         advisory = {}
@@ -27,17 +27,17 @@ module Legion
         result
       rescue StandardError => e
         handle_exception(e, level: :warn, operation: 'gaia.advisory.advise', conversation_id: conversation_id)
-        nil
+        {}
       end
 
       def merge_tick_data!(advisory, tick_result)
-        log.unknown "merge_tick_data!(#{advisory.inspect}, #{tick_result})"
+        log.debug "merge_tick_data!(#{advisory.inspect}, #{tick_result})"
         return unless tick_result && tick_result[:results]
 
         results = tick_result[:results]
         apply_tool_hints!(advisory, results)
         apply_suppress!(advisory, results)
-        advisory[:routing_hint] = results.dig(:post_tick_reflection, :routing_preference)
+        advisory[:routing_hint] = normalize_routing_hint(results.dig(:post_tick_reflection, :routing_preference))
         advisory[:context_window] = results.dig(:memory_retrieval, :cross_conversation)
       end
 
@@ -45,7 +45,11 @@ module Legion
         predictions = results.dig(:prediction_engine, :predictions)
         return unless predictions
 
-        tools = predictions.select { |p| p[:confidence] >= 0.6 }.map { |p| p[:tool] }
+        tools = predictions.filter_map do |prediction|
+          confidence = value_for(prediction, :confidence).to_f
+          tool = value_for(prediction, :tool)
+          tool if confidence >= 0.6 && tool
+        end
         advisory[:tool_hint] = tools.empty? ? nil : tools
       end
 
@@ -62,11 +66,36 @@ module Legion
         return unless identity
 
         learned = AuditObserver.instance.learned_data_for(identity)
-        advisory[:routing_hint] ||= learned[:routing_preference] if learned[:routing_preference]
+        advisory[:routing_hint] ||= normalize_routing_hint(learned[:routing_preference]) if learned[:routing_preference]
         advisory[:tool_hint] ||= learned[:tool_predictions].keys.first(5) if learned[:tool_predictions]&.any?
       end
 
-      private_class_method :merge_tick_data!, :apply_tool_hints!, :apply_suppress!, :merge_observer_data!
+      def normalize_routing_hint(value)
+        return nil if value.nil?
+
+        if value.is_a?(Hash)
+          provider = value_for(value, :provider)
+          model = value_for(value, :model)
+          return nil if provider.to_s.empty? && model.to_s.empty?
+
+          return { provider: provider&.to_s, model: model&.to_s }
+        end
+
+        { provider: value.to_s, model: nil }
+      end
+
+      def value_for(hash, key)
+        return nil unless hash.respond_to?(:key?)
+
+        string_key = key.to_s
+        return hash[key] if hash.key?(key)
+        return hash[string_key] if hash.key?(string_key)
+
+        nil
+      end
+
+      private_class_method :merge_tick_data!, :apply_tool_hints!, :apply_suppress!, :merge_observer_data!,
+                           :normalize_routing_hint, :value_for
     end
   end
 end

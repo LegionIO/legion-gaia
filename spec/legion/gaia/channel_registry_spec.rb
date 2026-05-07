@@ -88,6 +88,24 @@ RSpec.describe Legion::Gaia::ChannelRegistry do
       expect(result[:error]).to eq(:network_error)
       expect(result[:channel_id]).to eq(:cli)
     end
+
+    it 'passes conversation_id to adapters that accept it' do
+      teams_adapter = Legion::Gaia::Channels::TeamsAdapter.new
+      teams_adapter.start
+      frame = Legion::Gaia::OutputFrame.new(
+        content: 'hello',
+        channel_id: :teams,
+        metadata: { conversation_id: 'conv-1' }
+      )
+
+      registry.register(teams_adapter)
+      allow(teams_adapter).to receive(:translate_outbound).with(frame).and_return({ type: 'text', text: 'hello' })
+      allow(teams_adapter).to receive(:deliver).with({ type: 'text', text: 'hello' },
+                                                     conversation_id: 'conv-1').and_return({ delivered: true })
+
+      result = registry.deliver(frame)
+      expect(result[:delivered]).to be true
+    end
   end
 
   describe '#start_all / #stop_all' do

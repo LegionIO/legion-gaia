@@ -17,7 +17,7 @@ module Legion
       module_function
 
       def classify(content)
-        log.unknown "classify(#{content})"
+        log.debug "classify(#{content})"
         text = content.to_s.strip
         return :casual if text.empty?
 
@@ -31,12 +31,12 @@ module Legion
       end
 
       def direct_engage?(content)
-        log.unknown "direct_engage?(#{content})"
+        log.debug "direct_engage?(#{content})"
         content.to_s.match?(DIRECT_ADDRESS_PATTERN)
       end
 
       def classify_with_engagement(content)
-        log.unknown "classify_with_engagement(#{content})"
+        log.debug "classify_with_engagement(#{content})"
         { intent: classify(content), direct_engage: direct_engage?(content) }
       end
     end

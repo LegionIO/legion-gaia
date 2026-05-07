@@ -74,12 +74,12 @@ RSpec.describe Legion::Gaia::NotificationGate do
       before do
         allow(gate.schedule_evaluator).to receive(:quiet?).and_return(false)
         gate.enqueue(frame_normal)
-        gate.enqueue(frame_low)
+        gate.enqueue(frame_urgent)
       end
 
       it 'returns all pending frames' do
         result = gate.process_delayed
-        expect(result).to contain_exactly(frame_normal, frame_low)
+        expect(result).to contain_exactly(frame_normal, frame_urgent)
       end
 
       it 'drops pending_count to 0' do
@@ -100,6 +100,20 @@ RSpec.describe Legion::Gaia::NotificationGate do
 
       it 'leaves pending_count unchanged' do
         expect { gate.process_delayed }.not_to change(gate, :pending_count)
+      end
+    end
+
+    context 'when presence still blocks delivery after quiet hours end' do
+      before do
+        allow(gate.schedule_evaluator).to receive(:quiet?).and_return(false)
+        gate.update_presence(availability: 'DoNotDisturb')
+        gate.enqueue(frame_normal)
+      end
+
+      it 'requeues the frame instead of flushing it' do
+        result = gate.process_delayed
+        expect(result).to be_empty
+        expect(gate.pending_count).to eq(1)
       end
     end
   end

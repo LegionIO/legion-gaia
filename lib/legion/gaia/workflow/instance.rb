@@ -51,16 +51,18 @@ module Legion
           self
         end
 
-        # Non-raising variant — returns true on success, false on guard/checkpoint failure.
-        # Unknown-state and invalid-transition errors still propagate.
+        # Non-raising variant — returns true on success, false on transition failure.
+        # Pass strict: true to propagate unknown-state and invalid-transition errors.
         #
         # @param to_state [Symbol]
         # @param ctx [Hash]
         # @return [Boolean]
-        def transition(to_state, **ctx)
+        def transition(to_state, strict: false, **ctx)
           transition!(to_state, **ctx)
           true
-        rescue GuardRejected, CheckpointBlocked => e
+        rescue GuardRejected, CheckpointBlocked, UnknownState, InvalidTransition => e
+          raise if strict && (e.is_a?(UnknownState) || e.is_a?(InvalidTransition))
+
           handle_exception(e, level: :debug, operation: 'gaia.workflow.instance.transition',
                               workflow: definition.name, to_state: to_state)
           false

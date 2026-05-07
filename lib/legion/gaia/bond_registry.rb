@@ -12,7 +12,8 @@ module Legion
 
       module_function
 
-      def register(identity, bond: nil, role: nil, priority: :normal, channel_identity: nil)
+      def register(identity, bond: nil, role: nil, priority: :normal, channel_identity: nil,
+                   preferred_channel: nil, last_channel: nil)
         effective_bond = (bond || role || :unknown).to_sym
         @bonds[identity.to_s] = {
           identity: identity.to_s,
@@ -20,7 +21,9 @@ module Legion
           role: effective_bond,
           priority: priority.to_sym,
           since: Time.now.utc,
-          channel_identity: channel_identity&.to_s
+          channel_identity: channel_identity&.to_s,
+          preferred_channel: preferred_channel&.to_sym,
+          last_channel: last_channel&.to_sym
         }
         log.info("BondRegistry registered identity=#{identity} bond=#{effective_bond} priority=#{priority}")
       end
@@ -53,6 +56,17 @@ module Legion
         @bonds.values
       end
 
+      def record_channel(identity, channel_id:, channel_identity: nil)
+        entry = @bonds[identity.to_s]
+        return nil unless entry
+
+        channel = channel_id&.to_sym
+        entry[:last_channel] = channel if channel
+        entry[:preferred_channel] ||= channel if channel
+        entry[:channel_identity] ||= channel_identity.to_s if channel_identity
+        entry
+      end
+
       # Returns the single best partner bond entry using deterministic selection:
       #   1. Prefer entries that have an explicit channel_identity stored (§9.6 guarantee)
       #   2. Then prefer entries with priority: :primary
@@ -81,8 +95,14 @@ module Legion
 
           identities = extract_identity_keys(content)
           priority = content.match?(/primary/i) ? :primary : :normal
+          channel_identity = extract_channel_identity(content)
+          preferred_channel = extract_channel(content, 'preferred')
+          last_channel = extract_channel(content, 'last')
 
-          identities.each { |id| register(id, bond: :partner, priority: priority) }
+          identities.each do |id|
+            register(id, bond: :partner, priority: priority, channel_identity: channel_identity,
+                         preferred_channel: preferred_channel, last_channel: last_channel)
+          end
         end
         log.info("BondRegistry hydrated entries=#{result[:results].size}")
       rescue StandardError => e
@@ -100,7 +120,24 @@ module Legion
 
         match[1].split(/[,\s]+/).map(&:strip).reject(&:empty?)
       end
-      private_class_method :extract_identity_keys
+
+      def extract_channel_identity(content)
+        match = content.match(/channel[_\s-]*identity[:\s]+([^\n]+)/i)
+        first_match_value(match)
+      end
+
+      def extract_channel(content, kind)
+        match = content.match(/#{kind}[_\s-]*channel[:\s]+([^\n]+)/i)
+        first_match_value(match)
+      end
+
+      def first_match_value(match)
+        return nil unless match
+
+        match[1].split(/[,\s]+/).first&.strip
+      end
+
+      private_class_method :extract_identity_keys, :extract_channel_identity, :extract_channel, :first_match_value
     end
   end
 end

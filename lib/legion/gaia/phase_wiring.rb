@@ -201,18 +201,21 @@ module Legion
       }.freeze
 
       @previous_reflection = {}
+      @previous_reflection_mutex = Mutex.new
 
       module_function
 
       def previous_reflection
-        @previous_reflection || {}
+        @previous_reflection_mutex.synchronize { @previous_reflection || {} }
       end
 
       def capture_tick_results(results)
         return unless results.is_a?(Hash)
 
         refl = results[:post_tick_reflection]
-        @previous_reflection = refl if refl.is_a?(Hash) && refl[:status] != :skipped
+        @previous_reflection_mutex.synchronize do
+          @previous_reflection = refl if refl.is_a?(Hash) && refl[:status] != :skipped
+        end
       end
 
       def build_cognitive_state(prior_results)
