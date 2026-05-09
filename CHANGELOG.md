@@ -1,6 +1,16 @@
 # Changelog
 
-## [Unreleased]
+## [0.9.54] - 2026-05-09
+
+### Removed
+- Unnecessary `defined?(Legion::Logging)` guards from route handlers — legion-logging is a hard gemspec dependency and always available
+
+## [0.9.53] - 2026-05-08
+
+### Fixed
+- Count array-backed Volition intentions when logging cognitive markers so normal action-selection results do not raise `NoMethodError`.
+- Skip live Apollo-backed partner reflection for idle `action_selection` argument building when there are no signals or partner observations, preventing zero-signal ticks from embedding relationship lookup queries.
+- Stop idle partner-absence checks from polling live Apollo-backed attachment reflection after sustained no-observation heartbeats.
 
 ## [0.9.52] - 2026-05-07
 

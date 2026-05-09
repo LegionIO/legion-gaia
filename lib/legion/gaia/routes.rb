@@ -10,7 +10,7 @@
 module Legion
   module Gaia
     module Routes
-      def self.registered(app) # rubocop:disable Metrics/AbcSize, Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity
+      def self.registered(app)
         app.helpers do # rubocop:disable Metrics/BlockLength
           unless method_defined?(:gaia_available?)
             define_method(:gaia_available?) do
@@ -24,7 +24,7 @@ module Legion
 
               Legion::Gaia::SensoryBuffer::MAX_BUFFER_SIZE
             rescue NameError => e
-              Legion::Logging.debug "[gaia] route helpers failed #{e.class}: #{e.message}" if defined?(Legion::Logging)
+              Legion::Logging.debug "[gaia] route helpers failed #{e.class}: #{e.message}"
               nil
             end
           end
@@ -134,16 +134,12 @@ module Legion
 
       def self.register_teams_webhook_route(app)
         app.post '/api/channels/teams/webhook' do
-          if defined?(Legion::Logging)
-            Legion::Logging.debug "API: POST /api/channels/teams/webhook params=#{params.keys}"
-          end
+          Legion::Logging.debug "API: POST /api/channels/teams/webhook params=#{params.keys}"
           body = request.body.read
 
           adapter = Routes.teams_adapter
           unless adapter
-            if defined?(Legion::Logging)
-              Legion::Logging.warn 'API POST /api/channels/teams/webhook returned 503: teams adapter not available'
-            end
+            Legion::Logging.warn 'API POST /api/channels/teams/webhook returned 503: teams adapter not available'
             halt 503, json_response({ error: 'teams adapter not available' }, status_code: 503)
           end
 
@@ -152,14 +148,12 @@ module Legion
             auth_header: request.env['HTTP_AUTHORIZATION']
           )
           unless result[:status].to_i == 200
-            if defined?(Legion::Logging)
-              Legion::Logging.warn "API POST /api/channels/teams/webhook returned #{result[:status]}: #{result[:type]}"
-            end
+            Legion::Logging.warn "API POST /api/channels/teams/webhook returned #{result[:status]}: #{result[:type]}"
             halt result[:status], json_response({ error: result[:type], detail: result[:detail] },
                                                 status_code: result[:status])
           end
 
-          Legion::Logging.info "API: accepted Teams webhook frame_id=#{result[:frame_id]}" if defined?(Legion::Logging)
+          Legion::Logging.info "API: accepted Teams webhook frame_id=#{result[:frame_id]}"
           json_response({ status: 'accepted', frame_id: result[:frame_id] })
         end
       end
@@ -170,7 +164,7 @@ module Legion
 
         Legion::Gaia.channel_registry.adapter_for(:teams)
       rescue StandardError => e
-        Legion::Logging.warn "Gaia#teams_adapter failed: #{e.message}" if defined?(Legion::Logging)
+        Legion::Logging.warn "Gaia#teams_adapter failed: #{e.message}"
         nil
       end
 
@@ -194,7 +188,7 @@ module Legion
           )
 
           Legion::Gaia.ingest(frame)
-          Legion::Logging.info "API: gaia ingest frame_id=#{frame.id} identity=#{identity}" if defined?(Legion::Logging)
+          Legion::Logging.info "API: gaia ingest frame_id=#{frame.id} identity=#{identity}"
           json_response({ status: 'accepted', frame_id: frame.id })
         end
       end
