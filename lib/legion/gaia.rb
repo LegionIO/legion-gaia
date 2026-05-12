@@ -901,12 +901,21 @@ module Legion
         parts << "reflection=#{category}:#{truncate_text(observation, 48).inspect}"
       end
 
+      def count_marker_value(value)
+        return value.size if value.is_a?(Array)
+        return 0 unless value.respond_to?(:to_i)
+
+        value.to_i
+      end
+
       def append_action_markers(parts, action, tick_number)
         return unless action.is_a?(Hash)
 
-        new_intentions = action[:new_intentions].to_i
+        new_intentions = count_marker_value(action[:new_intentions])
         parts << "intentions+#{new_intentions}" if new_intentions.positive?
-        parts << "active_intentions=#{action[:active_intentions]}" if action[:active_intentions].to_i.positive?
+        if count_marker_value(action[:active_intentions]).positive?
+          parts << "active_intentions=#{count_marker_value(action[:active_intentions])}"
+        end
         parts << "drive=#{action[:dominant_drive]}" if action[:dominant_drive]
         append_action_goal_marker(parts, action)
 
