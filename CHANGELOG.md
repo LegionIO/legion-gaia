@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.9.55] - 2026-05-11
+
+### Fixed
+- `append_action_markers`: handle Array values for `new_intentions` and `active_intentions` — use `.size` for Arrays instead of calling `.to_i`, preventing `NoMethodError` when action selection returns intention lists rather than integer counts.
+
 ## [0.9.54] - 2026-05-09
 
 ### Removed
