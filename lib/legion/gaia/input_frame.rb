@@ -16,7 +16,8 @@ module Legion
       :session_continuity_id,
       :auth_context,
       :metadata,
-      :received_at
+      :received_at,
+      :principal_id
     ) do
       def initialize(
         content:,
@@ -28,7 +29,8 @@ module Legion
         session_continuity_id: nil,
         auth_context: {},
         metadata: {},
-        received_at: Time.now.utc
+        received_at: Time.now.utc,
+        principal_id: nil
       )
         super
       end
@@ -45,14 +47,19 @@ module Legion
         metadata[:salience] || 0.0
       end
 
+      def resolved_principal_id
+        principal_id || auth_context&.dig(:principal_id)
+      end
+
       def to_signal
         {
-          value: content,
-          source_type: metadata[:source_type] || :ambient,
-          salience: salience,
-          channel_id: channel_id,
-          frame_id: id,
-          received_at: received_at
+          value:        content,
+          source_type:  metadata[:source_type] || :ambient,
+          salience:     salience,
+          channel_id:   channel_id,
+          frame_id:     id,
+          received_at:  received_at,
+          principal_id: resolved_principal_id
         }
       end
     end
