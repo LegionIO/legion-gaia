@@ -636,6 +636,45 @@ RSpec.describe Legion::Gaia do
       expect(obs[:channel]).to eq(:teams)
     end
 
+    it 'stores partner interaction traces with scalar affect and valence context' do
+      stub_const('Legion::Extensions::Agentic::Memory::Trace::Runners::Traces', Module.new)
+      allow(Legion::Gaia::BondRegistry).to receive(:bond).with('esity').and_return(:partner)
+      described_class.instance_variable_set(:@last_valences, [
+                                              {
+                                                urgency: 0.6,
+                                                novelty: 0.4,
+                                                importance: 0.8,
+                                                familiarity: 0.2
+                                              }
+                                            ])
+
+      frame = Legion::Gaia::InputFrame.new(
+        content: 'hello',
+        channel_id: :teams,
+        auth_context: { identity: 'esity' }
+      )
+
+      expect_any_instance_of(Object).to receive(:store_trace) do |_runner, payload|
+        expect(payload[:type]).to eq(:episodic)
+        expect(payload[:emotional_valence]).to eq(0.0)
+        expect(payload[:emotional_intensity]).to be_within(0.001).of(0.6)
+        expect(payload[:content_payload]).to include(
+          interaction_type: :text,
+          channel: :teams,
+          direct_address: false,
+          bond_role: :partner
+        )
+        expect(payload[:content_payload][:emotional_context]).to include(
+          urgency: 0.6,
+          novelty: 0.4,
+          importance: 0.8,
+          familiarity: 0.2
+        )
+      end.and_return({ trace_id: SecureRandom.uuid, trace_type: :episodic, strength: 0.6 })
+
+      described_class.ingest(frame)
+    end
+
     it 'records the last channel and channel-native identity for known bonds' do
       allow(Legion::Gaia::BondRegistry).to receive(:bond).and_call_original
       Legion::Gaia::BondRegistry.reset!
