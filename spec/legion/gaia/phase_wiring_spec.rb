@@ -361,10 +361,9 @@ RSpec.describe Legion::Gaia::PhaseWiring do
       expect(content).to include('Resolved 3 contradiction(s)')
     end
 
-    it 'extracts consolidation migration counts' do
+    it 'does not promote consolidation migration counts by themselves' do
       results = { consolidation_commit: { migrated: 5 } }
-      content = described_class.build_promotion_content(results)
-      expect(content).to include('Consolidated 5 memory trace(s)')
+      expect(described_class.build_promotion_content(results)).to be_nil
     end
 
     it 'extracts dream reflection insights' do
@@ -460,6 +459,47 @@ RSpec.describe Legion::Gaia::PhaseWiring do
     end
   end
 
+  describe 'PHASE_ARGS[:knowledge_retrieval] requesting_principal_id' do
+    let(:arg_builder) { described_class::PHASE_ARGS[:knowledge_retrieval] }
+
+    let(:base_ctx) do
+      { signals: [{ value: 'what is ruby?', tags: [], principal_id: nil }],
+        prior_results: {} }
+    end
+
+    it 'includes requesting_principal_id from the signal when present' do
+      ctx = base_ctx.merge(
+        signals: [{ value: 'what is ruby?', source_type: :human_direct, tags: [], principal_id: 42 }]
+      )
+      args = arg_builder.call(ctx)
+      expect(args[:requesting_principal_id]).to eq(42)
+    end
+
+    it 'passes requesting_principal_id as nil when signal has no principal_id' do
+      ctx = base_ctx.merge(
+        signals: [{ value: 'test', source_type: :human_direct, tags: [] }]
+      )
+      args = arg_builder.call(ctx)
+      expect(args[:requesting_principal_id]).to be_nil
+    end
+
+    it 'returns skip hash (not raise) when signals is empty' do
+      args = arg_builder.call(base_ctx.merge(signals: []))
+      expect(args).to be_a(Hash)
+    end
+
+    it 'reads principal_id from the last human_direct signal, not the last signal overall' do
+      ctx = base_ctx.merge(
+        signals: [
+          { value: 'human query', tags: [], source_type: :human_direct, principal_id: 42 },
+          { value: 'system update', tags: [], source_type: :ambient, principal_id: nil }
+        ]
+      )
+      args = arg_builder.call(ctx)
+      expect(args[:requesting_principal_id]).to eq(42)
+    end
+  end
+
   describe 'PHASE_ARGS knowledge_promotion' do
     let(:builder) { described_class::PHASE_ARGS[:knowledge_promotion] }
 
@@ -476,6 +516,11 @@ RSpec.describe Legion::Gaia::PhaseWiring do
       expect(result[:content_type]).to eq(:observation)
       expect(result[:tags]).to include('dream_cycle')
       expect(result[:source_agent]).to eq('gaia')
+    end
+
+    it 'skips promotion when the only dream result is consolidation bookkeeping' do
+      ctx = { prior_results: { consolidation_commit: { migrated: 64 } } }
+      expect(builder.call(ctx)).to eq({ skip: true })
     end
   end
 
