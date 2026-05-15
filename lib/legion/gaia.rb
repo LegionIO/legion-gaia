@@ -1,5 +1,8 @@
 # frozen_string_literal: true
 
+require 'legion/json'
+require 'legion/logging'
+require 'legion/settings'
 require 'legion/gaia/version'
 require 'legion/gaia/tick_history'
 require 'legion/gaia/workflow'
@@ -134,8 +137,6 @@ module Legion
 
       def settings
         defaults = Legion::Gaia::Settings.default
-        return defaults unless Legion.const_defined?('Settings', false)
-
         loaded = Legion::Settings[:gaia]
         return defaults unless loaded.is_a?(Hash)
 
@@ -774,8 +775,8 @@ module Legion
         store = apollo_local_store
         return unless store
 
-        TrackerPersistence.hydrate_all(store: store) if defined?(TrackerPersistence)
-        BondRegistry.hydrate_from_apollo(store: store) if defined?(BondRegistry)
+        TrackerPersistence.hydrate_all(store: store)
+        BondRegistry.hydrate_from_apollo(store: store)
         log.info('Legion::Gaia hydrated trackers and bond registry from Apollo Local')
       rescue StandardError => e
         handle_exception(e, level: :warn, operation: 'gaia.hydrate_from_apollo_local')
