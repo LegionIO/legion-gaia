@@ -85,5 +85,46 @@ RSpec.describe Legion::Gaia::InputFrame do
       expect(signal[:channel_id]).to eq(:cli)
       expect(signal[:frame_id]).to eq(frame.id)
     end
+
+    it 'includes principal_id in the signal hash' do
+      frame = described_class.new(content: 'hello', channel_id: 'test', principal_id: 42)
+      expect(frame.to_signal[:principal_id]).to eq(42)
+    end
+
+    it 'includes nil principal_id when not set' do
+      frame = described_class.new(content: 'hello', channel_id: 'test')
+      expect(frame.to_signal[:principal_id]).to be_nil
+    end
+  end
+
+  describe 'principal_id' do
+    it 'defaults to nil when not provided' do
+      frame = described_class.new(content: 'hello', channel_id: 'test')
+      expect(frame.principal_id).to be_nil
+    end
+
+    it 'accepts an explicit integer principal_id' do
+      frame = described_class.new(content: 'hello', channel_id: 'test', principal_id: 42)
+      expect(frame.principal_id).to eq(42)
+    end
+  end
+
+  describe '#resolved_principal_id' do
+    it 'returns explicit principal_id when set' do
+      frame = described_class.new(content: 'hello', channel_id: 'test',
+                                  principal_id: 99, auth_context: { principal_id: 7 })
+      expect(frame.resolved_principal_id).to eq(99)
+    end
+
+    it 'falls back to auth_context[:principal_id] when principal_id is nil' do
+      frame = described_class.new(content: 'hello', channel_id: 'test',
+                                  auth_context: { principal_id: 7 })
+      expect(frame.resolved_principal_id).to eq(7)
+    end
+
+    it 'returns nil when neither is set' do
+      frame = described_class.new(content: 'hello', channel_id: 'test')
+      expect(frame.resolved_principal_id).to be_nil
+    end
   end
 end
