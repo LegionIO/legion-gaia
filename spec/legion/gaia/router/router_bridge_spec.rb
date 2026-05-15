@@ -126,7 +126,7 @@ RSpec.describe Legion::Gaia::Router::RouterBridge do
       delivery_info = double('delivery_info', delivery_tag: 'tag-1')
       payload = Legion::JSON.dump({ id: 'frame-2', content: 'hello', content_type: :text, channel_id: :cli })
 
-      stub_const('Legion::Gaia::Router::Transport', Module.new) unless defined?(Legion::Gaia::Router::Transport)
+      stub_const('Legion::Gaia::Router::Transport', Module.new)
       stub_const('Legion::Gaia::Router::Transport::Queues', Module.new)
       stub_const('Legion::Gaia::Router::Transport::Queues::Outbound', outbound_class)
       allow(bridge).to receive(:transport_available?).and_return(true)
@@ -151,7 +151,7 @@ RSpec.describe Legion::Gaia::Router::RouterBridge do
       delivery_info = double('delivery_info', delivery_tag: 'tag-2')
       payload = Legion::JSON.dump({ id: 'frame-3', content: 'hello', content_type: :text, channel_id: :missing })
 
-      stub_const('Legion::Gaia::Router::Transport', Module.new) unless defined?(Legion::Gaia::Router::Transport)
+      stub_const('Legion::Gaia::Router::Transport', Module.new)
       stub_const('Legion::Gaia::Router::Transport::Queues', Module.new)
       stub_const('Legion::Gaia::Router::Transport::Queues::Outbound', outbound_class)
       allow(bridge).to receive(:transport_available?).and_return(true)

@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.9.56] - 2026-05-15
+
+### Fixed
+- Preserve GAIA defaults while overlaying loaded `:gaia` settings so partial config hashes do not erase required keys like `heartbeat_interval` or `router`.
+- Record partner interaction traces with scalar affect fields and separate structured valence context, preventing `String`/`Hash` values from crashing trace storage during ingest.
+
 ## [0.9.55] - 2026-05-11
 
 ### Fixed

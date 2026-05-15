@@ -1,5 +1,8 @@
 # frozen_string_literal: true
 
+require 'legion/json'
+require 'legion/logging'
+require 'legion/settings'
 require 'legion/gaia/version'
 require 'legion/gaia/tick_history'
 require 'legion/gaia/workflow'
@@ -133,11 +136,11 @@ module Legion
       end
 
       def settings
-        if Legion.const_defined?('Settings', false)
-          Legion::Settings[:gaia] || Legion::Gaia::Settings.default
-        else
-          Legion::Gaia::Settings.default
-        end
+        defaults = Legion::Gaia::Settings.default
+        loaded = Legion::Settings[:gaia]
+        return defaults unless loaded.is_a?(Hash)
+
+        merge_settings_hashes(defaults, loaded)
       end
 
       def heartbeat(**)
@@ -539,6 +542,7 @@ module Legion
       def record_interaction_trace(observation)
         return unless defined?(Legion::Extensions::Agentic::Memory::Trace::Runners::Traces)
 
+        emotional_context = interaction_trace_emotional_context
         runner = Object.new
         runner.extend(Legion::Extensions::Agentic::Memory::Trace::Runners::Traces)
         trace_result = runner.store_trace(
@@ -548,11 +552,13 @@ module Legion
             channel: observation[:channel],
             direct_address: observation[:direct_address],
             bond_role: observation[:bond_role]
-          },
+          }.tap do |payload|
+            payload[:emotional_context] = emotional_context if emotional_context
+          end,
           domain_tags: ['partner_interaction', observation[:channel].to_s],
           origin: :direct_experience,
-          emotional_valence: @last_valences&.first&.inspect,
-          emotional_intensity: 0.5,
+          emotional_valence: interaction_trace_emotional_valence(emotional_context),
+          emotional_intensity: interaction_trace_emotional_intensity(emotional_context),
           confidence: 0.8
         )
         log.info("[gaia] memory+ episodic trace=#{trace_result[:trace_id].to_s[0, 8]} " \
@@ -602,6 +608,33 @@ module Legion
         return nil unless @last_response_at
 
         (Time.now.utc - @last_response_at).to_f
+      end
+
+      def interaction_trace_emotional_context
+        context = @last_valences&.first
+        context.is_a?(Hash) ? context.dup : nil
+      end
+
+      def interaction_trace_emotional_valence(emotional_context)
+        raw = emotional_context || @last_valences&.first
+        return raw.to_f.clamp(-1.0, 1.0) if raw.is_a?(Numeric)
+
+        numeric = Float(raw)
+        numeric.clamp(-1.0, 1.0)
+      rescue ArgumentError, TypeError
+        0.0
+      end
+
+      def interaction_trace_emotional_intensity(emotional_context)
+        compute_arousal(emotional_context) || 0.5
+      end
+
+      def merge_settings_hashes(base, override)
+        return override unless base.is_a?(Hash) && override.is_a?(Hash)
+
+        base.merge(override) do |_key, base_value, override_value|
+          merge_settings_hashes(base_value, override_value)
+        end
       end
 
       def check_partner_absence(observations, phase_handlers)
@@ -742,8 +775,8 @@ module Legion
         store = apollo_local_store
         return unless store
 
-        TrackerPersistence.hydrate_all(store: store) if defined?(TrackerPersistence)
-        BondRegistry.hydrate_from_apollo(store: store) if defined?(BondRegistry)
+        TrackerPersistence.hydrate_all(store: store)
+        BondRegistry.hydrate_from_apollo(store: store)
         log.info('Legion::Gaia hydrated trackers and bond registry from Apollo Local')
       rescue StandardError => e
         handle_exception(e, level: :warn, operation: 'gaia.hydrate_from_apollo_local')

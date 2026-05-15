@@ -285,7 +285,7 @@ module Legion
       end
 
       def knowledge_setting(key, default)
-        return default unless defined?(Legion::Settings) && !Legion::Settings[:gaia].nil?
+        return default if Legion::Settings[:gaia].nil?
 
         Legion::Settings[:gaia].dig(:knowledge, key) || default
       rescue StandardError => e
