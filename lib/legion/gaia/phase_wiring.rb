@@ -100,10 +100,10 @@ module Legion
           end
 
           {
-            text:                    current_signal[:value] || current_signal[:content] || current_signal.to_s,
-            limit:                   knowledge_setting(:retrieval_limit, 5),
-            min_confidence:          knowledge_setting(:retrieval_min_confidence, 0.3),
-            tags:                    current_signal[:tags],
+            text: current_signal[:value] || current_signal[:content] || current_signal.to_s,
+            limit: knowledge_setting(:retrieval_limit, 5),
+            min_confidence: knowledge_setting(:retrieval_min_confidence, 0.3),
+            tags: current_signal[:tags],
             requesting_principal_id: current_signal[:principal_id]
           }
         },
