@@ -85,7 +85,8 @@ module Legion
             device_context: payload[:device_context] || {},
             session_continuity_id: payload[:session_continuity_id],
             auth_context: payload[:auth_context] || {},
-            metadata: payload[:metadata] || {}
+            metadata: payload[:metadata] || {},
+            principal_id: payload[:principal_id]
           )
         rescue StandardError => e
           handle_exception(e, level: :warn, operation: 'gaia.router.agent_bridge.reconstruct_input_frame',

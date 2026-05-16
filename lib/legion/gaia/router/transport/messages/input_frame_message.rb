@@ -29,7 +29,8 @@ module Legion
                 session_continuity_id: frame.session_continuity_id,
                 auth_context: frame.auth_context,
                 metadata: frame.metadata,
-                received_at: frame.received_at.to_s
+                received_at: frame.received_at.to_s,
+                principal_id: frame.principal_id
               }
             end
 
