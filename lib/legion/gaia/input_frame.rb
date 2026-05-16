@@ -19,7 +19,7 @@ module Legion
       :received_at,
       :principal_id
     ) do
-      def initialize(
+      def initialize( # rubocop:disable Metrics/ParameterLists
         content:,
         channel_id:,
         id: SecureRandom.uuid,
@@ -53,12 +53,12 @@ module Legion
 
       def to_signal
         {
-          value:        content,
-          source_type:  metadata[:source_type] || :ambient,
-          salience:     salience,
-          channel_id:   channel_id,
-          frame_id:     id,
-          received_at:  received_at,
+          value: content,
+          source_type: metadata[:source_type] || :ambient,
+          salience: salience,
+          channel_id: channel_id,
+          frame_id: id,
+          received_at: received_at,
           principal_id: resolved_principal_id
         }
       end
