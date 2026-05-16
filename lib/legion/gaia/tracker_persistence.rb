@@ -96,8 +96,16 @@ module Legion
       def flush_tracker(tracker, store:)
         entries = tracker.to_apollo_entries
         results = entries.map do |entry|
-          store.upsert(content: entry[:content], tags: entry[:tags],
-                       source_channel: 'gaia', confidence: entry.fetch(:confidence, 0.9))
+          store.upsert(
+            content:                 entry[:content],
+            tags:                    entry[:tags],
+            source_channel:          'gaia',
+            confidence:              entry.fetch(:confidence, 0.9),
+            access_scope:            entry.fetch(:access_scope, 'global'),
+            identity_canonical_name: entry[:identity_canonical_name],
+            identity_principal_id:   entry[:identity_principal_id],
+            identity_id:             entry[:identity_id]
+          )
         end
 
         unless results.all? { |result| upsert_succeeded?(result) }
