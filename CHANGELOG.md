@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.9.57] - 2026-05-15
+
+### Fixed
+- Stop GAIA dream-cycle knowledge promotion from storing consolidation-count bookkeeping in Apollo; maintenance summaries like `Consolidated N memory trace(s) to long-term storage` are no longer promoted as actionable knowledge.
+
 ## [0.9.56] - 2026-05-15
 
 ### Fixed

@@ -89,7 +89,8 @@ module Legion
           { limit: knowledge_setting(:memory_retrieval_limit, 10) }
         },
         knowledge_retrieval: lambda { |ctx|
-          current_signal = ctx[:signals]&.last
+          human_signal = ctx[:signals]&.select { |s| s.is_a?(Hash) && s[:source_type] == :human_direct }&.last
+          current_signal = human_signal || ctx[:signals]&.last
           memory_results = ctx.dig(:prior_results, :memory_retrieval)
           skip_threshold = knowledge_setting(:memory_skip_threshold, 0.8)
 
@@ -102,7 +103,8 @@ module Legion
             text: current_signal[:value] || current_signal[:content] || current_signal.to_s,
             limit: knowledge_setting(:retrieval_limit, 5),
             min_confidence: knowledge_setting(:retrieval_min_confidence, 0.3),
-            tags: current_signal[:tags]
+            tags: current_signal[:tags],
+            requesting_principal_id: current_signal[:principal_id]
           }
         },
         identity_entropy_check: ->(_ctx) { {} },
@@ -517,7 +519,6 @@ module Legion
         parts = [
           extract_association(prior_results[:association_walk]),
           extract_conflicts(prior_results[:contradiction_resolution]),
-          extract_consolidation(prior_results[:consolidation_commit]),
           extract_reflection(prior_results[:dream_reflection]),
           extract_agenda(prior_results[:agenda_formation])
         ].compact
@@ -558,12 +559,6 @@ module Legion
         return unless conflicts.is_a?(Hash) && conflicts[:resolved].to_i.positive?
 
         "Resolved #{conflicts[:resolved]} contradiction(s)"
-      end
-
-      def extract_consolidation(consol)
-        return unless consol.is_a?(Hash) && consol[:migrated].to_i.positive?
-
-        "Consolidated #{consol[:migrated]} memory trace(s) to long-term storage"
       end
 
       def extract_reflection(reflection)
