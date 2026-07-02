@@ -82,43 +82,25 @@ have different confidence constants. Do not conflate them.
 - Tick history is an **in-memory, 200-entry ring buffer** recording `{ timestamp, phase, duration_ms,
   status }` per phase. This is not database-persisted — restart the process and it is gone.
 
-## Measured, From a Production Deployment
+## Measured, From the Maintainer's Development Instance
 
-The numbers below come from one production deployment of the framework, not a benchmark suite.
-Date windows and provenance are stated next to each figure; treat this as evidence from a single
-running instance, not a generalizable result.
+The numbers below come from the maintainer's long-running development instance of the framework,
+not a benchmark suite. Date windows and provenance are stated next to each figure; treat this as
+evidence from a single running instance, not a generalizable result.
 
 **A reinforcement-learning receipt.** A GAIA advisory weight learned from `0.5` to `0.535` across
 scored reaction events, recorded in a timestamped ledger entry. This is the smallest verifiable
 unit of "the layer learned something" available today.
 
-**Production Postgres (window 2026-03-26 to 2026-05-30):**
+**Maintainer's development instance (83 days, 2026-04-10 to 2026-07-02):**
 
-| Memory type | Traces |
-|---|---|
-| Episodic | 4,181,871 |
-| Semantic | 76,088 |
-| Sensory | 2,557 |
-| Identity | 2,554 |
-| Procedural | 1,818 |
-| **Total** | **4,262,888** |
-
-- 2,897,670 memory co-activation pairs.
-- 53,686 contradictions detected and linked.
-- 208 similarity relations with learned weight variance (range 0.900–0.99996, average 0.926).
-- 33,862 identity resolutions: 16,972 Entra-verified, 16,890 cache-served, 217 unverified, 65
-  canonical changes.
-
-**Local SQLite (83 days, 2026-04-10 to 2026-07-02):**
-
-- 133,585 traces, every one decayed at least once.
+- 133,585 memory traces, every one decayed at least once.
 - 3,407 reinforced.
 - Maximum reinforcement count on a single trace: 37.
 
 **A note on contradiction weights.** Contradiction links carry a *fixed* assigned weight of `0.8` —
 this is a flag for downstream resolution, not a learned value. Do not read it as evidence of
-learning. The learned variance lives in the similarity relations above (0.900–0.99996) and in the
-0.5 -> 0.535 advisory weight artifact.
+learning. The learned variance lives in the 0.5 -> 0.535 advisory weight artifact above.
 
 ## The Loop With the LLM Layer
 
@@ -129,16 +111,16 @@ on it. GAIA does not inject prompts itself.
 
 ## Honest Boundaries
 
-- All measured numbers above come from a single production deployment, not a benchmark suite —
-  treat them as evidence from one running instance, not a general claim about the approach.
+- All measured numbers above come from the maintainer's own development instance, not a benchmark
+  suite and not any operational deployment — treat them as evidence from one running instance, not
+  a general claim about the approach.
 - Some mechanisms have code but no accumulated data yet: the entity-relationship graph tables are
-  empty in the measured deployment, and mind-growth proposals persist only to a 7-day cache TTL, so
+  empty in the measured instance, and mind-growth proposals persist only to a 7-day cache TTL, so
   there is no long-horizon record of them yet.
 - Tick history is in-memory only (see the 200-entry ring buffer above) — it does not survive a
   restart, and there is currently no persisted long-run tick record.
 - Whether this coordination layer earns its keep — whether reinforcement and decay measurably
-  improve routing over the plain job engine — is an open research question. It is being run in
-  production specifically to answer that question, not because the answer is already known.
+  improve routing over the plain job engine — is an open research question.
 
 ## Installation
 
