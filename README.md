@@ -59,15 +59,21 @@ checked against source rather than taken on faith.
 - Auto-revert: after exactly 3 consecutive failures, the mutation's recorded `before_state` is
   restored automatically.
 
-**Knowledge confidence — [`legion-apollo`](https://github.com/LegionIO/legion-apollo):**
+**Knowledge confidence — two tiers, two gems:**
 
-- New knowledge starts at confidence `0.5` with status `candidate`.
-- Corroboration adds `+0.3 * weight`, but only when a `>= 0.9` cosine-similar entry arrives from a
-  *different* provider than the original.
-- Retrieval adds `+0.02` to confidence.
-- Power-law time decay begins after 168 hours of inactivity.
-- Entries archive below confidence `0.05`.
-- Lifecycle: `candidate` -> `confirmed` -> `disputed` -> `archived`.
+Apollo knowledge is split across a local per-node store and a shared cross-node store, and the two
+have different confidence constants. Do not conflate them.
+
+- Local store — [`legion-apollo`](https://github.com/LegionIO/legion-apollo)
+  (`lib/legion/apollo/helpers/confidence.rb`): new knowledge starts at confidence `0.5`,
+  corroboration adds `+0.15`, decay rate is `0.005`, entries archive below confidence `0.1`.
+  Lifecycle: `pending` -> `confirmed` -> `disputed` -> `deprecated` -> `archived`.
+- Shared store — [`lex-apollo`](https://github.com/LegionIO/lex-apollo)
+  (`lib/legion/extensions/apollo/helpers/confidence.rb`): new knowledge starts at confidence `0.5`,
+  corroboration adds `+0.3 * weight` when a `>= 0.9` cosine-similar entry arrives from a *different*
+  provider (weight is halved for a same-provider match), retrieval adds `+0.02`, power-law time
+  decay begins after 168 hours of inactivity, and entries archive below confidence `0.05`.
+  Lifecycle: `candidate` -> `confirmed` -> `disputed` -> `decayed` -> `archived`.
 
 **Tick scheduling — `lex-tick` constants:**
 
