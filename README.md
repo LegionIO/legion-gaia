@@ -1,6 +1,10 @@
 # Legion::Gaia
 
-GAIA is the cognitive coordination layer for LegionIO. It turns channel input, extension runners, memory, notification policy, and router transport into one continuously ticking agent runtime.
+GAIA is the coordination layer for LegionIO's experimental agentic extensions. It turns channel
+input, extension runners, memory, notification policy, and router transport into one continuously
+ticking agent runtime. The layer is research: the open question is whether a job engine improves
+when successful task-routes strengthen and unused ones decay. GAIA is optional — the core LegionIO
+job engine runs without it, and none of its cognitive mechanics activate unless it is installed.
 
 **Version:** 0.9.50
 
@@ -38,6 +42,85 @@ The registry resolves runners from the loaded LegionIO extension set and builds 
 - `elapsed_ms`: monotonic elapsed time in milliseconds
 
 Those fields feed `/api/gaia/ticks` for operator-facing tick stream observability.
+
+## The Mechanics, From Source
+
+GAIA itself does not implement learning — it schedules and wires the extensions that do. The
+formulas below live in the sibling gems GAIA coordinates, and are cited here so the claims can be
+checked against source rather than taken on faith.
+
+**Connection reinforcement — [`lex-synapse`](https://github.com/LegionIO/lex-synapse):**
+
+- Connection confidence: `+0.02` per success, `-0.05` per failure, `-0.03` per validation failure.
+- Consecutive-success bonus: `+0.05` after 50 consecutive successes.
+- Idle decay: `confidence * 0.998^hours`.
+- Autonomy ladder, driven by confidence: `observe` 0.0–0.3, `filter` 0.3–0.6, `transform` 0.6–0.8,
+  `autonomous` 0.8–1.0.
+- Auto-revert: after exactly 3 consecutive failures, the mutation's recorded `before_state` is
+  restored automatically.
+
+**Knowledge confidence — two tiers, two gems:**
+
+Apollo knowledge is split across a local per-node store and a shared cross-node store, and the two
+have different confidence constants. Do not conflate them.
+
+- Local store — [`legion-apollo`](https://github.com/LegionIO/legion-apollo)
+  (`lib/legion/apollo/helpers/confidence.rb`): new knowledge starts at confidence `0.5`,
+  corroboration adds `+0.15`, decay rate is `0.005`, entries archive below confidence `0.1`.
+  Lifecycle: `pending` -> `confirmed` -> `disputed` -> `deprecated` -> `archived`.
+- Shared store — [`lex-apollo`](https://github.com/LegionIO/lex-apollo)
+  (`lib/legion/extensions/apollo/helpers/confidence.rb`): new knowledge starts at confidence `0.5`,
+  corroboration adds `+0.3 * weight` when a `>= 0.9` cosine-similar entry arrives from a *different*
+  provider (weight is halved for a same-provider match), retrieval adds `+0.02`, power-law time
+  decay begins after 168 hours of inactivity, and entries archive below confidence `0.05`.
+  Lifecycle: `candidate` -> `confirmed` -> `disputed` -> `decayed` -> `archived`.
+
+**Tick scheduling — `lex-tick` constants:**
+
+- 16 full-active phases, 10 dream phases.
+- 4 modes with fixed time budgets: `dormant` 0.2s, `sentinel` 0.5s, `full` and `dream` 5.0s each.
+- Tick history is an **in-memory, 200-entry ring buffer** recording `{ timestamp, phase, duration_ms,
+  status }` per phase. This is not database-persisted — restart the process and it is gone.
+
+## Measured, From the Maintainer's Development Instance
+
+The numbers below come from the maintainer's long-running development instance of the framework,
+not a benchmark suite. Date windows and provenance are stated next to each figure; treat this as
+evidence from a single running instance, not a generalizable result.
+
+**A reinforcement-learning receipt.** A GAIA advisory weight learned from `0.5` to `0.535` across
+scored reaction events, recorded in a timestamped ledger entry. This is the smallest verifiable
+unit of "the layer learned something" available today.
+
+**Maintainer's development instance (83 days, 2026-04-10 to 2026-07-02):**
+
+- 133,585 memory traces, every one decayed at least once.
+- 3,407 reinforced.
+- Maximum reinforcement count on a single trace: 37.
+
+**A note on contradiction weights.** Contradiction links carry a *fixed* assigned weight of `0.8` —
+this is a flag for downstream resolution, not a learned value. Do not read it as evidence of
+learning. The learned variance lives in the 0.5 -> 0.535 advisory weight artifact above.
+
+## The Loop With the LLM Layer
+
+GAIA's own retrieval lands in tick context and executive goal formation — it does not touch LLM
+requests directly. Injection of Apollo knowledge into LLM requests happens in `legion-llm`'s
+pipeline, via the `rag_context` and `gaia_advisory` steps: the pipeline pulls context, GAIA advises
+on it. GAIA does not inject prompts itself.
+
+## Honest Boundaries
+
+- All measured numbers above come from the maintainer's own development instance, not a benchmark
+  suite and not any operational deployment — treat them as evidence from one running instance, not
+  a general claim about the approach.
+- Some mechanisms have code but no accumulated data yet: the entity-relationship graph tables are
+  empty in the measured instance, and mind-growth proposals persist only to a 7-day cache TTL, so
+  there is no long-horizon record of them yet.
+- Tick history is in-memory only (see the 200-entry ring buffer above) — it does not survive a
+  restart, and there is currently no persisted long-run tick record.
+- Whether this coordination layer earns its keep — whether reinforcement and decay measurably
+  improve routing over the plain job engine — is an open research question.
 
 ## Installation
 
