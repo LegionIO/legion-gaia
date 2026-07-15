@@ -639,6 +639,7 @@ RSpec.describe Legion::Gaia do
     it 'stores partner interaction traces with scalar affect and valence context' do
       stub_const('Legion::Extensions::Agentic::Memory::Trace::Runners::Traces', Module.new)
       allow(Legion::Gaia::BondRegistry).to receive(:bond).with('esity').and_return(:partner)
+      allow(Legion::Gaia::BondRegistry).to receive(:partner?).with('esity').and_return(true)
       described_class.instance_variable_set(:@last_valences, [
                                               {
                                                 urgency: 0.6,
@@ -678,7 +679,7 @@ RSpec.describe Legion::Gaia do
     it 'records the last channel and channel-native identity for known bonds' do
       allow(Legion::Gaia::BondRegistry).to receive(:bond).and_call_original
       Legion::Gaia::BondRegistry.reset!
-      Legion::Gaia::BondRegistry.register('aad-123', bond: :partner)
+      Legion::Gaia::BondRegistry.register('aad-123', bond: :partner, strength: 0.7)
 
       frame = Legion::Gaia::InputFrame.new(
         content: 'hello',
