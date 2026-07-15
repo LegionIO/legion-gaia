@@ -378,6 +378,7 @@ module Legion
         boot_channels
         boot_agent_bridge
         hydrate_from_apollo_local
+        register_provisional_partner_prior
         log.info('Legion::Gaia agent mode boot complete')
       end
 
@@ -510,34 +511,84 @@ module Legion
       end
 
       def observe_interlocutor(input_frame, identity)
-        role = BondRegistry.bond(identity.to_s)
+        identity_str = identity.to_s
+        auth_ctx = input_frame.auth_context || {}
 
+        # Ensure the identity is registered so reinforce has a target
+        BondRegistry.register(identity_str, bond: nil) unless BondRegistry.bond(identity_str) != :unknown
+
+        # Every interaction reinforces — the evidence accumulation loop
+        direct_address = input_frame.metadata[:direct_address] || false
+        current_entry  = BondRegistry.instance_variable_get(:@bonds)[identity_str]
+        new_channel    = current_entry ? current_entry[:last_channel] != input_frame.channel_id : false
+
+        BondRegistry.reinforce(
+          identity_str,
+          direct_address: direct_address,
+          new_channel: new_channel,
+          multiplier: fetch_imprint_multiplier
+        )
+
+        # Build observation hash
+        role = BondRegistry.bond(identity_str)
         observation = {
-          identity: identity.to_s,
+          identity: identity_str,
           bond_role: role,
           channel: input_frame.channel_id,
           content_type: input_frame.content_type,
           content: input_frame.content.to_s,
           content_length: input_frame.content.to_s.length,
-          direct_address: input_frame.metadata[:direct_address] || false,
+          direct_address: direct_address,
           latency: compute_response_latency,
-          timestamp: input_frame.received_at
+          timestamp: input_frame.received_at,
+          identity_principal_id: auth_ctx[:principal_id] || auth_ctx[:aad_object_id],
+          identity_canonical_name: auth_ctx[:canonical_name],
+          identity_id: auth_ctx[:identity]&.to_s
         }
 
         @partner_observations ||= []
         @partner_observations.push(observation)
         log.debug(
-          "Legion::Gaia observed interlocutor identity=#{identity} " \
+          "Legion::Gaia observed interlocutor identity=#{identity_str} " \
           "role=#{role} channel=#{input_frame.channel_id}"
         )
 
-        if role == :partner
+        if defined?(Legion::Extensions::Coldstart)
+          bootstrap = Legion::Extensions::Coldstart::Helpers::Bootstrap.instance
+          bootstrap.record_observation
+        end
+
+        # The gate: only partner-level identities get deep learning
+        if BondRegistry.partner?(identity_str)
           record_interaction_trace(observation)
           evaluate_calibration(observation)
         end
       rescue StandardError => e
         handle_exception(e, level: :warn, operation: 'gaia.observe_interlocutor', identity: identity)
       end
+
+      def register_provisional_partner_prior
+        return unless BondRegistry.partner_entry.nil?
+
+        process_identity = resolve_process_identity
+        prior_strength   = settings&.dig(:partner, :prior_strength) || 0.5
+
+        BondRegistry.register(
+          process_identity,
+          bond: :partner,
+          priority: :primary,
+          origin: :provisional,
+          strength: prior_strength
+        )
+        log.info(
+          "[gaia] provisional partner prior identity=#{process_identity} strength=#{prior_strength}"
+        )
+      end
+
+      def resolve_process_identity
+        Etc.loginname || ENV.fetch('USER', nil) || 'unknown'
+      end
+      private :resolve_process_identity
 
       def record_interaction_trace(observation)
         return unless defined?(Legion::Extensions::Agentic::Memory::Trace::Runners::Traces)
@@ -602,6 +653,19 @@ module Legion
           tags: %w[bond calibration]
         )
         @calibration_runner = runner
+      end
+
+      def fetch_imprint_multiplier
+        # Soft-dep on lex-coldstart; returns settings default if unavailable
+        return 1.0 unless defined?(Legion::Extensions::Coldstart) && Legion::Extensions::Coldstart.connected?
+
+        runner = @registry&.runner_instances&.dig(:Coldstart)
+        return settings&.dig(:bonds, :imprint_multiplier) || 3.0 unless runner.respond_to?(:imprint_active?)
+
+        runner.imprint_active? ? (runner.current_multiplier || 3.0) : 1.0
+      rescue StandardError => e
+        handle_exception(e, level: :debug, operation: 'gaia.fetch_imprint_multiplier')
+        settings&.dig(:bonds, :imprint_multiplier) || 3.0
       end
 
       def compute_response_latency
