@@ -586,7 +586,7 @@ module Legion
       end
 
       def resolve_process_identity
-        Etc.loginname || ENV.fetch('USER', nil) || 'unknown'
+        (defined?(Etc) && Etc.respond_to?(:loginname) && Etc.loginname) || ENV.fetch('USER', nil) || 'unknown'
       end
       private :resolve_process_identity
 
