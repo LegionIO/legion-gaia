@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.9.58] - 2026-07-15
+### Added
+- Earned bond formation: strength-based partner detection, reinforcement lifecycle, coldstart wire
+
 ## [0.9.57] - 2026-05-15
 
 ### Fixed
