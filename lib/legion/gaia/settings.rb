@@ -16,7 +16,18 @@ module Legion
           session: { persistence: 'auto', ttl: 86_400 },
           output: { mobile_max_length: 500, suggest_channel_switch: true },
           notifications: default_notifications,
-          knowledge: default_knowledge
+          partner: default_partner
+        }
+      end
+
+      def default_partner
+        {
+          prior_strength: 0.5,
+          r_amount: 0.1,
+          direct_address_weight: 1.5,
+          corroboration_weight: 1.3,
+          partner_threshold: 0.6,
+          identity_decay_rate: 0.002
         }
       end
 
@@ -25,16 +36,6 @@ module Legion
           cli: { enabled: true },
           teams: { enabled: false },
           slack: { enabled: false }
-        }
-      end
-
-      def default_knowledge
-        {
-          retrieval_limit: 5,
-          retrieval_min_confidence: 0.3,
-          memory_retrieval_limit: 10,
-          memory_audit_limit: 20,
-          memory_skip_threshold: 0.8
         }
       end
 
