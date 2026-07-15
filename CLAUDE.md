@@ -1,190 +1,87 @@
-# legion-gaia: Cognitive Coordination Layer for LegionIO
+# legion-gaia
 
-**Repository Level 3 Documentation**
-- **Parent**: `/Users/miverso2/rubymine/legion/CLAUDE.md`
-- **GitHub**: https://github.com/LegionIO/legion-gaia
-- **Version**: 0.9.46
+Cognitive coordination layer for LegionIO — a continuously ticking agent runtime. Drains channel
+input into a sensory buffer, runs it through a weighted pipeline of agentic cognitive phases via
+`lex-tick`, and routes responses back out through schedule/presence/behavioral notification gates.
+Provides channel abstraction for multi-interface communication (CLI, Microsoft Teams, Slack).
 
-## Purpose
+**GitHub**: https://github.com/LegionIO/legion-gaia
 
-Cognitive coordination layer for LegionIO. GAIA absorbs and replaces `lex-cortex`, elevating the cognitive wiring from an extension to a core library. It drives the tick cycle, discovers and wires agentic extensions, and provides channel abstraction for multi-interface communication (CLI, Teams, Slack).
+## Build & Test
 
-## Key Files
-
-```
-lib/legion/gaia.rb                      # Entry point: boot, shutdown, heartbeat, ingest, respond, status
-lib/legion/gaia/version.rb              # VERSION constant
-lib/legion/gaia/settings.rb             # Default config hash (channels, router, session, output)
-lib/legion/gaia/registry.rb             # Extension discovery, runner wiring, phase handler management
-lib/legion/gaia/phase_wiring.rb         # PHASE_MAP (25 phases: 16 active + 9 dream), PHASE_ARGS, resolve/build helpers
-lib/legion/gaia/runner_host.rb          # Wraps runner modules with isolated instance state via extend
-lib/legion/gaia/sensory_buffer.rb       # Thread-safe signal queue (max 1000, normalized)
-lib/legion/gaia/actors/heartbeat.rb     # Every-1s actor, drains buffer and drives tick
-lib/legion/gaia/input_frame.rb          # Data.define — immutable inbound message from any channel
-lib/legion/gaia/output_frame.rb         # Data.define — immutable outbound response to any channel
-lib/legion/gaia/channel_adapter.rb      # Base class for channel adapters (translate in/out, deliver)
-lib/legion/gaia/channel_registry.rb     # Registry of active channel adapters, thread-safe
-lib/legion/gaia/channel_aware_renderer.rb # Adapts output complexity to channel capabilities + transition suggestions
-lib/legion/gaia/output_router.rb        # Routes OutputFrames through renderer to correct adapter
-lib/legion/gaia/session_store.rb        # Session continuity tracking, keyed by human identity
-lib/legion/gaia/channels/cli_adapter.rb # First concrete adapter — wraps CLI input/output
-lib/legion/gaia/channels/teams_adapter.rb           # Teams adapter — Bot Framework activities to Frames
-lib/legion/gaia/channels/teams/bot_framework_auth.rb # JWT validation for Bot Framework tokens
-lib/legion/gaia/channels/teams/conversation_store.rb # Thread-safe conversation reference storage
-lib/legion/gaia/channels/teams/webhook_handler.rb    # HTTP webhook handler for Bot Framework activities
-lib/legion/gaia/channels/slack_adapter.rb            # Slack adapter — Events API to Frames
-lib/legion/gaia/channels/slack/signing_verifier.rb   # HMAC-SHA256 request verification for Slack Events API
-lib/legion/gaia/router.rb                            # Router module entry point, conditional transport loading
-lib/legion/gaia/router/worker_routing.rb             # Identity-to-worker routing table with allowlist
-lib/legion/gaia/router/router_bridge.rb              # Central router: inbound routing + outbound delivery
-lib/legion/gaia/router/agent_bridge.rb               # Agent-side: subscribe inbound, publish outbound
-lib/legion/gaia/router/transport/exchanges/gaia.rb   # Topic exchange for GAIA outbound frames
-lib/legion/gaia/router/transport/queues/inbound.rb   # Per-worker inbound queue (subclass of Transport::Queues::Agent)
-lib/legion/gaia/router/transport/queues/outbound.rb  # Shared outbound queue (agent->router)
-lib/legion/gaia/router/transport/messages/input_frame_message.rb  # InputFrame -> RabbitMQ
-lib/legion/gaia/router/transport/messages/output_frame_message.rb # OutputFrame -> RabbitMQ
-lib/legion/gaia/notification_gate.rb                        # Three-layer gate between OutputRouter and delivery
-lib/legion/gaia/notification_gate/schedule_evaluator.rb     # Config-driven quiet hours (day/time/timezone windows)
-lib/legion/gaia/notification_gate/presence_evaluator.rb     # Teams presence status -> priority threshold mapping
-lib/legion/gaia/notification_gate/behavioral_evaluator.rb   # Learned signal scoring (arousal, idle time)
-lib/legion/gaia/notification_gate/delay_queue.rb            # Thread-safe delayed message queue (max size, TTL)
-lib/legion/gaia/proactive.rb                                # Proactive message delivery: send_message, broadcast to channels
-lib/legion/gaia/offline_handler.rb                          # Offline agent handling: queue messages, notify sender, presence tracking
+```bash
+bundle install
+bundle exec rspec    # 0 failures required before commit
+bundle exec rubocop  # 0 offenses required
 ```
 
-## Architecture
+## Where Things Live (most-touched)
 
-### Phase 1: Cortex Absorption
-- `Legion::Gaia.boot` creates SensoryBuffer, Registry, and ChannelRegistry, runs discovery
-- `Registry#discover` walks `PHASE_MAP`, resolves runner classes via `Legion::Extensions`, wraps in `RunnerHost`
-- `Legion::Gaia.heartbeat` drains buffer, calls `tick_host.execute_tick(signals:, phase_handlers:)`
-- Heartbeat actor calls `heartbeat` every 1s (configurable via settings)
-- Graceful degradation: if lex-tick runner is not discoverable at runtime, heartbeat returns `{ error: :no_tick_extension }` and retries next tick (lex-tick is a gemspec dependency but runner wiring is dynamic)
+| Path | Purpose |
+|------|---------|
+| `lib/legion/gaia.rb` | Facade: `boot`, `ingest`, `heartbeat`, `respond`, `status`, `shutdown`; heartbeat quiescence, partner-absence and proactive logic |
+| `lib/legion/gaia/phase_wiring.rb` | `PHASE_MAP` (37 phases: 16 active + 21 dream), `PHASE_ARGS` lambdas, runner resolution, phase-result annotation |
+| `lib/legion/gaia/registry.rb` | Extension discovery, runner wiring, phase-handler management (singleton via `Registry.instance`) |
+| `lib/legion/gaia/runner_host.rb` | Extends a runner module onto an instance so modules get persistent `@ivar` state |
+| `lib/legion/gaia/sensory_buffer.rb` | Thread-safe bounded signal queue (`MAX_BUFFER_SIZE`) |
+| `lib/legion/gaia/actors/heartbeat.rb` | Periodic actor: drain buffer → tick |
+| `lib/legion/gaia/input_frame.rb` / `output_frame.rb` | `Data.define` immutable channel frames |
+| `lib/legion/gaia/channel_adapter.rb` | Base class: `translate_inbound` / `translate_outbound` / `deliver`; `adapter_classes` registry |
+| `lib/legion/gaia/channel_registry.rb` | Active adapters; thread-safe register/unregister/deliver |
+| `lib/legion/gaia/channel_aware_renderer.rb` | Adapts content complexity to channel limits + transition suggestions |
+| `lib/legion/gaia/output_router.rb` | Chains renderer → notification gate → registry → adapter |
+| `lib/legion/gaia/notification_gate.rb` + `notification_gate/` | Schedule / presence / behavioral evaluators + bounded `DelayQueue` |
+| `lib/legion/gaia/session_store.rb` | Session continuity keyed by human identity, TTL-based |
+| `lib/legion/gaia/router/` | Hub-and-spoke for multi-worker deployments: `WorkerRouting`, `RouterBridge`, `AgentBridge` |
+| `lib/legion/gaia/channels/` | `CliAdapter`, `TeamsAdapter` (+ `teams/` auth/webhook), `SlackAdapter` (+ `slack/` signing) |
+| `lib/legion/gaia/routes.rb` | Self-registering Sinatra routes under `/api/gaia/*` and `/api/channels/teams/webhook` |
+| `lib/legion/gaia/settings.rb` | `Settings.default` — the config schema |
+| `lib/legion/gaia/version.rb` | `VERSION` constant (source of truth for the published gem) |
 
-### Phase 2: Channel Abstraction
-- `InputFrame` and `OutputFrame` are immutable `Data.define` value objects — the universal message format
-- `ChannelAdapter` base class defines the contract: `translate_inbound`, `translate_outbound`, `deliver`
-- `ChannelRegistry` manages active adapters, thread-safe register/unregister/deliver
-- `ChannelAwareRenderer` pre-adapts content complexity (truncation, channel switch suggestions)
-- `OutputRouter` chains renderer -> registry -> adapter for delivery
-- `SessionStore` tracks session continuity across channels, keyed by human identity with TTL
-- `CliAdapter` is the first concrete adapter — translates raw strings to InputFrames, buffers output
-- `Legion::Gaia.ingest(input_frame)` pushes to sensory buffer and creates/touches session
-- `Legion::Gaia.respond(content:, channel_id:)` routes output through renderer and adapter
+## Data Flow
 
-### Phase 3: Teams Channel Adapter
-- `TeamsAdapter` translates Bot Framework activities to InputFrames and OutputFrames to Teams messages
-- `BotFrameworkAuth` validates JWT tokens from Bot Framework and Emulator issuers (claims, expiry, audience)
-- `ConversationStore` holds `service_url` + `conversation_id` references needed for reply delivery (thread-safe)
-- `WebhookHandler` routes inbound activities by type: message, conversationUpdate, invoke, other
-- Bot @mention stripping ensures clean text reaches the cognitive pipeline
-- Mobile/desktop device detection from `channelData.clientInfo.platform`
-- Delivery uses `lex-microsoft_teams` Bot runner (`send_text`/`send_card`) when available
-- Teams adapter auto-registers during `boot_channels` when `channels.teams.enabled` is true
-
-### Phase 4: Central Router (Hub-and-Spoke)
-- Dual boot modes: `Legion::Gaia.boot(mode: :router)` for stateless router, default `:agent` for full GAIA
-- Router mode: boots channels only — no SensoryBuffer, Registry, or cognitive extensions
-- `RouterBridge` handles inbound routing (identity -> worker_id -> RabbitMQ queue) and outbound delivery
-- `AgentBridge` subscribes to per-worker inbound queue, pushes InputFrames into local GAIA SensoryBuffer
-- `AgentBridge` publishes OutputFrames to outbound queue when `respond` is called
-- `WorkerRouting` maps Entra OID / identity to worker_id with allowlist enforcement
-- Transport layer follows standard legion-transport patterns (Exchange, Queue, Message base classes)
-- Inbound uses the `agent` exchange (from `legion-transport`): routing key `agent.<worker_id>`, queue `agent.<worker_id>` (via `Transport::Queues::Agent`). Outbound uses the `gaia` exchange (many-to-one fan-in to router).
-- Transport classes only loaded when `legion-transport` is available (conditional require)
-- Router never sees cognitive state — only InputFrame/OutputFrame envelopes
-
-### Phase 5: Slack Adapter + Cross-Channel Polish
-- `SlackAdapter` translates Slack Events API payloads to InputFrames and OutputFrames to Slack messages
-- `SigningVerifier` validates inbound requests via HMAC-SHA256 (signing secret + timestamp + body)
-- Bot `<@UBOT>` mention stripping for clean text input
-- Thread-aware outbound delivery (preserves `thread_ts` for reply threading)
-- Slack adapter auto-registers during `boot_channels` when `channels.slack.enabled` is true
-- `ChannelAwareRenderer` adds transition suggestions when content is truncated (e.g., "Full response available on cli")
-- Richness hierarchy: voice -> slack -> cli (richer channels suggested when content exceeds limits)
-
-### Phase 6: Notification Gate
-- `NotificationGate` sits between OutputRouter and channel delivery, evaluating each frame
-- Three evaluation layers in order: schedule (quiet hours) -> presence (Teams status) -> behavioral (learned signals)
-- `ScheduleEvaluator` parses config-driven schedule arrays with day/time/timezone windows, handles overnight wraps
-- `PresenceEvaluator` maps Teams availability states to minimum priority thresholds (Available->ambient, Busy/Away->urgent, DoNotDisturb/Offline->critical)
-- `BehavioralEvaluator` uses arousal (0.0-1.0) and idle_seconds signals to compute notification score
-- Priority override: critical/urgent messages bypass all layers
-- `DelayQueue` is thread-safe with mutex, max_size eviction, TTL-based expiration, flush
-- OutputRouter calls `notification_gate.evaluate(frame)` -> `:deliver` or `:delay`
-- Delayed frames re-evaluated each heartbeat tick via `process_delayed` (drain expired, flush when quiet ends)
-
-### Data Flow
 ```
-Human Input -> ChannelAdapter#translate_inbound -> InputFrame -> Gaia.ingest -> SensoryBuffer
-                                                                                    |
-                                                                              Heartbeat tick
-                                                                                    |
-Cognitive Output -> OutputFrame -> OutputRouter -> ChannelAwareRenderer -> ChannelAdapter#deliver
+Channel input -> ChannelAdapter#translate_inbound -> InputFrame -> Gaia.ingest -> SensoryBuffer
+                                                                                       |
+                                                                              Heartbeat tick (lex-tick)
+                                                                                       |
+Cognitive output <- OutputFrame <- OutputRouter <- NotificationGate <- ChannelAdapter#deliver
 ```
 
-## Patterns
+## HTTP Routes (`routes.rb`)
 
-- `RunnerHost` uses `extend runner_module` on instances to give modules persistent `@ivar` state
-- `Registry` tracks `@discovered` boolean to prevent re-discovery when results are empty
-- `PhaseWiring::PHASE_ARGS` lambdas build kwargs from a context hash; `association_walk` is the most complex
-- Settings fall through: `Legion::Settings[:gaia]` if available, else `Legion::Gaia::Settings.default`
-- `InputFrame`/`OutputFrame` use `Data.define` for immutability — frozen by default, pattern-matchable
-- Channel adapters are deliberately thin: translate format, not content. No business logic, no state
-- `SessionStore` uses identity-indexed lookup with TTL-based expiration and channel history tracking
+`GET /api/gaia/status`, `GET /api/gaia/ticks`, `GET /api/gaia/channels`, `GET /api/gaia/buffer`,
+`GET /api/gaia/sessions`, `POST /api/gaia/ingest`, `POST /api/channels/teams/webhook`. Registered via
+`Legion::API.register_library_routes('gaia', Legion::Gaia::Routes)` at boot.
 
-## Architectural Constraints
+## Gotchas / Invariants (these prevent real bugs)
 
-1. No channel-specific state — adapters store nothing, destroy and recreate without loss
-2. No channel-specific logic — adapters translate format, not content
-3. Authentication is non-negotiable — every channel validates identity before input reaches GAIA
-4. Private core protections are channel-independent
-5. Human controls channel availability — any channel can be disabled at any time
+- **`lex-tick` is mandatory** — GAIA is inoperable without the tick orchestrator. The heartbeat
+  degrades gracefully if the tick runner is unresolvable (warns once, retries next tick).
+- **Phase counts**: `PHASE_MAP` is 37 entries — 16 active-tick, 21 dream-cycle. Phases whose runner
+  extension isn't loaded are skipped at wiring time; don't assume every phase is always active.
+- **Every phase result is annotated** with `status` (`completed`/`skipped`/`failed`) and `elapsed_ms`
+  (monotonic). The `/api/gaia/ticks` stream depends on these always being present.
+- **Frames are immutable** — `InputFrame`/`OutputFrame` are `Data.define`, frozen, pattern-matchable.
+- **Channel adapters are thin and stateless** — translate format only, no business logic, no state;
+  they must be recreatable without loss. Authentication is non-negotiable: every channel validates
+  identity before input reaches GAIA (Teams JWT/Bot Framework, Slack HMAC-SHA256).
+- **Critical/urgent priority bypasses all notification-gate layers.** Gate order is schedule →
+  presence → behavioral.
+- **Router mode** (`boot(mode: :router)`) boots channels only — no SensoryBuffer or cognitive
+  extensions. Worker allowlists are enforced for live registrations *and* DB-backed resolution.
+- **Quiescing shutdown** — once `shutdown` starts, phase handlers return
+  `{ status: :skipped, reason: :gaia_shutting_down }`; new heartbeats are blocked and in-flight work
+  drains (bounded by `shutdown.heartbeat_wait_timeout`). This prevents late writes to closed services.
+- **Transport classes load conditionally** — only required when `legion-transport` is available.
+- **Settings merge is deep** — `Legion::Gaia.settings` deep-merges `Legion::Settings[:gaia]` over
+  `Settings.default`; mutate nested keys, don't replace the whole hash.
 
-## Dependencies
+## Legion-Wide Rules
 
-### Declared gem dependencies
-
-| Gem | Purpose |
-|-----|---------|
-| `base64` | Required (Ruby 3.4+ removed from default gems) |
-| `openssl` | Required for TLS/JWT operations |
-| `legion-apollo` (>= 0.2.1) | Apollo knowledge client library (knowledge_retrieval phase) |
-| `legion-json` | JSON serialization |
-| `legion-logging` | Logging (guarded by `const_defined?`) |
-| `legion-settings` | Configuration |
-| `lex-tick` | Tick orchestrator — GAIA is inoperable without this |
-| `lex-privatecore` | Privacy enforcement — safety layer for the cognitive stack |
-| `lex-apollo` | Apollo knowledge service (knowledge_retrieval + knowledge_promotion phases) |
-| `lex-coldstart` | Cold-start progress tracking (procedural_check phase) |
-| `lex-detect` | Task observation (post_tick_reflection phase) |
-| `lex-mesh` | Mesh interface and topology (mesh_interface phase) |
-| `lex-synapse` | GAIA report and reflection (working_memory_integration, post_tick_reflection phases) |
-| `lex-agentic-affect` | Affective processing domain (emotional_evaluation, gut_instinct phases) |
-| `lex-agentic-attention` | Attention management domain (sensory_processing phase) |
-| `lex-agentic-defense` | Defense and threat response domain |
-| `lex-agentic-executive` | Executive function and goal management (action_selection phase) |
-| `lex-agentic-homeostasis` | Internal state regulation (homeostasis_regulation phase) |
-| `lex-agentic-imagination` | Creative and hypothetical reasoning |
-| `lex-agentic-inference` | Probabilistic inference domain (prediction_engine phase) |
-| `lex-agentic-integration` | Sensory integration domain |
-| `lex-agentic-language` | Language processing domain (dream_narration phase) |
-| `lex-agentic-learning` | Learning and adaptation domain |
-| `lex-agentic-memory` | Memory management domain (memory_retrieval, memory_consolidation, dream cycle phases) |
-| `lex-agentic-self` | Self-model and identity domain (identity_entropy_check phase) |
-| `lex-agentic-social` | Social cognition domain (social_cognition, theory_of_mind phases) |
-
-### Optional at runtime (not declared in gemspec)
-
-- `legion-transport` — required for router mode (hub-and-spoke), conditional require
-- `lex-microsoft_teams` — required for Teams delivery, guarded
-- Other agentic LEXs are discovered via `Legion::Extensions`
-
-## Future
-
-- Voice adapter
-- Proactive notification scheduling (agent-initiated messages at optimal delivery times)
-
----
-
-**Maintained By**: Matthew Iverson (@Esity)
+- **`Legion::JSON` only** — `Legion::JSON.load` returns **symbol keys**; `.dump` takes exactly one
+  positional arg. Inside the `Legion::` namespace, `::JSON` and `::Process` must be explicit.
+- **Never swallow exceptions** — every `rescue` re-raises or calls `handle_exception(e, level:,
+  operation:)`. Use `log.*` (via `Legion::Gaia::Logging` / `Legion::Logging::Helper`), never `puts`.
+- **No personal/company identifiers in VCS.** Never force-push.
+- Ruby 3.4+, single quotes, frozen string literals, line length ≤ 120 (see `.rubocop.yml`).

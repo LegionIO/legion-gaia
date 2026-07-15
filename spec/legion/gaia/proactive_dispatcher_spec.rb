@@ -147,7 +147,7 @@ RSpec.describe Legion::Gaia::ProactiveDispatcher do
     context 'when partner bond has no channel_identity' do
       before do
         Legion::Gaia::BondRegistry.reset!
-        Legion::Gaia::BondRegistry.register('esity', bond: :partner)
+        Legion::Gaia::BondRegistry.register('esity', bond: :partner, strength: 0.8)
       end
       after { Legion::Gaia::BondRegistry.reset! }
 
@@ -161,7 +161,7 @@ RSpec.describe Legion::Gaia::ProactiveDispatcher do
 
       before do
         Legion::Gaia::BondRegistry.reset!
-        Legion::Gaia::BondRegistry.register(uuid, bond: :partner, channel_identity: 'U_SLACK_123')
+        Legion::Gaia::BondRegistry.register(uuid, bond: :partner, channel_identity: 'U_SLACK_123', strength: 0.8)
       end
       after { Legion::Gaia::BondRegistry.reset! }
 
@@ -239,7 +239,7 @@ RSpec.describe Legion::Gaia::ProactiveDispatcher do
     context 'when BondRegistry stores a preferred channel' do
       before do
         Legion::Gaia::BondRegistry.reset!
-        Legion::Gaia::BondRegistry.register('esity', bond: :partner, preferred_channel: :teams)
+        Legion::Gaia::BondRegistry.register('esity', bond: :partner, preferred_channel: :teams, strength: 0.8)
       end
       after { Legion::Gaia::BondRegistry.reset! }
 
@@ -255,8 +255,8 @@ RSpec.describe Legion::Gaia::ProactiveDispatcher do
 
       before do
         Legion::Gaia::BondRegistry.reset!
-        Legion::Gaia::BondRegistry.register('primary-only', bond: :partner, priority: :primary)
-        Legion::Gaia::BondRegistry.register(uuid, bond: :partner, channel_identity: 'U_PREFERRED')
+        Legion::Gaia::BondRegistry.register('primary-only', bond: :partner, priority: :primary, strength: 0.8)
+        Legion::Gaia::BondRegistry.register(uuid, bond: :partner, channel_identity: 'U_PREFERRED', strength: 0.8)
       end
       after { Legion::Gaia::BondRegistry.reset! }
 

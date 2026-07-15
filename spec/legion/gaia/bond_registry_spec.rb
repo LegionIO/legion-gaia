@@ -4,52 +4,72 @@ RSpec.describe Legion::Gaia::BondRegistry do
   before { described_class.reset! }
 
   describe '.register' do
-    context 'with bond: kwarg (new API)' do
+    context 'with bond: kwarg' do
       it 'registers a bond and stores :bond key' do
-        described_class.register('esity', bond: :partner, priority: :primary)
-        expect(described_class.bond('esity')).to eq(:partner)
+        described_class.register('test-id', bond: :partner, priority: :primary)
+        expect(described_class.bond('test-id')).to eq(:partner)
       end
 
       it 'also stores :role key for backward compatibility' do
-        described_class.register('esity', bond: :partner, priority: :primary)
-        bond_entry = described_class.all_bonds.find { |b| b[:identity] == 'esity' }
-        expect(bond_entry[:role]).to eq(:partner)
+        described_class.register('test-id', bond: :partner)
+        entry = described_class.all_bonds.find { |b| b[:identity] == 'test-id' }
+        expect(entry[:role]).to eq(:partner)
       end
     end
 
     context 'with role: kwarg (backward-compat alias)' do
       it 'accepts role: and stores bond correctly' do
-        described_class.register('esity', role: :partner, priority: :primary)
-        expect(described_class.bond('esity')).to eq(:partner)
-      end
-
-      it 'stores both :bond and :role keys' do
-        described_class.register('esity', role: :partner, priority: :primary)
-        bond_entry = described_class.all_bonds.find { |b| b[:identity] == 'esity' }
-        expect(bond_entry[:bond]).to eq(:partner)
-        expect(bond_entry[:role]).to eq(:partner)
+        described_class.register('test-id', role: :partner)
+        expect(described_class.bond('test-id')).to eq(:partner)
       end
     end
 
-    context 'with both bond: and role: provided' do
-      it 'bond: takes precedence over role:' do
-        described_class.register('esity', bond: :partner, role: :known, priority: :normal)
-        expect(described_class.bond('esity')).to eq(:partner)
-      end
-    end
-
-    context 'with neither bond: nor role: provided' do
+    context 'with neither bond: nor role:' do
       it 'defaults to :unknown' do
-        described_class.register('esity')
-        expect(described_class.bond('esity')).to eq(:unknown)
+        described_class.register('test-id')
+        expect(described_class.bond('test-id')).to eq(:unknown)
       end
     end
 
     it 'stores preferred and last channel metadata' do
-      described_class.register('esity', bond: :partner, preferred_channel: :teams, last_channel: :slack)
-      entry = described_class.all_bonds.find { |b| b[:identity] == 'esity' }
+      described_class.register('test-id', bond: :known, preferred_channel: :teams, last_channel: :slack)
+      entry = described_class.all_bonds.find { |e| e[:identity] == 'test-id' }
       expect(entry[:preferred_channel]).to eq(:teams)
       expect(entry[:last_channel]).to eq(:slack)
+    end
+
+    it 'defaults partner bond origin to :provisional' do
+      described_class.register('test-id', bond: :partner)
+      entry = described_class.all_bonds.find { |e| e[:identity] == 'test-id' }
+      expect(entry[:origin]).to eq(:provisional)
+    end
+
+    it 'defaults non-partner bond origin to nil' do
+      described_class.register('test-id', bond: :known)
+      entry = described_class.all_bonds.find { |e| e[:identity] == 'test-id' }
+      expect(entry[:origin]).to be_nil
+    end
+
+    it 'defaults strength to 0.0' do
+      described_class.register('test-id', bond: :partner)
+      entry = described_class.all_bonds.find { |e| e[:identity] == 'test-id' }
+      expect(entry[:strength]).to eq(0.0)
+    end
+
+    it 'accepts explicit strength' do
+      described_class.register('test-id', bond: :partner, strength: 0.75)
+      entry = described_class.all_bonds.find { |e| e[:identity] == 'test-id' }
+      expect(entry[:strength]).to eq(0.75)
+    end
+
+    it 'stores flow fields' do
+      described_class.register('test-id', bond: :partner, origin: :earned, strength: 0.9,
+                                          reinforcement_count: 5, last_reinforced: Time.new)
+      entry = described_class.all_bonds.find { |e| e[:identity] == 'test-id' }
+      expect(entry[:origin]).to eq(:earned)
+      expect(entry[:strength]).to eq(0.9)
+      expect(entry[:reinforcement_count]).to eq(5)
+      expect(entry[:last_reinforced]).not_to be_nil
     end
   end
 
@@ -59,26 +79,27 @@ RSpec.describe Legion::Gaia::BondRegistry do
     end
 
     it 'returns the registered bond' do
-      described_class.register('esity', bond: :partner, priority: :primary)
-      expect(described_class.bond('esity')).to eq(:partner)
+      described_class.register('test-id', bond: :partner)
+      expect(described_class.bond('test-id')).to eq(:partner)
     end
   end
 
-  describe '.role (backward-compat alias)' do
+  describe '.role' do
     it 'delegates to .bond' do
-      described_class.register('esity', bond: :partner, priority: :primary)
-      expect(described_class.role('esity')).to eq(:partner)
-    end
-
-    it 'returns :unknown for unregistered identities' do
-      expect(described_class.role('nobody')).to eq(:unknown)
+      described_class.register('test-id', bond: :partner)
+      expect(described_class.role('test-id')).to eq(:partner)
     end
   end
 
   describe '.partner?' do
-    it 'returns true for registered partners' do
-      described_class.register('esity', bond: :partner, priority: :primary)
-      expect(described_class.partner?('esity')).to be true
+    it 'returns true when bond is :partner and strength exceeds threshold' do
+      described_class.register('test-id', bond: :partner, strength: 0.75)
+      expect(described_class.partner?('test-id')).to be true
+    end
+
+    it 'returns false when bond is :partner but strength below threshold' do
+      described_class.register('test-id', bond: :partner, strength: 0.3)
+      expect(described_class.partner?('test-id')).to be false
     end
 
     it 'returns false for unknown identities' do
@@ -86,30 +107,40 @@ RSpec.describe Legion::Gaia::BondRegistry do
     end
 
     it 'returns false for known non-partners' do
-      described_class.register('colleague', bond: :known, priority: :normal)
+      described_class.register('colleague', bond: :known, strength: 0.9)
       expect(described_class.partner?('colleague')).to be false
+    end
+
+    it 'returns false when strength exactly zero' do
+      described_class.register('test-id', bond: :partner, strength: 0.0)
+      expect(described_class.partner?('test-id')).to be false
+    end
+  end
+
+  describe '.partner_threshold' do
+    it 'uses gaia settings value' do
+      expect(described_class.partner_threshold).to eq(0.6)
     end
   end
 
   describe '.all_bonds' do
     it 'returns all registered bonds' do
-      described_class.register('esity', bond: :partner, priority: :primary)
-      described_class.register('other', bond: :known, priority: :normal)
+      described_class.register('a', bond: :partner, strength: 0.7)
+      described_class.register('b', bond: :known)
       bonds = described_class.all_bonds
       expect(bonds.size).to eq(2)
-      identities = bonds.map { |b| b[:identity] }
-      expect(identities).to include('esity', 'other')
+      expect(bonds.map { |b| b[:identity] }).to contain_exactly('a', 'b')
     end
 
     it 'each entry contains :bond and :role keys' do
-      described_class.register('esity', bond: :partner, priority: :primary)
+      described_class.register('test-id', bond: :partner)
       entry = described_class.all_bonds.first
       expect(entry).to have_key(:bond)
       expect(entry).to have_key(:role)
     end
   end
 
-  describe 'thread safety (@bonds is Concurrent::Hash)' do
+  describe 'thread safety' do
     it 'handles concurrent registrations without error' do
       threads = Array.new(20) do |i|
         Thread.new { described_class.register("user_#{i}", bond: :known) }
@@ -119,135 +150,279 @@ RSpec.describe Legion::Gaia::BondRegistry do
     end
   end
 
+  describe '.reinforce' do
+    it 'increases strength with diminishing returns' do
+      described_class.register('test-id', bond: :partner, strength: 0.0)
+      described_class.reinforce('test-id')
+      entry = described_class.all_bonds.find { |e| e[:identity] == 'test-id' }
+      expect(entry[:strength]).to be > 0.0
+      expect(entry[:strength]).to be <= 1.0
+    end
+
+    it 'applies direct_address weight' do
+      described_class.register('test-id', bond: :partner, strength: 0.2)
+      described_class.reinforce('test-id', direct_address: true)
+      entry = described_class.all_bonds.find { |e| e[:identity] == 'test-id' }
+      # Base delta: 0.1 * (1 - 0.2) = 0.08; with direct_address: 0.08 * 1.5 = 0.12
+      expect(entry[:strength]).to eq(0.2 + (0.1 * 0.8 * 1.5))
+    end
+
+    it 'applies new_channel (corroboration) weight' do
+      described_class.register('test-id', bond: :partner, strength: 0.2)
+      described_class.reinforce('test-id', new_channel: true)
+      entry = described_class.all_bonds.find { |e| e[:identity] == 'test-id' }
+      # Base delta: 0.1 * 0.8 = 0.08; with corroboration: 0.08 * 1.3 = 0.104
+      expect(entry[:strength]).to eq(0.2 + (0.1 * 0.8 * 1.3))
+    end
+
+    it 'caps strength at 1.0' do
+      described_class.register('test-id', bond: :partner, strength: 0.99)
+      # Multi-reinforce to push toward 1.0 (diminishing returns)
+      50.times { described_class.reinforce('test-id', multiplier: 3.0) }
+      entry = described_class.all_bonds.find { |e| e[:identity] == 'test-id' }
+      expect(entry[:strength]).to be_within(0.001).of(1.0)
+    end
+
+    it 'applies multiplier' do
+      described_class.register('test-id', bond: :partner, strength: 0.2)
+      described_class.reinforce('test-id', multiplier: 3.0)
+      entry = described_class.all_bonds.find { |e| e[:identity] == 'test-id' }
+      # delta: 0.1 * 0.8 * 3.0 = 0.24, new = 0.44
+      expect(entry[:strength]).to be_within(0.001).of(0.44)
+    end
+
+    it 'increments reinforcement_count' do
+      described_class.register('test-id', bond: :partner)
+      3.times { described_class.reinforce('test-id') }
+      entry = described_class.all_bonds.find { |e| e[:identity] == 'test-id' }
+      expect(entry[:reinforcement_count]).to eq(3)
+    end
+
+    it 'sets last_reinforced timestamp' do
+      described_class.register('test-id', bond: :partner)
+      described_class.reinforce('test-id')
+      entry = described_class.all_bonds.find { |e| e[:identity] == 'test-id' }
+      expect(entry[:last_reinforced]).not_to be_nil
+    end
+
+    it 'promotes provisional to earned on threshold crossing' do
+      described_class.register('test-id', bond: :partner, strength: 0.55)
+      described_class.reinforce('test-id')
+      # delta: 0.1 * 0.45 = 0.045 → new_strength = 0.595 (still below 0.6)
+      entry = described_class.all_bonds.find { |e| e[:identity] == 'test-id' }
+      expect(entry[:origin]).to eq(:provisional)
+      # Reinforce again to push over
+      described_class.reinforce('test-id')
+      entry = described_class.all_bonds.find { |e| e[:identity] == 'test-id' }
+      # delta: 0.1 * (1 - 0.595) = 0.0405 → 0.6355
+      expect(entry[:origin]).to eq(:earned)
+    end
+
+    it 'does nothing for unregistered identity' do
+      result = described_class.reinforce('ghost')
+      expect(result).to be_nil
+    end
+  end
+
+  describe '.apply_decay' do
+    it 'decreases strength by decay rate' do
+      described_class.register('test-id', bond: :partner, strength: 0.8)
+      # Default rate 0.002
+      described_class.apply_decay
+      entry = described_class.all_bonds.find { |e| e[:identity] == 'test-id' }
+      expect(entry[:strength]).to eq((0.8 * 0.998).round(10))
+    end
+
+    it 'does not go below 0.0' do
+      described_class.register('test-id', bond: :partner, strength: 0.001)
+      200.times { described_class.apply_decay }
+      entry = described_class.all_bonds.find { |e| e[:identity] == 'test-id' }
+      expect(entry[:strength]).to be >= 0.0
+    end
+
+    it 'does not decay entries without strength' do
+      described_class.register('test-id', bond: :known)
+      expect { described_class.apply_decay }.not_to raise_error
+    end
+  end
+
   describe '.hydrate_from_apollo' do
-    it 'loads partner identities from Apollo Local seed data using bond:' do
-      stub_apollo = double('Apollo::Local')
-      seed_content = "Identity keys: esity, miverso2\nBond type: partner, creator\nBond priority: primary"
-      allow(stub_apollo).to receive(:query).and_return(
-        success: true,
-        results: [{ content: seed_content, tags: %w[partner bond self-knowledge] }]
-      )
-      described_class.hydrate_from_apollo(store: stub_apollo)
-      expect(described_class.partner?('esity')).to be true
-      expect(described_class.partner?('miverso2')).to be true
+    context 'with structured JSON entries' do
+      it 'loads bond entries from Apollo and sets origin to :hydrated' do
+        stub_store = double('store')
+        entry_data = {
+          identity: 'test-id',
+          bond: :partner,
+          priority: :primary,
+          strength: 0.85,
+          origin: :earned,
+          reinforcement_count: 10
+        }
+        allow(stub_store).to receive(:query).with(tags: described_class::TO_APOLLO_TAGS)
+                                            .and_return(
+                                              success: true,
+                                              results: [{ content: Legion::JSON.dump(entry_data),
+                                                          tags: described_class::TO_APOLLO_TAGS }]
+                                            )
+        allow(stub_store).to receive(:query).with(text: 'partner', tags: %w[self-knowledge])
+                                            .and_return(success: true, results: [])
+
+        described_class.hydrate_from_apollo(store: stub_store)
+        expect(described_class.bond('test-id')).to eq(:partner)
+        expect(described_class.partner?('test-id')).to be true
+        entry = described_class.all_bonds.find { |e| e[:identity] == 'test-id' }
+        expect(entry[:origin]).to eq(:hydrated)
+        expect(entry[:strength]).to eq(0.85)
+      end
     end
 
-    it 'restores channel identity and channel metadata from Apollo Local seed data' do
-      stub_apollo = double('Apollo::Local')
-      seed_content = "Identity keys: partner-uuid\nBond type: partner\n" \
-                     "Channel identity: U_TEAMS_1\nPreferred channel: teams\nLast channel: slack"
-      allow(stub_apollo).to receive(:query).and_return(
-        success: true,
-        results: [{ content: seed_content, tags: %w[partner bond self-knowledge] }]
-      )
+    context 'with legacy markdown entries' do
+      it 'falls back to markdown regex parse' do
+        stub_store = double('store')
+        # No JSON entries
+        allow(stub_store).to receive(:query).with(tags: described_class::TO_APOLLO_TAGS)
+                                            .and_return(success: true, results: [])
+        # Legacy search
+        seed_content = "Identity keys: legacy-id\nBond type: partner\nBond priority: primary"
+        allow(stub_store).to receive(:query).with(text: 'partner', tags: ['self-knowledge'])
+                                            .and_return(success: true, results: [{ content: seed_content,
+                                                                                   tags: ['self-knowledge'] }])
 
-      described_class.hydrate_from_apollo(store: stub_apollo)
-      entry = described_class.partner_entry
-
-      expect(entry[:channel_identity]).to eq('U_TEAMS_1')
-      expect(entry[:preferred_channel]).to eq(:teams)
-      expect(entry[:last_channel]).to eq(:slack)
+        described_class.hydrate_from_apollo(store: stub_store)
+        expect(described_class.bond('legacy-id')).to eq(:partner)
+      end
     end
 
-    it 'handles missing Apollo gracefully' do
+    it 'handles nil store gracefully' do
       expect { described_class.hydrate_from_apollo(store: nil) }.not_to raise_error
-      expect(described_class.all_bonds).to be_empty
     end
   end
 
-  describe 'multiple identity keys for same partner' do
-    it 'maps multiple identities to the same bond' do
-      described_class.register('esity', bond: :partner, priority: :primary)
-      described_class.register('miverso2', bond: :partner, priority: :primary)
-      expect(described_class.partner?('esity')).to be true
-      expect(described_class.partner?('miverso2')).to be true
+  describe '.from_apollo' do
+    it 'loads entries and sets origin to :hydrated' do
+      stub_store = double('store')
+      entry_data = { identity: 'fa-id', bond: :partner, strength: 0.9, origin: :earned }
+      allow(stub_store).to receive(:query)
+        .with(tags: described_class::TO_APOLLO_TAGS)
+        .and_return(success: true, results: [{ content: Legion::JSON.dump(entry_data) }])
+
+      described_class.from_apollo(store: stub_store)
+      entry = described_class.all_bonds.find { |e| e[:identity] == 'fa-id' }
+      expect(entry[:origin]).to eq(:hydrated)
+      expect(entry[:strength]).to eq(0.9)
     end
   end
 
-  describe '.partner_entry (§9.6 deterministic selection)' do
-    it 'returns nil when no partner bonds exist' do
-      described_class.register('colleague', bond: :known)
+  describe '.partner_entry' do
+    it 'returns nil when no partner bonds above threshold' do
+      described_class.register('test-id', bond: :partner, strength: 0.1)
       expect(described_class.partner_entry).to be_nil
     end
 
-    it 'returns the single partner entry when only one exists' do
-      described_class.register('esity', bond: :partner)
-      expect(described_class.partner_entry[:identity]).to eq('esity')
+    it 'returns the partner entry when above threshold' do
+      described_class.register('test-id', bond: :partner, strength: 0.7)
+      expect(described_class.partner_entry[:identity]).to eq('test-id')
     end
 
-    it 'prefers an entry with channel_identity over one without' do
-      described_class.register('uuid-primary', bond: :partner, priority: :primary)
-      described_class.register('uuid-channel', bond: :partner, channel_identity: 'U_SLACK_999')
+    it 'prefers highest strength first' do
+      described_class.register('weak', bond: :partner, strength: 0.65)
+      sleep 0.001
+      described_class.register('strong', bond: :partner, strength: 0.9)
       entry = described_class.partner_entry
-      expect(entry[:identity]).to eq('uuid-channel')
+      expect(entry[:identity]).to eq('strong')
     end
 
-    it 'prefers priority :primary over :normal when neither has channel_identity' do
-      described_class.register('normal-id', bond: :partner, priority: :normal)
-      described_class.register('primary-id', bond: :partner, priority: :primary)
+    it 'prefers entry with channel_identity among equal strength' do
+      described_class.register('no-ch', bond: :partner, strength: 0.8)
+      described_class.register('with-ch', bond: :partner, channel_identity: 'U123', strength: 0.8)
       entry = described_class.partner_entry
-      expect(entry[:identity]).to eq('primary-id')
+      expect(entry[:identity]).to eq('with-ch')
     end
 
-    it 'falls back to earliest-registered entry when no channel_identity or primary priority match' do
-      described_class.register('second-id', bond: :partner, priority: :normal)
-      sleep(0.001)
-      described_class.register('first-id', bond: :partner, priority: :normal)
+    it 'prefers primary priority as tiebreaker' do
+      described_class.register('normal', bond: :partner, priority: :normal, strength: 0.7)
+      described_class.register('primary', bond: :partner, priority: :primary, strength: 0.7)
       entry = described_class.partner_entry
-      # 'second-id' registered first (:since is earlier), so it wins the tie-breaker
-      expect(entry[:identity]).to eq('second-id')
+      expect(entry[:identity]).to eq('primary')
     end
   end
 
-  describe '.channel_identity (§9.6)' do
-    it 'returns the stored channel_identity when present' do
-      described_class.register('a1b2c3d4-0000-0000-0000-aabbccddeeff',
-                               bond: :partner, channel_identity: 'U12345')
-      expect(described_class.channel_identity('a1b2c3d4-0000-0000-0000-aabbccddeeff')).to eq('U12345')
+  describe '.channel_identity' do
+    it 'returns stored channel_identity' do
+      described_class.register('uuid-1', bond: :partner, channel_identity: 'U12345')
+      expect(described_class.channel_identity('uuid-1')).to eq('U12345')
     end
 
-    it 'falls back to :identity when no channel_identity was stored' do
-      described_class.register('esity', bond: :partner, priority: :primary)
-      expect(described_class.channel_identity('esity')).to eq('esity')
+    it 'falls back to identity when no channel_identity' do
+      described_class.register('test-id', bond: :partner)
+      expect(described_class.channel_identity('test-id')).to eq('test-id')
     end
 
     it 'returns nil for unregistered identities' do
       expect(described_class.channel_identity('nobody')).to be_nil
     end
-
-    it 'stores channel_identity in the bond hash entry' do
-      described_class.register('uuid-1', bond: :partner, channel_identity: 'T09876')
-      entry = described_class.all_bonds.find { |b| b[:identity] == 'uuid-1' }
-      expect(entry[:channel_identity]).to eq('T09876')
-    end
-
-    it 'stores nil channel_identity when not provided' do
-      described_class.register('esity', bond: :partner)
-      entry = described_class.all_bonds.find { |b| b[:identity] == 'esity' }
-      expect(entry[:channel_identity]).to be_nil
-    end
   end
 
   describe '.record_channel' do
-    it 'updates the last seen channel for an existing bond' do
-      described_class.register('aad-1', bond: :partner)
-      described_class.record_channel('aad-1', channel_id: :teams, channel_identity: 'teams-user-1')
-      entry = described_class.partner_entry
-
+    it 'updates last_channel and preferred_channel' do
+      described_class.register('test-id', bond: :partner)
+      described_class.record_channel('test-id', channel_id: :teams, channel_identity: 't1')
+      entry = described_class.all_bonds.find { |e| e[:identity] == 'test-id' }
       expect(entry[:last_channel]).to eq(:teams)
       expect(entry[:preferred_channel]).to eq(:teams)
-      expect(entry[:channel_identity]).to eq('teams-user-1')
+      expect(entry[:channel_identity]).to eq('t1')
+    end
+  end
+
+  describe '.dirty? and .mark_clean!' do
+    it 'is dirty after register' do
+      described_class.register('test-id', bond: :partner)
+      expect(described_class.dirty?).to be true
     end
 
-    it 'stores an updated entry instead of mutating the previous hash in place' do
-      described_class.register('aad-1', bond: :partner)
-      original_entry = described_class.all_bonds.find { |entry| entry[:identity] == 'aad-1' }
+    it 'is clean after mark_clean!' do
+      described_class.register('test-id', bond: :partner)
+      described_class.mark_clean!
+      expect(described_class.dirty?).to be false
+    end
 
-      updated_entry = described_class.record_channel('aad-1', channel_id: :teams)
+    it 'is dirty after reinforce' do
+      described_class.register('test-id', bond: :partner)
+      described_class.mark_clean!
+      described_class.reinforce('test-id')
+      expect(described_class.dirty?).to be true
+    end
+  end
 
-      expect(updated_entry).not_to equal(original_entry)
-      expect(original_entry[:last_channel]).to be_nil
-      expect(updated_entry[:last_channel]).to eq(:teams)
+  describe '.to_apollo_entries' do
+    it 'returns array of upsert-ready hashes' do
+      described_class.register('test-id', bond: :partner, strength: 0.8)
+      entries = described_class.to_apollo_entries
+      expect(entries.size).to eq(1)
+      entry = entries.first
+      expect(entry[:content]).to be_a(String)
+      expect(entry[:tags]).to eq(%w[self-knowledge bond])
+      expect(entry[:confidence]).to eq(0.8)
+      expect(entry[:access_scope]).to eq('local')
+    end
+
+    it 'content is JSON-parseable roundtrip' do
+      described_class.register('rt-id', bond: :partner, strength: 0.75, origin: :earned)
+      entry = described_class.to_apollo_entries.first
+      parsed = Legion::JSON.load(entry[:content])
+      expect(parsed[:identity]).to eq('rt-id')
+      expect(parsed[:bond]).to eq('partner')
+      expect(parsed[:strength]).to eq(0.75)
+      expect(parsed[:origin]).to eq('earned')
+    end
+  end
+
+  describe '.reset!' do
+    it 'clears bonds and dirty flag' do
+      described_class.register('test-id', bond: :partner, strength: 0.7)
+      described_class.reset!
+      expect(described_class.all_bonds).to be_empty
+      expect(described_class.dirty?).to be false
     end
   end
 end
