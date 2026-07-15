@@ -210,7 +210,7 @@ module Legion
       def from_apollo(store: nil)
         return unless store
 
-        result = store.query(tags: TO_APOLLO_TAGS)
+        result = store.query(text: 'bond', tags: TO_APOLLO_TAGS)
         return unless result.is_a?(Hash) && result[:success]
 
         result[:results]&.each do |entry|
@@ -260,7 +260,7 @@ module Legion
       # ---- Private helpers ----
 
       def try_json_hydration(store) # rubocop:disable Naming/PredicateMethod
-        result = store.query(tags: TO_APOLLO_TAGS)
+        result = store.query(text: 'bond', tags: TO_APOLLO_TAGS)
         return false unless result.is_a?(Hash) && result[:success]
         return false unless result[:results]&.any?
 

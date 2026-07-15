@@ -258,7 +258,7 @@ RSpec.describe Legion::Gaia::BondRegistry do
           origin: :earned,
           reinforcement_count: 10
         }
-        allow(stub_store).to receive(:query).with(tags: described_class::TO_APOLLO_TAGS)
+        allow(stub_store).to receive(:query).with(text: 'bond', tags: described_class::TO_APOLLO_TAGS)
                                             .and_return(
                                               success: true,
                                               results: [{ content: Legion::JSON.dump(entry_data),
@@ -280,7 +280,7 @@ RSpec.describe Legion::Gaia::BondRegistry do
       it 'falls back to markdown regex parse' do
         stub_store = double('store')
         # No JSON entries
-        allow(stub_store).to receive(:query).with(tags: described_class::TO_APOLLO_TAGS)
+        allow(stub_store).to receive(:query).with(text: 'bond', tags: described_class::TO_APOLLO_TAGS)
                                             .and_return(success: true, results: [])
         # Legacy search
         seed_content = "Identity keys: legacy-id\nBond type: partner\nBond priority: primary"
@@ -303,7 +303,7 @@ RSpec.describe Legion::Gaia::BondRegistry do
       stub_store = double('store')
       entry_data = { identity: 'fa-id', bond: :partner, strength: 0.9, origin: :earned }
       allow(stub_store).to receive(:query)
-        .with(tags: described_class::TO_APOLLO_TAGS)
+        .with(text: 'bond', tags: described_class::TO_APOLLO_TAGS)
         .and_return(success: true, results: [{ content: Legion::JSON.dump(entry_data) }])
 
       described_class.from_apollo(store: stub_store)
