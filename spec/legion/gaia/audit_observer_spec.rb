@@ -76,6 +76,78 @@ RSpec.describe Legion::Gaia::AuditObserver do
     end
   end
 
+  describe 'per-identity tool patterns (H0)' do
+    let(:event_x) do
+      {
+        caller: { requested_by: { identity: 'user:x' } },
+        routing: { provider: :anthropic },
+        tools_used: [{ name: 'read_file' }],
+        timestamp: Time.now
+      }
+    end
+
+    let(:event_y) do
+      {
+        caller: { requested_by: { identity: 'user:y' } },
+        routing: { provider: :openai },
+        tools_used: [{ name: 'write_file' }],
+        timestamp: Time.now
+      }
+    end
+
+    it 'tool_patterns_for returns only tools used by the given identity' do
+      described_class.instance.process_event(event_x)
+      described_class.instance.process_event(event_y)
+      x_patterns = described_class.instance.tool_patterns_for('user:x')
+      expect(x_patterns).to have_key('read_file')
+      expect(x_patterns).not_to have_key('write_file')
+    end
+
+    it 'tool_patterns_for for Y never sees X data' do
+      described_class.instance.process_event(event_x)
+      described_class.instance.process_event(event_y)
+      y_patterns = described_class.instance.tool_patterns_for('user:y')
+      expect(y_patterns).to have_key('write_file')
+      expect(y_patterns).not_to have_key('read_file')
+    end
+
+    it 'learned_data_for returns per-identity tool predictions' do
+      described_class.instance.process_event(event_x)
+      described_class.instance.process_event(event_y)
+      learned_x = described_class.instance.learned_data_for('user:x')
+      expect(learned_x[:tool_predictions]).to have_key('read_file')
+      expect(learned_x[:tool_predictions]).not_to have_key('write_file')
+    end
+
+    it 'tool_patterns (global legacy) still accumulates all tools' do
+      described_class.instance.process_event(event_x)
+      described_class.instance.process_event(event_y)
+      patterns = described_class.instance.tool_patterns
+      expect(patterns).to have_key('read_file')
+      expect(patterns).to have_key('write_file')
+    end
+
+    it 'erase_partner! removes all tool patterns for the identity' do
+      described_class.instance.process_event(event_x)
+      described_class.instance.process_event(event_x)
+      described_class.instance.erase_partner!(identity: 'user:x')
+      expect(described_class.instance.tool_patterns_for('user:x')).to eq({})
+      expect(described_class.instance.user_preferences('user:x')).to eq({})
+    end
+
+    it 'erase_partner! for X leaves Y untouched' do
+      described_class.instance.process_event(event_x)
+      described_class.instance.process_event(event_y)
+      described_class.instance.erase_partner!(identity: 'user:x')
+      y_patterns = described_class.instance.tool_patterns_for('user:y')
+      expect(y_patterns).to have_key('write_file')
+    end
+
+    it 'erase_partner! is a no-op for unknown identity' do
+      expect { described_class.instance.erase_partner!(identity: 'nobody') }.not_to raise_error
+    end
+  end
+
   describe 'dual-read identity extraction (§9.4)' do
     it 'uses :identity when :id is absent' do
       event = {

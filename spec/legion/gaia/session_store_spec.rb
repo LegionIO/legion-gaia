@@ -153,4 +153,52 @@ RSpec.describe Legion::Gaia::SessionStore do
       expect(expired_store.size).to eq(0)
     end
   end
+
+  describe '#erase_partner!' do
+    it 'removes all sessions for the given identity' do
+      store.find_or_create(identity: 'alice')
+      store.find_or_create(identity: 'bob')
+      store.erase_partner!(identity: 'alice')
+      expect(store.size).to eq(1)
+    end
+
+    it 'leaves sessions for other identities untouched' do
+      bob_session = store.find_or_create(identity: 'bob')
+      store.find_or_create(identity: 'alice')
+      store.erase_partner!(identity: 'alice')
+      expect(store.get(bob_session.id)).not_to be_nil
+    end
+
+    it 'erases a UUID-keyed session by identity' do
+      uuid = 'cccccccc-0000-0000-0000-000000000001'
+      session = store.find_or_create(identity: uuid)
+      store.erase_partner!(identity: uuid)
+      expect(store.get(session.id)).to be_nil
+      expect(store.size).to eq(0)
+    end
+
+    it 'erases X and leaves Y when both present' do
+      x_session = store.find_or_create(identity: 'x_user')
+      y_session = store.find_or_create(identity: 'y_user')
+      store.erase_partner!(identity: 'x_user')
+      expect(store.get(x_session.id)).to be_nil
+      expect(store.get(y_session.id)).not_to be_nil
+    end
+
+    it 'is a no-op for an unknown identity' do
+      store.find_or_create(identity: 'alice')
+      expect { store.erase_partner!(identity: 'unknown_person') }.not_to raise_error
+      expect(store.size).to eq(1)
+    end
+
+    it 'cleans canonical_to_uuid index when erasing a migrated session' do
+      uuid = 'dddddddd-0000-0000-0000-000000000001'
+      store.find_or_create(identity: 'esity')
+      store.find_or_create(identity: uuid, canonical_name: 'esity')
+      store.erase_partner!(identity: uuid)
+      fresh = store.find_or_create(identity: uuid)
+      expect(fresh).not_to be_nil
+      expect(store.size).to eq(1)
+    end
+  end
 end

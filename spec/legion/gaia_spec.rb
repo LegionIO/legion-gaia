@@ -636,6 +636,24 @@ RSpec.describe Legion::Gaia do
       expect(obs[:channel]).to eq(:teams)
     end
 
+    it 'adds partner:<identity> domain tag to interaction trace (H0)' do
+      stub_const('Legion::Extensions::Agentic::Memory::Trace::Runners::Traces', Module.new)
+      allow(Legion::Gaia::BondRegistry).to receive(:bond).with('esity').and_return(:partner)
+      allow(Legion::Gaia::BondRegistry).to receive(:partner?).with('esity').and_return(true)
+
+      frame = Legion::Gaia::InputFrame.new(
+        content: 'hello',
+        channel_id: :teams,
+        auth_context: { identity: 'esity' }
+      )
+
+      expect_any_instance_of(Object).to receive(:store_trace) do |_runner, payload|
+        expect(payload[:domain_tags]).to include('partner:esity')
+      end.and_return({ trace_id: SecureRandom.uuid })
+
+      described_class.ingest(frame)
+    end
+
     it 'stores partner interaction traces with scalar affect and valence context' do
       stub_const('Legion::Extensions::Agentic::Memory::Trace::Runners::Traces', Module.new)
       allow(Legion::Gaia::BondRegistry).to receive(:bond).with('esity').and_return(:partner)

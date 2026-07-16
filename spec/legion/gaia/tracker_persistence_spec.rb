@@ -172,6 +172,52 @@ RSpec.describe Legion::Gaia::TrackerPersistence do
     end
   end
 
+  describe '.register_tracker idempotency (H0 partial-boot resilience)' do
+    it 're-registering the same name with same tracker is a no-op (no duplicate)' do
+      tracker = double('tracker', dirty?: false)
+      described_class.register_tracker(:my_tracker, tracker: tracker, tags: ['t'])
+      described_class.register_tracker(:my_tracker, tracker: tracker, tags: ['t'])
+      expect(described_class.registered_trackers.size).to eq(1)
+    end
+
+    it 're-registering same name with different tracker replaces it (idempotent on key)' do
+      tracker_a = double('tracker_a', dirty?: false)
+      tracker_b = double('tracker_b', dirty?: false)
+      described_class.register_tracker(:my_tracker, tracker: tracker_a, tags: ['t'])
+      described_class.register_tracker(:my_tracker, tracker: tracker_b, tags: ['t'])
+      expect(described_class.registered_trackers[:my_tracker][:tracker]).to equal(tracker_b)
+    end
+
+    it 'simulates partial boot: crash after 2 of 4 — restart registers all 4, no duplicates' do
+      trackers = (1..4).map { |i| double("tracker_#{i}", dirty?: false) }
+      trackers[0..1].each.with_index { |t, i| described_class.register_tracker(:"t#{i}", tracker: t, tags: []) }
+      # Simulate restart: re-register 0..1 (idempotent) then register 2..3
+      trackers.each.with_index { |t, i| described_class.register_tracker(:"t#{i}", tracker: t, tags: []) }
+      expect(described_class.registered_trackers.size).to eq(4)
+    end
+  end
+
+  describe 'fail-closed coherence (H0 private-store guard)' do
+    it 'does not write to shared Postgres when Apollo local is nil (fail closed)' do
+      tracker = instance_double('Tracker', dirty?: true, to_apollo_entries: [
+                                  { content: '{"k":"v"}', tags: %w[bond private] }
+                                ])
+      described_class.register_tracker(:private_tracker, tracker: tracker, tags: ['private'])
+      # nil store = Apollo local unavailable — must not call mark_clean! (no flush happened)
+      expect(tracker).not_to receive(:mark_clean!)
+      described_class.flush_dirty(store: nil)
+    end
+
+    it 'flush_all with nil store is a no-op (no fallback write)' do
+      tracker = instance_double('Tracker', dirty?: false, to_apollo_entries: [
+                                  { content: '{}', tags: ['test'] }
+                                ])
+      described_class.register_tracker(:test, tracker: tracker, tags: ['test'])
+      expect(tracker).not_to receive(:mark_clean!)
+      described_class.flush_all(store: nil)
+    end
+  end
+
   describe '.should_flush?' do
     it 'returns true when never flushed' do
       expect(described_class.should_flush?).to be true
