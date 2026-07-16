@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.9.59] - 2026-07-16
+### Added
+- H0: Partner identity as first-class store dimension — `record_interaction_trace` adds `partner:<identity>` domain tag; `SessionStore#erase_partner!(identity:)`; `AuditObserver` tool patterns keyed per-identity with `tool_patterns_for(identity)` and `erase_partner!(identity:)`; `TrackerPersistence.register_tracker` is idempotent (re-registration is a no-op, safe for partial-boot resume); fail-closed: no partner state written to shared Postgres when Apollo local is unavailable
+
 ## [0.9.58] - 2026-07-15
 ### Added
 - Earned bond formation: strength-based partner detection, reinforcement lifecycle, coldstart wire

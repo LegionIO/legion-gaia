@@ -82,6 +82,14 @@ module Legion
         end
       end
 
+      def erase_partner!(identity:)
+        @mutex.synchronize do
+          normalized = normalize_identity(identity)
+          session_id = @identity_index[normalized]
+          remove_unlocked(session_id) if session_id
+        end
+      end
+
       private
 
       def uuid?(identity)

@@ -10,9 +10,10 @@ module Legion
       include Legion::Logging::Helper
 
       def initialize
-        @user_prefs = {}
-        @tool_patterns = {}
-        @mutex        = Mutex.new
+        @user_prefs          = {}
+        @tool_patterns       = {}
+        @identity_tool_patterns = {}
+        @mutex = Mutex.new
       end
 
       def process_event(event)
@@ -39,13 +40,24 @@ module Legion
         @mutex.synchronize { @tool_patterns.dup }
       end
 
+      def tool_patterns_for(identity)
+        @mutex.synchronize { (@identity_tool_patterns[identity] || {}).dup }
+      end
+
       def learned_data_for(identity)
         @mutex.synchronize do
           prefs = @user_prefs[identity] || {}
           {
             routing_preference: prefs[:routing],
-            tool_predictions: top_tools_for_patterns
+            tool_predictions: top_tools_for_identity(identity)
           }
+        end
+      end
+
+      def erase_partner!(identity:)
+        @mutex.synchronize do
+          @user_prefs.delete(identity)
+          @identity_tool_patterns.delete(identity)
         end
       end
 
@@ -53,6 +65,7 @@ module Legion
         @mutex.synchronize do
           @user_prefs.clear
           @tool_patterns.clear
+          @identity_tool_patterns.clear
         end
       end
 
@@ -80,6 +93,7 @@ module Legion
       end
 
       def record_tool_patterns(event)
+        identity = extract_caller_identity(event)
         tools = event[:tools_used] || []
         tools.each do |tool|
           name = tool[:name] || tool['name']
@@ -88,11 +102,23 @@ module Legion
           @tool_patterns[name] ||= { count: 0, last_used: nil }
           @tool_patterns[name][:count] += 1
           @tool_patterns[name][:last_used] = event[:timestamp]
+
+          next unless identity
+
+          @identity_tool_patterns[identity] ||= {}
+          @identity_tool_patterns[identity][name] ||= { count: 0, last_used: nil }
+          @identity_tool_patterns[identity][name][:count] += 1
+          @identity_tool_patterns[identity][name][:last_used] = event[:timestamp]
         end
       end
 
       def top_tools_for_patterns
         @tool_patterns.sort_by { |_, v| -v[:count] }.first(10).to_h
+      end
+
+      def top_tools_for_identity(identity)
+        patterns = @identity_tool_patterns[identity] || {}
+        patterns.sort_by { |_, v| -v[:count] }.first(10).to_h
       end
     end
   end

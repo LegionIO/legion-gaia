@@ -606,7 +606,7 @@ module Legion
           }.tap do |payload|
             payload[:emotional_context] = emotional_context if emotional_context
           end,
-          domain_tags: ['partner_interaction', observation[:channel].to_s],
+          domain_tags: ['partner_interaction', observation[:channel].to_s, "partner:#{observation[:identity]}"],
           origin: :direct_experience,
           emotional_valence: interaction_trace_emotional_valence(emotional_context),
           emotional_intensity: interaction_trace_emotional_intensity(emotional_context),
