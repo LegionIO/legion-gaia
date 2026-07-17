@@ -33,6 +33,7 @@ require 'legion/gaia/offline_handler'
 require 'legion/gaia/proactive_dispatcher'
 require 'legion/gaia/bond_registry'
 require 'legion/gaia/behavioral_synapse'
+require 'legion/gaia/partner_model'
 require 'legion/gaia/tracker_persistence'
 require 'legion/gaia/router'
 
@@ -120,6 +121,7 @@ module Legion
         @last_valences = nil
         @last_response_at = nil
         @last_applied = nil
+        @correction_counts = nil
         @tick_history = nil
         @tick_count = nil
         @started_at = nil
@@ -401,6 +403,7 @@ module Legion
         @registry.discover
         boot_channels
         boot_agent_bridge
+        @correction_counts = Concurrent::Hash.new(0)
         register_behavioral_synapse_tracker
         hydrate_from_apollo_local
         register_provisional_partner_prior
@@ -583,11 +586,7 @@ module Legion
           bootstrap.record_observation
         end
 
-        # The gate: only partner-level identities get deep learning
-        if BondRegistry.partner?(identity_str)
-          record_interaction_trace(observation)
-          evaluate_calibration(observation)
-        end
+        run_partner_deep_learning(identity_str, observation) if BondRegistry.partner?(identity_str)
       rescue StandardError => e
         handle_exception(e, level: :warn, operation: 'gaia.observe_interlocutor', identity: identity)
       end
@@ -705,6 +704,91 @@ module Legion
         @last_applied = nil
       rescue StandardError => e
         handle_exception(e, level: :warn, operation: 'gaia.grade_behavioral_synapses')
+      end
+
+      def run_partner_deep_learning(identity_str, observation)
+        record_interaction_trace(observation)
+        evaluate_calibration(observation)
+        update_preference_profile(identity_str, observation)
+        detect_and_record_correction(identity_str, observation)
+      end
+
+      def update_preference_profile(identity_str, observation)
+        return unless defined?(Legion::Extensions::Mesh::Helpers::PreferenceProfile)
+
+        Legion::Extensions::Mesh::Helpers::PreferenceProfile.update_from_observation(
+          owner_id: identity_str, signals: observation
+        )
+      rescue StandardError => e
+        handle_exception(e, level: :debug, operation: 'gaia.update_preference_profile', identity: identity_str)
+      end
+
+      def detect_and_record_correction(identity_str, observation)
+        return unless defined?(Legion::Extensions::Agentic::Social::Calibration::Runners::Calibration)
+        return unless @last_applied&.dig(:behavioral_synapse_ids)&.any?
+
+        ensure_calibration_runner
+        feedback_result = @calibration_runner.detect_explicit_feedback(content: observation[:content].to_s)
+        return unless feedback_result[:feedback] == :negative
+
+        record_correction_trace(identity: identity_str, applied: @last_applied, observation: observation)
+      rescue StandardError => e
+        handle_exception(e, level: :debug, operation: 'gaia.detect_and_record_correction', identity: identity_str)
+      end
+
+      def record_correction_trace(identity:, applied:, observation:)
+        return unless defined?(Legion::Extensions::Agentic::Memory::Trace::Runners::Traces)
+
+        runner = Object.new
+        runner.extend(Legion::Extensions::Agentic::Memory::Trace::Runners::Traces)
+        runner.store_trace(
+          type: :correction,
+          content_payload: {
+            correction_type: :explicit_negative_feedback,
+            applied_synapse_ids: Array(applied[:behavioral_synapse_ids]),
+            channel: observation[:channel],
+            content_type: observation[:content_type]
+          },
+          domain_tags: ['correction', "partner:#{identity}"],
+          origin: :direct_experience,
+          emotional_valence: -0.5,
+          emotional_intensity: 0.6,
+          confidence: 0.9
+        ).tap do |trace_result|
+          log.info("[gaia] correction trace identity=#{identity} " \
+                   "trace=#{trace_result[:trace_id].to_s[0, 8]} " \
+                   "synapse_ids=#{Array(applied[:behavioral_synapse_ids]).size}")
+          check_crystallization(identity: identity, applied: applied, trace_id: trace_result[:trace_id])
+        end
+      rescue StandardError => e
+        handle_exception(e, level: :debug, operation: 'gaia.record_correction_trace', identity: identity)
+      end
+
+      def check_crystallization(identity:, applied:, trace_id:)
+        domain = applied[:domain].to_s
+        return if domain.empty?
+
+        threshold = settings&.dig(:partner_model, :crystallize_threshold) || 3
+        @correction_counts ||= Concurrent::Hash.new(0)
+        key = "#{identity}:#{domain}"
+        @correction_counts[key] += 1
+        count = @correction_counts[key]
+
+        return unless count >= threshold
+
+        synapse_ids = Array(applied[:behavioral_synapse_ids])
+        BehavioralSynapse.crystallize(
+          identity: identity,
+          domain: domain,
+          directive: applied[:directive].to_s,
+          evidence_trace_ids: synapse_ids + [trace_id.to_s],
+          origin: 'emergent'
+        )
+        @correction_counts[key] = 0
+        log.info("[gaia] crystallization triggered identity=#{identity} domain=#{domain} " \
+                 "corrections=#{count} threshold=#{threshold}")
+      rescue StandardError => e
+        handle_exception(e, level: :debug, operation: 'gaia.check_crystallization', identity: identity)
       end
 
       def fetch_imprint_multiplier
