@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.61] - 2026-07-16
+### Added
+- H4: `PartnerModel` — 7-slot working-memory competition (§12.4); only filter/transform/autonomous tier synapses compete, observe-tier excluded; unified ranking across synapses, traces, and preferences by `strength × (1 + emotional_intensity)`; `observe_mode_entries` transparency surface
+- Wire `update_from_observation` on `PreferenceProfile` in `observe_interlocutor` (soft-guarded on lex-mesh)
+- Correction detection: explicit negative feedback after applied behavioral response → correction trace via lex-agentic-memory
+- Crystallization path: N corroborating corrections (default threshold 3) per (identity, domain) → `BehavioralSynapse.crystallize` with `origin: 'emergent'`
+
 ## [0.9.60] - 2026-07-16
 ### Added
 - H2: BehavioralSynapse store with vendored Confidence math (lifecycle: crystallize, lazy decay with intensity resistance, grade via record_outcome, pain at 3 consecutive failures → dampened + event emission)
