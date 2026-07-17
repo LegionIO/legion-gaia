@@ -32,6 +32,7 @@ require 'legion/gaia/proactive'
 require 'legion/gaia/offline_handler'
 require 'legion/gaia/proactive_dispatcher'
 require 'legion/gaia/bond_registry'
+require 'legion/gaia/behavioral_synapse'
 require 'legion/gaia/tracker_persistence'
 require 'legion/gaia/router'
 
@@ -118,6 +119,7 @@ module Legion
         @absence_pattern_checked_at = nil
         @last_valences = nil
         @last_response_at = nil
+        @last_applied = nil
         @tick_history = nil
         @tick_count = nil
         @started_at = nil
@@ -258,6 +260,28 @@ module Legion
         handle_exception(e, level: :warn, operation: 'gaia.record_advisory_meta', advisory_id: advisory_id)
       end
 
+      def record_response_applied(advisory_id:, identity:, applied:)
+        return unless started?
+
+        synapse_count = Array(applied[:behavioral_synapse_ids]).size
+        log.info("[gaia] attribution advisory_id=#{advisory_id} identity=#{identity} synapses=#{synapse_count}")
+
+        store = apollo_local_store
+        store&.upsert(
+          content: Legion::JSON.dump(applied.merge(advisory_id: advisory_id, identity: identity)),
+          tags: %w[self-knowledge attribution] + ["partner:#{identity}"],
+          source_channel: 'gaia',
+          confidence: 0.9,
+          access_scope: 'local'
+        )
+
+        @last_applied = applied.merge(advisory_id: advisory_id, identity: identity)
+        { recorded: true, advisory_id: advisory_id }
+      rescue StandardError => e
+        handle_exception(e, level: :warn, operation: 'gaia.record_response_applied', advisory_id: advisory_id)
+        { recorded: false }
+      end
+
       def status
         return { started: false } unless started?
 
@@ -377,6 +401,7 @@ module Legion
         @registry.discover
         boot_channels
         boot_agent_bridge
+        register_behavioral_synapse_tracker
         hydrate_from_apollo_local
         register_provisional_partner_prior
         log.info('Legion::Gaia agent mode boot complete')
@@ -638,6 +663,8 @@ module Legion
           log.info("[gaia] calibration identity=#{observation[:identity]} " \
                    "deltas=#{result[:deltas].keys.join(',')}")
         end
+
+        grade_behavioral_synapses(result) if result.is_a?(Hash) && result[:reaction_score]
       rescue StandardError => e
         handle_exception(e, level: :warn, operation: 'gaia.evaluate_calibration', identity: observation[:identity])
       end
@@ -653,6 +680,31 @@ module Legion
           tags: %w[bond calibration]
         )
         @calibration_runner = runner
+      end
+
+      def grade_behavioral_synapses(calibration_result)
+        return unless @last_applied.is_a?(Hash)
+
+        synapse_ids = Array(@last_applied[:behavioral_synapse_ids])
+        return if synapse_ids.empty?
+
+        reaction_score = calibration_result[:reaction_score].to_f
+        outcome = if reaction_score >= 0.6
+                    :success
+                  elsif reaction_score <= 0.4
+                    :failure
+                  end
+        return unless outcome
+
+        multiplier = fetch_imprint_multiplier
+        synapse_ids.each do |sid|
+          BehavioralSynapse.record_outcome(id: sid, outcome: outcome, multiplier: multiplier)
+        end
+        log.info("[gaia] graded synapses count=#{synapse_ids.size} outcome=#{outcome} " \
+                 "reaction_score=#{reaction_score.round(3)}")
+        @last_applied = nil
+      rescue StandardError => e
+        handle_exception(e, level: :warn, operation: 'gaia.grade_behavioral_synapses')
       end
 
       def fetch_imprint_multiplier
@@ -835,12 +887,21 @@ module Legion
         handle_exception(e, level: :debug, operation: 'gaia.flush_trackers_on_shutdown')
       end
 
+      def register_behavioral_synapse_tracker
+        TrackerPersistence.register_tracker(
+          :behavioral_synapse,
+          tracker: BehavioralSynapse::Tracker.new,
+          tags: %w[self-knowledge behavior]
+        )
+      end
+
       def hydrate_from_apollo_local
         store = apollo_local_store
         return unless store
 
         TrackerPersistence.hydrate_all(store: store)
         BondRegistry.hydrate_from_apollo(store: store)
+        BehavioralSynapse.from_apollo(store: store)
         log.info('Legion::Gaia hydrated trackers and bond registry from Apollo Local')
       rescue StandardError => e
         handle_exception(e, level: :warn, operation: 'gaia.hydrate_from_apollo_local')
