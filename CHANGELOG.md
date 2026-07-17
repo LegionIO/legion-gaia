@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.60] - 2026-07-16
+### Added
+- H2: BehavioralSynapse store with vendored Confidence math (lifecycle: crystallize, lazy decay with intensity resistance, grade via record_outcome, pain at 3 consecutive failures → dampened + event emission)
+- `record_response_applied` public method — attribution facade for legion-llm's final-delivery hook; persists to Apollo Local with self-knowledge/attribution tags
+- Grading path in `evaluate_calibration`: reaction_score >= 0.6 → :success, <= 0.4 → :failure; maps each applied synapse_id via BehavioralSynapse.record_outcome scaled by imprint multiplier
+- TrackerPersistence integration for BehavioralSynapse: Tracker wrapper, hydrate at boot alongside bonds, flush_dirty/flush_all on heartbeat/shutdown
+
 ## [0.9.59] - 2026-07-16
 ### Added
 - H0: Partner identity as first-class store dimension — `record_interaction_trace` adds `partner:<identity>` domain tag; `SessionStore#erase_partner!(identity:)`; `AuditObserver` tool patterns keyed per-identity with `tool_patterns_for(identity)` and `erase_partner!(identity:)`; `TrackerPersistence.register_tracker` is idempotent (re-registration is a no-op, safe for partial-boot resume); fail-closed: no partner state written to shared Postgres when Apollo local is unavailable
