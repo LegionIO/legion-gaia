@@ -10,7 +10,7 @@
 module Legion
   module Gaia
     module Routes
-      def self.registered(app)
+      def self.registered(app) # rubocop:disable Metrics/AbcSize
         app.helpers do # rubocop:disable Metrics/BlockLength
           unless method_defined?(:gaia_available?)
             define_method(:gaia_available?) do
@@ -62,6 +62,7 @@ module Legion
         register_sessions_route(app)
         register_teams_webhook_route(app)
         register_ingest_route(app)
+        register_bond_terminate_route(app)
       end
 
       def self.register_status_route(app)
@@ -193,10 +194,20 @@ module Legion
         end
       end
 
+      def self.register_bond_terminate_route(app)
+        app.delete '/api/gaia/bond/:identity' do
+          identity = params[:identity]
+          halt 400, json_error('missing_identity', 'identity is required') if identity.to_s.empty?
+
+          result = Legion::Gaia::DeathProtocol.terminate_bond(identity: identity, confirm: true)
+          json_response(result)
+        end
+      end
+
       class << self
         private :register_status_route, :register_ticks_route, :register_channels_route,
                 :register_buffer_route, :register_sessions_route, :register_teams_webhook_route,
-                :register_ingest_route
+                :register_ingest_route, :register_bond_terminate_route
       end
     end
   end
