@@ -727,6 +727,52 @@ RSpec.describe Legion::Gaia do
     end
   end
 
+  describe '.erase_attribution!' do
+    context 'when Apollo Local is not available' do
+      it 'returns erased: false with reason :no_apollo_local' do
+        result = described_class.erase_attribution!(identity: 'X')
+        expect(result).to include(erased: false, identity: 'X', count: 0, reason: :no_apollo_local)
+      end
+    end
+
+    context 'when Apollo Local is available but has no delete_by_tags' do
+      let(:mock_store) do
+        double('ApolloLocal', started?: true).tap do |s|
+          allow(s).to receive(:respond_to?).with(:delete_by_tags).and_return(false)
+        end
+      end
+
+      before do
+        stub_const('Legion::Apollo::Local', mock_store)
+      end
+
+      it 'returns erased: true with count: 0' do
+        result = described_class.erase_attribution!(identity: 'X')
+        expect(result).to include(erased: true, identity: 'X', count: 0)
+      end
+    end
+
+    context 'when Apollo Local is available and has delete_by_tags' do
+      let(:mock_store) do
+        double('ApolloLocal', started?: true).tap do |s|
+          allow(s).to receive(:respond_to?).with(:delete_by_tags).and_return(true)
+          allow(s).to receive(:delete_by_tags)
+            .with(tags: %w[self-knowledge attribution partner:X])
+            .and_return({ success: true, count: 3 })
+        end
+      end
+
+      before do
+        stub_const('Legion::Apollo::Local', mock_store)
+      end
+
+      it 'delegates to store.delete_by_tags and returns count' do
+        result = described_class.erase_attribution!(identity: 'X')
+        expect(result).to include(erased: true, identity: 'X', count: 3)
+      end
+    end
+  end
+
   describe 'VERSION' do
     it 'has a version number' do
       expect(Legion::Gaia::VERSION).not_to be_nil

@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.9.62] - 2026-07-22
+### Added
+- H8 prep: `BondRegistry.erase_partner!(identity:)` — thread-safe deletion of a single bond entry; marks registry dirty; emits `gaia.bond.erased` event if `Legion::Events` is defined; idempotent (no raise on missing identity)
+- H8 prep: `Gaia.erase_attribution!(identity:)` — erases Apollo Local attribution records tagged `self-knowledge/attribution/partner:<identity>` via `store.delete_by_tags`; includes TODO for `legion-apollo` to implement `delete_by_tags(tags:)`, gracefully no-ops until available
+
 ## [0.9.61] - 2026-07-16
 ### Added
 - H4: `PartnerModel` — 7-slot working-memory competition (§12.4); only filter/transform/autonomous tier synapses compete, observe-tier excluded; unified ranking across synapses, traces, and preferences by `strength × (1 + emotional_intensity)`; `observe_mode_entries` transparency surface
