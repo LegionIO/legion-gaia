@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.9.63] - 2026-07-22
+### Added
+- H8: `DeathProtocol.terminate_bond(identity:, confirm:)` — single entry point for bond termination; walks cascade across all stores (bond, behavioral_synapses, session, audit, attribution, calibration, preferences, memory_traces, predictions, trust); returns proof-of-destruction receipt with per-store results; emits `gaia.bond.terminated` event
+- H8: `BondRegistry.set_bond_state` / `bond_state` / `terminating?` / `terminated?` — explicit lifecycle state management for partner bonds
+- H8 ingress barrier: `ingest`, `observe_interlocutor`, and `record_response_applied` all reject writes for terminating/terminated identities with a log warning and early return
+- H8 irreversibility: `observe_interlocutor` blocks re-registration of terminated identities — a new bond requires explicit `begin_new_imprint` (out of scope)
+- DELETE `/api/gaia/bond/:identity` route — terminates a bond and returns the receipt
+- Soft-guarded erasure helpers for optional stores (calibration, preferences, memory traces, predictions, trust) — skips gracefully when extension not loaded, raises on actual store errors
+
 ## [0.9.62] - 2026-07-22
 ### Added
 - H8 prep: `BondRegistry.erase_partner!(identity:)` — thread-safe deletion of a single bond entry; marks registry dirty; emits `gaia.bond.erased` event if `Legion::Events` is defined; idempotent (no raise on missing identity)

@@ -32,6 +32,7 @@ require 'legion/gaia/proactive'
 require 'legion/gaia/offline_handler'
 require 'legion/gaia/proactive_dispatcher'
 require 'legion/gaia/bond_registry'
+require 'legion/gaia/death_protocol'
 require 'legion/gaia/behavioral_synapse'
 require 'legion/gaia/partner_model'
 require 'legion/gaia/tracker_persistence'
@@ -206,10 +207,15 @@ module Legion
       def ingest(input_frame)
         return { ingested: false, reason: :not_started } unless started?
 
+        identity = extract_identity(input_frame)
+        if identity && (BondRegistry.terminating?(identity.to_s) || BondRegistry.terminated?(identity.to_s))
+          log.warn("[gaia] rejected ingest for terminated/terminating identity=#{identity}")
+          return { ingested: false, reason: :identity_terminated }
+        end
+
         signal = input_frame.to_signal
         @sensory_buffer.push(signal)
 
-        identity = extract_identity(input_frame)
         session = @session_store&.find_or_create(identity: identity || :anonymous)
         @session_store&.touch(session.id, channel_id: input_frame.channel_id) if session
 
@@ -289,6 +295,12 @@ module Legion
 
       def record_response_applied(advisory_id:, identity:, applied:)
         return unless started?
+
+        identity_str = identity.to_s
+        if BondRegistry.terminating?(identity_str) || BondRegistry.terminated?(identity_str)
+          log.warn("[gaia] rejected write for terminated/terminating identity=#{identity_str}")
+          return { recorded: false, reason: :identity_terminated }
+        end
 
         synapse_count = Array(applied[:behavioral_synapse_ids]).size
         log.info("[gaia] attribution advisory_id=#{advisory_id} identity=#{identity} synapses=#{synapse_count}")
@@ -563,8 +575,17 @@ module Legion
         ctx[:channel_identity] || ctx[:user_id] || ctx[:identity]
       end
 
+      def identity_lifecycle_blocked?(identity_str)
+        return false unless BondRegistry.terminating?(identity_str) || BondRegistry.terminated?(identity_str)
+
+        log.warn("[gaia] rejected write for terminated/terminating identity=#{identity_str}")
+        true
+      end
+
       def observe_interlocutor(input_frame, identity)
         identity_str = identity.to_s
+        return if identity_lifecycle_blocked?(identity_str)
+
         auth_ctx = input_frame.auth_context || {}
 
         # Ensure the identity is registered so reinforce has a target

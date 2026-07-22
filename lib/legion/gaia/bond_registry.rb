@@ -11,9 +11,10 @@ module Legion
 
       TO_APOLLO_TAGS = %w[self-knowledge bond].freeze
 
-      @bonds   = Concurrent::Hash.new
-      @dirty   = false
-      @mutex   = Mutex.new
+      @bonds        = Concurrent::Hash.new
+      @bond_states  = Concurrent::Hash.new
+      @dirty        = false
+      @mutex        = Mutex.new
 
       module_function
 
@@ -262,9 +263,26 @@ module Legion
         { erased: !erased.nil?, identity: identity }
       end
 
+      def set_bond_state(identity, state)
+        @bond_states[identity.to_s] = state.to_sym
+      end
+
+      def bond_state(identity)
+        @bond_states[identity.to_s]
+      end
+
+      def terminating?(identity)
+        @bond_states[identity.to_s] == :terminating
+      end
+
+      def terminated?(identity)
+        @bond_states[identity.to_s] == :terminated
+      end
+
       def reset!
         @mutex.synchronize do
           @bonds = Concurrent::Hash.new
+          @bond_states = Concurrent::Hash.new
           @dirty = false
         end
         log.debug('BondRegistry reset')
