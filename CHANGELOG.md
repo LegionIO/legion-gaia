@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.9.64] - 2026-07-22
+### Added
+- H9: `Disclosure.report(identity:)` — full partner model transparency surface; includes bond_state, all behavioral_synapses with autonomy_mode, preferences, calibration_weights, imprint_state, prediction_accuracy; each section soft-guarded (nil if extension not loaded, no crash); always includes data_locality statement and termination_available: true
+- H9: `VisibleGrowth.milestone_acknowledgment(identity:, domain:, new_mode:, old_mode:)` — fires once per tier transition per (identity, domain); returns natural-language acknowledgment ("I've noticed you prefer shorter answers — I'm now adjusting my approach.")
+- H9: `VisibleGrowth.pain_revert_acknowledgment(domain:)` — called after 3 consecutive failures reset a synapse; "I've been getting [domain] wrong — I've reset that."
+- H9: `VisibleGrowth.graduation_acknowledgment(identity:)` — fires once per identity when imprint window closes
+- H9: `VisibleGrowth.onboarding_frame(identity:)` — first-contact transparency; plain language about learning, local storage, and termination option; fires once per identity
+- H9: `VisibleGrowth.epistemic_qualifier(identity:, domain:)` — returns hedge/qualifier string during imprint or when relevant synapse is observe-tier; nil when confident (default post-imprint)
+- Wire milestone and pain surfaces into `grade_behavioral_synapses`; pending frames stored in `@pending_growth_frames` (drain via `Gaia.drain_growth_frames`)
+- `GET /api/gaia/partner/:identity/report` route — returns full Disclosure.report for any identity
+
 ## [0.9.63] - 2026-07-22
 ### Added
 - H8: `DeathProtocol.terminate_bond(identity:, confirm:)` — single entry point for bond termination; walks cascade across all stores (bond, behavioral_synapses, session, audit, attribution, calibration, preferences, memory_traces, predictions, trust); returns proof-of-destruction receipt with per-store results; emits `gaia.bond.terminated` event

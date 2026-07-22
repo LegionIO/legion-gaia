@@ -35,6 +35,8 @@ require 'legion/gaia/bond_registry'
 require 'legion/gaia/death_protocol'
 require 'legion/gaia/behavioral_synapse'
 require 'legion/gaia/partner_model'
+require 'legion/gaia/disclosure'
+require 'legion/gaia/visible_growth'
 require 'legion/gaia/tracker_persistence'
 require 'legion/gaia/router'
 
@@ -128,6 +130,7 @@ module Legion
         @started_at = nil
         @active_heartbeats = 0
         @quiescing_phase_handlers_cache = nil
+        @pending_growth_frames = nil
 
         log.info('Legion::Gaia shut down')
       end
@@ -733,23 +736,59 @@ module Legion
         synapse_ids = Array(@last_applied[:behavioral_synapse_ids])
         return if synapse_ids.empty?
 
-        reaction_score = calibration_result[:reaction_score].to_f
-        outcome = if reaction_score >= 0.6
-                    :success
-                  elsif reaction_score <= 0.4
-                    :failure
-                  end
+        outcome = calibration_outcome(calibration_result[:reaction_score].to_f)
         return unless outcome
 
+        identity   = @last_applied[:identity]&.to_s
         multiplier = fetch_imprint_multiplier
         synapse_ids.each do |sid|
-          BehavioralSynapse.record_outcome(id: sid, outcome: outcome, multiplier: multiplier)
+          grade_single_synapse(sid, outcome: outcome, identity: identity, multiplier: multiplier)
         end
+
         log.info("[gaia] graded synapses count=#{synapse_ids.size} outcome=#{outcome} " \
-                 "reaction_score=#{reaction_score.round(3)}")
+                 "reaction_score=#{calibration_result[:reaction_score].to_f.round(3)}")
         @last_applied = nil
       rescue StandardError => e
         handle_exception(e, level: :warn, operation: 'gaia.grade_behavioral_synapses')
+      end
+
+      def calibration_outcome(reaction_score)
+        if reaction_score >= 0.6
+          :success
+        elsif reaction_score <= 0.4
+          :failure
+        end
+      end
+
+      def grade_single_synapse(sid, outcome:, identity:, multiplier:)
+        pre_entry = BehavioralSynapse.store.values.find { |e| e[:id] == sid }
+        old_mode  = pre_entry ? BehavioralSynapse::Math.autonomy_mode(pre_entry[:confidence].to_f) : nil
+
+        result = BehavioralSynapse.record_outcome(id: sid, outcome: outcome, multiplier: multiplier)
+        return unless result.is_a?(Hash) && result[:found] != false
+
+        surface_pain_frame(result, identity: identity, old_mode: old_mode)
+        surface_milestone_frame(result, identity: identity, old_mode: old_mode)
+      end
+
+      def surface_pain_frame(result, old_mode:, **)
+        return unless result[:status] == 'dampened' && old_mode && old_mode != :observe
+
+        msg = VisibleGrowth.pain_revert_acknowledgment(domain: result[:domain].to_s)
+        enqueue_growth_frame(msg) if msg
+      end
+
+      def surface_milestone_frame(result, identity:, old_mode:)
+        new_mode = BehavioralSynapse::Math.autonomy_mode(result[:confidence].to_f)
+        return unless old_mode && new_mode != old_mode && result[:status] == 'active'
+
+        msg = VisibleGrowth.milestone_acknowledgment(
+          identity: identity.to_s,
+          domain: result[:domain].to_s,
+          new_mode: new_mode,
+          old_mode: old_mode
+        )
+        enqueue_growth_frame(msg) if msg
       end
 
       def run_partner_deep_learning(identity_str, observation)
@@ -1277,6 +1316,22 @@ module Legion
         return compact if compact.length <= limit
 
         "#{compact[0, limit]}..."
+      end
+
+      # Stores a growth frame string for delivery on the next response turn.
+      def enqueue_growth_frame(message)
+        return if message.to_s.empty?
+
+        @pending_growth_frames ||= []
+        @pending_growth_frames << message
+        log.info("[gaia] growth frame queued: #{message.inspect}")
+      end
+
+      # Drain all pending growth frames — for tests and future delivery integration.
+      def drain_growth_frames
+        frames = @pending_growth_frames || []
+        @pending_growth_frames = []
+        frames
       end
     end
   end
