@@ -249,6 +249,19 @@ module Legion
         handle_exception(e, level: :warn, operation: 'gaia.bond_registry.hydrate_from_apollo')
       end
 
+      def erase_partner!(identity:)
+        erased = false
+        @mutex.synchronize do
+          erased = @bonds.delete(identity.to_s)
+          @dirty = true if erased
+        end
+        log.info("[gaia] bond erased identity=#{identity}") if erased
+        if defined?(Legion::Events) && Legion::Events.respond_to?(:emit)
+          Legion::Events.emit('gaia.bond.erased', identity: identity)
+        end
+        { erased: !erased.nil?, identity: identity }
+      end
+
       def reset!
         @mutex.synchronize do
           @bonds = Concurrent::Hash.new

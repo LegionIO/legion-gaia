@@ -417,6 +417,61 @@ RSpec.describe Legion::Gaia::BondRegistry do
     end
   end
 
+  describe '.erase_partner!' do
+    it 'removes the target identity and leaves others untouched' do
+      described_class.register('X', bond: :partner, strength: 0.7)
+      described_class.register('Y', bond: :known, strength: 0.5)
+      described_class.erase_partner!(identity: 'X')
+      expect(described_class.bond('X')).to eq(:unknown)
+      expect(described_class.bond('Y')).to eq(:known)
+    end
+
+    it 'returns erased: true for existing identity' do
+      described_class.register('X', bond: :partner, strength: 0.7)
+      result = described_class.erase_partner!(identity: 'X')
+      expect(result).to eq({ erased: true, identity: 'X' })
+    end
+
+    it 'makes bond(:X) return :unknown after erasure' do
+      described_class.register('X', bond: :partner)
+      described_class.erase_partner!(identity: 'X')
+      expect(described_class.bond('X')).to eq(:unknown)
+    end
+
+    it 'makes partner?(:X) return false after erasure' do
+      described_class.register('X', bond: :partner, strength: 0.9)
+      described_class.erase_partner!(identity: 'X')
+      expect(described_class.partner?('X')).to be false
+    end
+
+    it 'marks the registry dirty after erasure' do
+      described_class.register('X', bond: :partner)
+      described_class.mark_clean!
+      described_class.erase_partner!(identity: 'X')
+      expect(described_class.dirty?).to be true
+    end
+
+    it 'is idempotent — erasing a non-existent identity does not raise' do
+      expect { described_class.erase_partner!(identity: 'ghost') }.not_to raise_error
+    end
+
+    it 'returns erased: false for non-existent identity' do
+      result = described_class.erase_partner!(identity: 'ghost')
+      expect(result).to eq({ erased: false, identity: 'ghost' })
+    end
+
+    context 'when Legion::Events is defined' do
+      it 'emits gaia.bond.erased event' do
+        described_class.register('X', bond: :partner, strength: 0.7)
+        events_stub = double('Legion::Events')
+        stub_const('Legion::Events', events_stub)
+        allow(events_stub).to receive(:respond_to?).with(:emit).and_return(true)
+        expect(events_stub).to receive(:emit).with('gaia.bond.erased', identity: 'X')
+        described_class.erase_partner!(identity: 'X')
+      end
+    end
+  end
+
   describe '.reset!' do
     it 'clears bonds and dirty flag' do
       described_class.register('test-id', bond: :partner, strength: 0.7)

@@ -246,6 +246,31 @@ module Legion
         end
       end
 
+      def erase_attribution!(identity:)
+        store = apollo_local_store
+        unless store
+          log.info("[gaia] erase_attribution! skipped identity=#{identity} reason=no_apollo_local")
+          return { erased: false, identity: identity, count: 0, reason: :no_apollo_local }
+        end
+
+        tags = %w[self-knowledge attribution] + ["partner:#{identity}"]
+        # TODO: legion-apollo needs delete_by_tags(tags:) — using query_by_tags + individual deletes once available
+        # Until then: store.delete_by_tags is the target API; this no-ops with count=0 until implemented
+        count = 0
+        if store.respond_to?(:delete_by_tags)
+          result = store.delete_by_tags(tags: tags)
+          count = result[:count].to_i if result.is_a?(Hash)
+        else
+          log.info("[gaia] erase_attribution! identity=#{identity} " \
+                   'reason=delete_by_tags_not_available count=0')
+        end
+        log.info("[gaia] erase_attribution! identity=#{identity} count=#{count}")
+        { erased: true, identity: identity, count: count }
+      rescue StandardError => e
+        handle_exception(e, level: :warn, operation: 'gaia.erase_attribution', identity: identity)
+        { erased: false, identity: identity, count: 0 }
+      end
+
       def record_advisory_meta(advisory_id:, advisory_types:)
         return unless started?
 
