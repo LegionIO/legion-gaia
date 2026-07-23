@@ -1,5 +1,31 @@
 # Changelog
 
+## [0.9.65] - 2026-07-23
+### Fixed
+- `resolve_process_identity` now uses `Legion::Identity::Process.canonical_name` exclusively — never `Etc.loginname` or `ENV['USER']` (spoofable, wrong string in corporate environments)
+- Provisional partner registration skips gracefully when identity hasn't resolved yet (no registration under wrong/anonymous string)
+- `drain_growth_frames` moved to public API (Advisory calls it directly)
+- Removed `private_class_method` from Advisory — all methods callable
+
+### Added
+- Advisory now produces `:system_prompt` with partner model slots, growth frames, and epistemic qualifiers — injected via existing legion-llm `gaia_advisory` step (zero legion-llm changes)
+- `Advisory.build_partner_system_prompt(identity:)` — assembles working-memory context for the LLM
+- `Advisory.build_partner_slots(identity:)` — renders PartnerModel slots as natural language
+- `Advisory.drain_growth_content` — drains and renders pending milestone/growth frames
+- `Advisory.build_epistemic_qualifier(identity:)` — delegates to VisibleGrowth for uncertainty markers
+- Log line: `[gaia] advisory partner_prompt injected identity=X length=N` when partner context fires
+
+## [0.9.64] - 2026-07-22
+### Added
+- H9: `Disclosure.report(identity:)` — full partner model transparency surface; includes bond_state, all behavioral_synapses with autonomy_mode, preferences, calibration_weights, imprint_state, prediction_accuracy; each section soft-guarded (nil if extension not loaded, no crash); always includes data_locality statement and termination_available: true
+- H9: `VisibleGrowth.milestone_acknowledgment(identity:, domain:, new_mode:, old_mode:)` — fires once per tier transition per (identity, domain); returns natural-language acknowledgment ("I've noticed you prefer shorter answers — I'm now adjusting my approach.")
+- H9: `VisibleGrowth.pain_revert_acknowledgment(domain:)` — called after 3 consecutive failures reset a synapse; "I've been getting [domain] wrong — I've reset that."
+- H9: `VisibleGrowth.graduation_acknowledgment(identity:)` — fires once per identity when imprint window closes
+- H9: `VisibleGrowth.onboarding_frame(identity:)` — first-contact transparency; plain language about learning, local storage, and termination option; fires once per identity
+- H9: `VisibleGrowth.epistemic_qualifier(identity:, domain:)` — returns hedge/qualifier string during imprint or when relevant synapse is observe-tier; nil when confident (default post-imprint)
+- Wire milestone and pain surfaces into `grade_behavioral_synapses`; pending frames stored in `@pending_growth_frames` (drain via `Gaia.drain_growth_frames`)
+- `GET /api/gaia/partner/:identity/report` route — returns full Disclosure.report for any identity
+
 ## [0.9.63] - 2026-07-22
 ### Added
 - H8: `DeathProtocol.terminate_bond(identity:, confirm:)` — single entry point for bond termination; walks cascade across all stores (bond, behavioral_synapses, session, audit, attribution, calibration, preferences, memory_traces, predictions, trust); returns proof-of-destruction receipt with per-store results; emits `gaia.bond.terminated` event

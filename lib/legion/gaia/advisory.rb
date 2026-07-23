@@ -20,6 +20,14 @@ module Legion
         advisory[:valence] = Gaia.last_valences if Gaia.last_valences
         merge_tick_data!(advisory, Gaia.registry&.tick_host&.last_tick_result)
         merge_observer_data!(advisory, caller)
+
+        identity = caller&.dig(:requested_by, :identity)
+        partner_prompt = build_partner_system_prompt(identity: identity) if identity
+        if partner_prompt
+          advisory[:system_prompt] = partner_prompt
+          log.info("[gaia] advisory partner_prompt injected identity=#{identity} length=#{partner_prompt.length}")
+        end
+
         result = advisory.compact
         if result.any?
           log.info("GAIA advisory generated conversation_id=#{conversation_id} keys=#{result.keys.join(',')}")
@@ -94,8 +102,58 @@ module Legion
         nil
       end
 
-      private_class_method :merge_tick_data!, :apply_tool_hints!, :apply_suppress!, :merge_observer_data!,
-                           :normalize_routing_hint, :value_for
+      def build_partner_system_prompt(identity:)
+        log.unknown("[gaia] build_partner_system_prompt identity=#{identity} " \
+                    "bond_registry_defined=#{defined?(Legion::Gaia::BondRegistry)} " \
+                    "partner=#{defined?(Legion::Gaia::BondRegistry) && BondRegistry.partner?(identity.to_s)}")
+
+        return nil unless defined?(Legion::Gaia::BondRegistry) && BondRegistry.partner?(identity.to_s)
+
+        parts = ['|gaia:active|']
+
+        slots = build_partner_slots(identity: identity)
+        parts << slots if slots
+        log.unknown("[gaia] partner_slots count=#{slots ? 'present' : 'empty'}")
+
+        growth = drain_growth_content
+        parts << growth if growth
+
+        qualifier = build_epistemic_qualifier(identity: identity)
+        parts << qualifier if qualifier
+
+        parts.join("\n\n")
+      end
+
+      def build_partner_slots(identity:)
+        return nil unless defined?(Legion::Gaia::PartnerModel)
+
+        slots = PartnerModel.build(identity: identity)
+        return nil if slots.empty?
+
+        lines = slots.map do |slot|
+          domain = slot[:domain]
+          content = slot[:content]
+          content_str = content.is_a?(Hash) ? content.map { |k, v| "#{k}: #{v}" }.join(', ') : content.to_s
+          "- #{domain}: #{content_str}"
+        end
+
+        "What I know about working with you:\n#{lines.join("\n")}"
+      end
+
+      def drain_growth_content
+        return nil unless Gaia.respond_to?(:drain_growth_frames)
+
+        frames = Gaia.drain_growth_frames
+        return nil if frames.nil? || frames.empty?
+
+        frames.join("\n")
+      end
+
+      def build_epistemic_qualifier(identity:)
+        return nil unless defined?(Legion::Gaia::VisibleGrowth)
+
+        VisibleGrowth.epistemic_qualifier(identity: identity)
+      end
     end
   end
 end
