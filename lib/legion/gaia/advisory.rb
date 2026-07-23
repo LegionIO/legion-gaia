@@ -103,12 +103,17 @@ module Legion
       end
 
       def build_partner_system_prompt(identity:)
+        log.unknown("[gaia] build_partner_system_prompt identity=#{identity} " \
+                    "bond_registry_defined=#{defined?(Legion::Gaia::BondRegistry)} " \
+                    "partner=#{defined?(Legion::Gaia::BondRegistry) && BondRegistry.partner?(identity.to_s)}")
+
         return nil unless defined?(Legion::Gaia::BondRegistry) && BondRegistry.partner?(identity.to_s)
 
-        parts = []
+        parts = ['|gaia:active|']
 
         slots = build_partner_slots(identity: identity)
         parts << slots if slots
+        log.unknown("[gaia] partner_slots count=#{slots ? 'present' : 'empty'}")
 
         growth = drain_growth_content
         parts << growth if growth
@@ -116,7 +121,7 @@ module Legion
         qualifier = build_epistemic_qualifier(identity: identity)
         parts << qualifier if qualifier
 
-        parts.empty? ? nil : parts.join("\n\n")
+        parts.join("\n\n")
       end
 
       def build_partner_slots(identity:)

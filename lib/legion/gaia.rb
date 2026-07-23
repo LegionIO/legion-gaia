@@ -591,14 +591,22 @@ module Legion
         true
       end
 
-      def observe_interlocutor(input_frame, identity)
+      def observe_interlocutor(input_frame, identity) # rubocop:disable Metrics/AbcSize
         identity_str = identity.to_s
         return if identity_lifecycle_blocked?(identity_str)
 
         auth_ctx = input_frame.auth_context || {}
 
-        # Ensure the identity is registered so reinforce has a target
-        BondRegistry.register(identity_str, bond: nil) unless BondRegistry.bond(identity_str) != :unknown
+        # Duckling: first authenticated human on a node with no partner → immediate partner
+        if BondRegistry.bond(identity_str) == :unknown
+          if BondRegistry.partner_entry.nil?
+            BondRegistry.register(identity_str, bond: :partner, priority: :primary,
+                                                origin: :provisional, strength: 0.5)
+            log.info("[gaia] duckling bond formed identity=#{identity_str}")
+          else
+            BondRegistry.register(identity_str, bond: nil)
+          end
+        end
 
         # Every interaction reinforces — the evidence accumulation loop
         direct_address = input_frame.metadata[:direct_address] || false
