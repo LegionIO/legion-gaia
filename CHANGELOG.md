@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.9.65] - 2026-07-23
+### Fixed
+- `resolve_process_identity` now uses `Legion::Identity::Process.canonical_name` exclusively — never `Etc.loginname` or `ENV['USER']` (spoofable, wrong string in corporate environments)
+- Provisional partner registration skips gracefully when identity hasn't resolved yet (no registration under wrong/anonymous string)
+- `drain_growth_frames` moved to public API (Advisory calls it directly)
+- Removed `private_class_method` from Advisory — all methods callable
+
+### Added
+- Advisory now produces `:system_prompt` with partner model slots, growth frames, and epistemic qualifiers — injected via existing legion-llm `gaia_advisory` step (zero legion-llm changes)
+- `Advisory.build_partner_system_prompt(identity:)` — assembles working-memory context for the LLM
+- `Advisory.build_partner_slots(identity:)` — renders PartnerModel slots as natural language
+- `Advisory.drain_growth_content` — drains and renders pending milestone/growth frames
+- `Advisory.build_epistemic_qualifier(identity:)` — delegates to VisibleGrowth for uncertainty markers
+- Log line: `[gaia] advisory partner_prompt injected identity=X length=N` when partner context fires
+
 ## [0.9.64] - 2026-07-22
 ### Added
 - H9: `Disclosure.report(identity:)` — full partner model transparency surface; includes bond_state, all behavioral_synapses with autonomy_mode, preferences, calibration_weights, imprint_state, prediction_accuracy; each section soft-guarded (nil if extension not loaded, no crash); always includes data_locality statement and termination_available: true

@@ -330,6 +330,12 @@ module Legion
         base_status.merge(router_status)
       end
 
+      def drain_growth_frames
+        frames = @pending_growth_frames || []
+        @pending_growth_frames = []
+        frames
+      end
+
       private
 
       def heartbeat_mutex
@@ -644,7 +650,9 @@ module Legion
         return unless BondRegistry.partner_entry.nil?
 
         process_identity = resolve_process_identity
-        prior_strength   = settings&.dig(:partner, :prior_strength) || 0.5
+        return if process_identity.nil?
+
+        prior_strength = settings&.dig(:partner, :prior_strength) || 0.5
 
         BondRegistry.register(
           process_identity,
@@ -659,9 +667,13 @@ module Legion
       end
 
       def resolve_process_identity
-        (defined?(Etc) && Etc.respond_to?(:loginname) && Etc.loginname) || ENV.fetch('USER', nil) || 'unknown'
+        return nil unless defined?(Legion::Identity::Process) && Legion::Identity::Process.respond_to?(:canonical_name)
+
+        name = Legion::Identity::Process.canonical_name
+        return nil if name.nil? || name == 'anonymous'
+
+        name
       end
-      private :resolve_process_identity
 
       def record_interaction_trace(observation)
         return unless defined?(Legion::Extensions::Agentic::Memory::Trace::Runners::Traces)
@@ -1325,13 +1337,6 @@ module Legion
         @pending_growth_frames ||= []
         @pending_growth_frames << message
         log.info("[gaia] growth frame queued: #{message.inspect}")
-      end
-
-      # Drain all pending growth frames — for tests and future delivery integration.
-      def drain_growth_frames
-        frames = @pending_growth_frames || []
-        @pending_growth_frames = []
-        frames
       end
     end
   end
