@@ -601,7 +601,7 @@ module Legion
         if BondRegistry.bond(identity_str) == :unknown
           if BondRegistry.partner_entry.nil?
             BondRegistry.register(identity_str, bond: :partner, priority: :primary,
-                                                origin: :provisional, strength: 0.5)
+                                                origin: :provisional, strength: BondRegistry.partner_threshold)
             log.info("[gaia] duckling bond formed identity=#{identity_str}")
           else
             BondRegistry.register(identity_str, bond: nil)
@@ -660,7 +660,7 @@ module Legion
         process_identity = resolve_process_identity
         return if process_identity.nil?
 
-        prior_strength = settings&.dig(:partner, :prior_strength) || 0.5
+        prior_strength = BondRegistry.partner_threshold
 
         BondRegistry.register(
           process_identity,
