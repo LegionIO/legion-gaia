@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.9.66] - 2026-07-24
+### Added
+- `Gaia.observe_from_pipeline(identity:, caller:, exchange_id:)` — pipeline observation for API clients; reinforces bond, triggers coldstart, registers duckling partner on first human request
+- Bounded idempotency (FIFO hash, 10k max) prevents duplicate observations per exchange_id
+- Only fires for `:human` type callers; system/internal calls are ignored
+
 ## [0.9.65] - 2026-07-23
 ### Fixed
 - `resolve_process_identity` now uses `Legion::Identity::Process.canonical_name` exclusively — never `Etc.loginname` or `ENV['USER']` (spoofable, wrong string in corporate environments)

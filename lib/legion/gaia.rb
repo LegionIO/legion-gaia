@@ -336,6 +336,65 @@ module Legion
         frames
       end
 
+      def observe_from_pipeline(identity:, caller:, exchange_id:)
+        return unless started?
+
+        caller_type = caller&.dig(:requested_by, :type)
+        return unless caller_type == :human
+
+        identity_str = identity.to_s
+        return if identity_str.empty?
+        return if identity_lifecycle_blocked?(identity_str)
+        return if pipeline_observation_seen?(exchange_id)
+
+        mark_pipeline_observation(exchange_id)
+
+        if BondRegistry.bond(identity_str) == :unknown
+          if BondRegistry.partner_entry.nil?
+            BondRegistry.register(identity_str, bond: :partner, priority: :primary,
+                                                origin: :provisional,
+                                                strength: settings&.dig(:partner, :prior_strength) || 0.5)
+            log.info("[gaia] pipeline duckling bond identity=#{identity_str}")
+          else
+            BondRegistry.register(identity_str, bond: nil)
+          end
+        end
+
+        BondRegistry.reinforce(identity_str, multiplier: fetch_imprint_multiplier)
+
+        if defined?(Legion::Extensions::Coldstart)
+          bootstrap = Legion::Extensions::Coldstart::Helpers::Bootstrap.instance
+          bootstrap.record_observation
+        end
+
+        log.debug("[gaia] pipeline observation identity=#{identity_str} exchange_id=#{exchange_id}")
+      rescue StandardError => e
+        handle_exception(e, level: :warn, operation: 'gaia.observe_from_pipeline', identity: identity)
+      end
+
+      def pipeline_observation_seen?(exchange_id)
+        return false if exchange_id.nil?
+
+        @pipeline_observations ||= {}
+        @pipeline_observations.key?(exchange_id)
+      end
+
+      def mark_pipeline_observation(exchange_id)
+        return if exchange_id.nil?
+
+        @pipeline_observations ||= {}
+        @pipeline_observation_order ||= []
+
+        @pipeline_observations[exchange_id] = true
+        @pipeline_observation_order << exchange_id
+
+        max_size = settings&.dig(:pipeline_observation, :max_tracked) || 10_000
+        while @pipeline_observation_order.size > max_size
+          oldest = @pipeline_observation_order.shift
+          @pipeline_observations.delete(oldest)
+        end
+      end
+
       private
 
       def heartbeat_mutex
