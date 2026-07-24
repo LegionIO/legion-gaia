@@ -63,6 +63,7 @@ module Legion
         register_teams_webhook_route(app)
         register_ingest_route(app)
         register_bond_terminate_route(app)
+        register_partner_report_route(app)
       end
 
       def self.register_status_route(app)
@@ -204,10 +205,20 @@ module Legion
         end
       end
 
+      def self.register_partner_report_route(app)
+        app.get '/api/gaia/partner/:identity/report' do
+          identity = params[:identity]
+          halt 400, json_error('missing_identity', 'identity is required') if identity.to_s.empty?
+
+          result = Legion::Gaia::Disclosure.report(identity: identity)
+          json_response(result)
+        end
+      end
+
       class << self
         private :register_status_route, :register_ticks_route, :register_channels_route,
                 :register_buffer_route, :register_sessions_route, :register_teams_webhook_route,
-                :register_ingest_route, :register_bond_terminate_route
+                :register_ingest_route, :register_bond_terminate_route, :register_partner_report_route
       end
     end
   end
