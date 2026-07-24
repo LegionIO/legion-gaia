@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.9.67] - 2026-07-24
+### Added
+- H5: `Legion::Gaia::Gut.check(identity:, draft_stats:)` — fast per-response conflict detection (v1: correction veto only). Compares draft stats against high-strength correction traces and transform-tier behavioral synapses. No LLM calls. Completes within 50ms latency budget (scalar setting); degrades to no-op if exceeded. Soft-guarded on lex-agentic-memory. The gut itself is a behavioral synapse (`domain: 'gut'`); new partners start in observe mode (emergent confidence 0.3 → observe tier).
+- H6: `Legion::Gaia::Anticipation.build(identity:, context:)` — builds anticipation context from actionable pending predictions (confidence >= threshold). Pre-stages RAG entries capped at 25% of total. Soft-guarded on lex-agentic-inference.
+- H6: `Legion::Gaia::Anticipation.resolve(identity:, prediction_id:, actual:)` — grades a pending prediction as `:correct`, `:incorrect`, or `:partial` against the partner's actual input. Entropy guard: no resolution under high identity entropy.
+- H6: `Legion::Gaia::Anticipation.deferred?(identity:, anticipation:)` — §12.8 emotional modulation: negative-valence anticipations defer when partner affect baseline is low. Soft-guarded on lex-agentic-affect.
+- Settings defaults: `gut.latency_budget_ms` (50ms), `gut.correction_min_strength` (0.6), `gut.correction_trace_limit` (20), `anticipation.actionable_threshold` (0.65)
+
 ## [0.9.66] - 2026-07-24
 ### Added
 - `Gaia.observe_from_pipeline(identity:, caller:, exchange_id:)` — pipeline observation for API clients; reinforces bond, triggers coldstart, registers duckling partner on first human request
