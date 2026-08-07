@@ -16,7 +16,9 @@ module Legion
           session: { persistence: 'auto', ttl: 86_400 },
           output: { mobile_max_length: 500, suggest_channel_switch: true },
           notifications: default_notifications,
-          partner: default_partner
+          partner: default_partner,
+          gut: default_gut,
+          anticipation: default_anticipation
         }
       end
 
@@ -36,6 +38,20 @@ module Legion
           cli: { enabled: true },
           teams: { enabled: false },
           slack: { enabled: false }
+        }
+      end
+
+      def default_gut
+        {
+          latency_budget_ms: 50.0,
+          correction_min_strength: 0.6,
+          correction_trace_limit: 20
+        }
+      end
+
+      def default_anticipation
+        {
+          actionable_threshold: 0.65
         }
       end
 
