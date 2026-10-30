@@ -3,12 +3,21 @@
 require 'timeout'
 
 RSpec.describe Legion::Gaia do
+  let(:store) { double('PrivateStore', query_by_tags: { success: true, results: [] }, upsert: { success: true }) }
+
   before do
     stub_const('Legion::Logging', logging_stub)
+    Legion::Gaia::BondRegistry.reset!
+    Legion::Gaia::BehavioralSynapse.reset!
+    Legion::Gaia::ResponseAttribution.reset!
+    allow(described_class).to receive(:apollo_local_store).and_return(store)
   end
 
   after do
     described_class.shutdown if described_class.started?
+    Legion::Gaia::BondRegistry.reset!
+    Legion::Gaia::BehavioralSynapse.reset!
+    Legion::Gaia::ResponseAttribution.reset!
   end
 
   describe '.boot' do
@@ -17,54 +26,16 @@ RSpec.describe Legion::Gaia do
       expect(described_class.started?).to be true
     end
 
-    it 'creates a sensory buffer' do
+    it 'keeps anonymous operation available while private lifecycle storage is unavailable' do
+      allow(described_class).to receive(:apollo_local_store).and_return(nil)
       described_class.boot
-      expect(described_class.sensory_buffer).to be_a(Legion::Gaia::SensoryBuffer)
-    end
-
-    it 'creates a registry' do
-      described_class.boot
-      expect(described_class.registry).to be_a(Legion::Gaia::Registry)
-    end
-
-    context 'when Apollo Local is available on boot (Fix 1 + Fix 2)' do
-      let(:mock_store) do
-        double('ApolloLocal', started?: true).tap do |s|
-          allow(s).to receive(:query).and_return({ success: false })
-          allow(s).to receive(:upsert)
-        end
-      end
-
-      before do
-        Legion::Gaia::TrackerPersistence.reset!
-        stub_const('Legion::Apollo::Local', mock_store)
-        allow(Legion::Gaia::TrackerPersistence).to receive(:hydrate_all)
-        allow(Legion::Gaia::BondRegistry).to receive(:hydrate_from_apollo)
-        # Prevent flush_all on shutdown from trying real tracker objects
-        allow(Legion::Gaia::TrackerPersistence).to receive(:flush_all)
-      end
-
-      it 'calls TrackerPersistence.hydrate_all with the apollo local store' do
-        described_class.boot
-        expect(Legion::Gaia::TrackerPersistence).to have_received(:hydrate_all).with(store: mock_store)
-      end
-
-      it 'calls BondRegistry.hydrate_from_apollo with the apollo local store' do
-        described_class.boot
-        expect(Legion::Gaia::BondRegistry).to have_received(:hydrate_from_apollo).with(store: mock_store)
-      end
-    end
-
-    context 'when Apollo Local is not available on boot' do
-      it 'does not call TrackerPersistence.hydrate_all' do
-        expect(Legion::Gaia::TrackerPersistence).not_to receive(:hydrate_all)
-        described_class.boot
-      end
-
-      it 'does not call BondRegistry.hydrate_from_apollo' do
-        expect(Legion::Gaia::BondRegistry).not_to receive(:hydrate_from_apollo)
-        described_class.boot
-      end
+      expect(described_class.status[:persistence_ready]).to be false
+      private_frame = Legion::Gaia::InputFrame.new(content: 'private', channel_id: :cli,
+                                                   auth_context: { principal_id: 'A' })
+      public_frame = Legion::Gaia::InputFrame.new(content: 'public', channel_id: :cli)
+      expect(described_class.ingest(private_frame)[:ingested]).to be false
+      expect(described_class.ingest(public_frame)[:ingested]).to be true
+      expect(described_class.sensory_buffer.drain.map { |signal| signal[:value] }).to eq(['public'])
     end
   end
 
@@ -165,48 +136,12 @@ RSpec.describe Legion::Gaia do
       expect(result[:error]).to eq(:no_tick_extension)
     end
 
-    context 'when lex-tick is unavailable' do
-      let(:logger) { double('Logger').as_null_object }
-
-      before { described_class.boot }
-
-      it 'logs the warning on the first heartbeat' do
-        msg = '[gaia] lex-tick not available, will retry next heartbeat'
-        allow(described_class).to receive(:log).and_return(logger)
-        expect(logger).to receive(:warn).with(msg).once
-        described_class.heartbeat
-      end
-
-      it 'does not log the warning on subsequent heartbeats' do
-        allow(described_class).to receive(:log).and_return(logger)
-        described_class.heartbeat
-        expect(logger).not_to receive(:warn)
-        described_class.heartbeat
-        described_class.heartbeat
-      end
-
-      it 'logs the warning again after tick becomes available then unavailable again' do
-        registry = described_class.registry
-        mock_tick = instance_double('TickHost')
-        allow(mock_tick).to receive(:execute_tick).and_return({ results: {} })
-        allow(mock_tick).to receive(:last_tick_result=)
-
-        # First unavailability: warning fires once
-        allow(described_class).to receive(:log).and_return(logger)
-        expect(logger).to receive(:warn).once
-        described_class.heartbeat
-
-        # Tick becomes available: resets the warned flag
-        allow(registry).to receive(:tick_host).and_return(mock_tick)
-        allow(registry).to receive(:phase_handlers).and_return({})
-        described_class.heartbeat
-
-        # Tick goes unavailable again: warning fires again
-        allow(registry).to receive(:tick_host).and_return(nil)
-        msg = '[gaia] lex-tick not available, will retry next heartbeat'
-        expect(logger).to receive(:warn).with(msg).once
-        described_class.heartbeat
-      end
+    it 'retains input when the scheduler is unavailable' do
+      described_class.boot
+      frame = Legion::Gaia::InputFrame.new(content: 'do not lose this', channel_id: :cli)
+      described_class.ingest(frame)
+      expect(described_class.heartbeat).to include(error: :no_tick_extension)
+      expect(described_class.sensory_buffer.drain.map { |signal| signal[:value] }).to eq(['do not lose this'])
     end
 
     it 'does not start a new heartbeat after shutdown begins' do
@@ -308,204 +243,19 @@ RSpec.describe Legion::Gaia do
 
       expect(wrapped[:prediction_engine].call).to eq({ status: :skipped, reason: :gaia_shutting_down })
     end
+  end
 
-    it 'memoizes quiescing phase wrappers for the active handler map' do
+  describe 'background partner isolation' do
+    it 'does not infer a human or private absence from anonymous ticks' do
       described_class.boot
-      handlers = { prediction_engine: ->(**) { { invoked: true } } }
-
-      first = described_class.send(:quiescing_phase_handlers, handlers)
-      second = described_class.send(:quiescing_phase_handlers, handlers)
-      third = described_class.send(:quiescing_phase_handlers, handlers.dup)
-
-      expect(second).to equal(first)
-      expect(third).not_to equal(first)
-    end
-  end
-
-  describe '.heartbeat notification gate feeds' do
-    before { described_class.boot }
-
-    context 'when tick host is available' do
-      let(:mock_tick) { instance_double('TickHost') }
-
-      before do
-        allow(mock_tick).to receive(:execute_tick).and_return({
-                                                                results: { emotional_evaluation: { valence: {
-                                                                  urgency: 0.6, novelty: 0.4, importance: 0.8
-                                                                } } }
-                                                              })
-        allow(mock_tick).to receive(:last_tick_result=)
-        allow(described_class.registry).to receive(:tick_host).and_return(mock_tick)
-        allow(described_class.registry).to receive(:phase_handlers).and_return({})
-      end
-
-      it 'feeds arousal to the notification gate' do
-        gate = described_class.output_router.notification_gate
-        expect(gate).to receive(:update_behavioral).with(arousal: be_between(0.0, 1.0))
-        described_class.heartbeat
-      end
-
-      it 'calls process_delayed on the output router' do
-        expect(described_class.output_router).to receive(:process_delayed)
-        described_class.heartbeat
-      end
-
-      it 'computes arousal as mean of urgency, novelty, importance' do
-        gate = described_class.output_router.notification_gate
-        # (0.6 + 0.4 + 0.8) / 3.0 = 0.6
-        expect(gate).to receive(:update_behavioral).with(arousal: be_within(0.01).of(0.6))
-        described_class.heartbeat
-      end
-    end
-
-    context 'when tick result has no valence' do
-      let(:mock_tick) { instance_double('TickHost') }
-
-      before do
-        allow(mock_tick).to receive(:execute_tick).and_return({ results: {} })
-        allow(mock_tick).to receive(:last_tick_result=)
-        allow(described_class.registry).to receive(:tick_host).and_return(mock_tick)
-        allow(described_class.registry).to receive(:phase_handlers).and_return({})
-      end
-
-      it 'does not feed arousal to the notification gate' do
-        gate = described_class.output_router.notification_gate
-        expect(gate).not_to receive(:update_behavioral)
-        described_class.heartbeat
-      end
-
-      it 'still calls process_delayed' do
-        expect(described_class.output_router).to receive(:process_delayed)
-        described_class.heartbeat
-      end
-    end
-  end
-
-  describe '.heartbeat partner absence' do
-    before { described_class.boot }
-
-    let(:mock_tick) { instance_double('TickHost') }
-
-    before do
-      allow(mock_tick).to receive(:execute_tick).and_return({ results: {} })
-      allow(mock_tick).to receive(:last_tick_result=)
-      allow(described_class.registry).to receive(:tick_host).and_return(mock_tick)
-    end
-
-    context 'when prediction_engine phase is wired' do
-      before do
-        allow(described_class.registry).to receive(:phase_handlers)
-          .and_return({ prediction_engine: ->(**) {} })
-      end
-
-      it 'increments absence counter when no partner observations' do
-        described_class.heartbeat
-        misses = described_class.instance_variable_get(:@partner_absence_misses)
-        expect(misses).to eq(1)
-      end
-
-      it 'accumulates consecutive misses' do
-        3.times { described_class.heartbeat }
-        misses = described_class.instance_variable_get(:@partner_absence_misses)
-        expect(misses).to eq(3)
-      end
-
-      it 'resets counter when partner is observed' do
-        described_class.heartbeat
-        described_class.heartbeat
-
-        described_class.instance_variable_set(:@partner_observations,
-                                              [{ bond_role: :partner, identity: 'test' }])
-        described_class.heartbeat
-
-        misses = described_class.instance_variable_get(:@partner_absence_misses)
-        expect(misses).to eq(0)
-      end
-
-      it 'injects absence valence into last_valences' do
-        described_class.heartbeat
-        valences = described_class.last_valences
-        expect(valences).to be_a(Array)
-        expect(valences.last[:urgency]).to eq(0.2)
-        expect(valences.last[:familiarity]).to eq(0.8)
-      end
-
-      it 'scales importance logarithmically with consecutive misses' do
-        described_class.heartbeat
-        low_importance = described_class.last_valences.last[:importance]
-
-        20.times { described_class.heartbeat }
-        high_importance = described_class.last_valences.last[:importance]
-
-        expect(high_importance).to be > low_importance
-      end
-
-      it 'caps importance at 0.7' do
-        100.times { described_class.heartbeat }
-        importance = described_class.last_valences.last[:importance]
-        expect(importance).to be <= 0.7
-      end
-
-      context 'when action_selection is also wired and absence exceeds pattern' do
-        let(:attachment_runner) { instance_double('AttachmentRunner') }
-
-        before do
-          allow(described_class.registry).to receive(:phase_handlers)
-            .and_return({ prediction_engine: ->(**) {}, action_selection: ->(**) {} })
-          allow(described_class.registry).to receive(:runner_instances)
-            .and_return({ Social_Attachment: attachment_runner })
-          allow(attachment_runner).to receive(:reflect_on_bonds)
-            .with(tick_results: {}, bond_summary: {})
-            .and_return({ partner_bond: { absence_exceeds_pattern: true } })
-        end
-
-        it 'queues an internal absence signal after sustained misses' do
-          5.times { described_class.heartbeat }
-
-          expect(described_class.sensory_buffer.size).to eq(1)
-          signal = described_class.sensory_buffer.drain.first
-          expect(signal[:source_type]).to eq(:partner_absence)
-          expect(signal[:salience]).to eq(0.75)
-        end
-
-        it 'respects the absence signal cooldown' do
-          10.times { described_class.heartbeat }
-          expect(attachment_runner).to have_received(:reflect_on_bonds).once
-        end
-      end
-    end
-
-    context 'when prediction_engine phase is not wired' do
-      before do
-        allow(described_class.registry).to receive(:phase_handlers).and_return({})
-      end
-
-      it 'does not increment absence counter' do
-        described_class.heartbeat
-        misses = described_class.instance_variable_get(:@partner_absence_misses)
-        expect(misses).to eq(0)
-      end
-
-      it 'does not inject absence valence' do
-        described_class.heartbeat
-        valences = described_class.last_valences
-        expect(valences).to be_nil
-      end
-    end
-
-    context 'when non-partner observations arrive' do
-      before do
-        allow(described_class.registry).to receive(:phase_handlers)
-          .and_return({ prediction_engine: ->(**) {} })
-        described_class.instance_variable_set(:@partner_observations,
-                                              [{ bond_role: :unknown, identity: 'visitor' }])
-      end
-
-      it 'still increments absence counter' do
-        described_class.heartbeat
-        misses = described_class.instance_variable_get(:@partner_absence_misses)
-        expect(misses).to eq(1)
-      end
+      tick = instance_double('TickHost', execute_tick: { results: {} })
+      allow(described_class.registry).to receive(:tick_host).and_return(tick)
+      handlers = { prediction_engine: ->(**) { {} }, action_selection: ->(**) { {} } }
+      allow(described_class.registry).to receive(:phase_handlers).and_return(handlers)
+      6.times { described_class.heartbeat }
+      expect(Legion::Gaia::BondRegistry.partner_entry).to be_nil
+      expect(described_class.sensory_buffer.drain).to be_empty
+      expect(described_class.last_valences).to eq([])
     end
   end
 
@@ -522,15 +272,6 @@ RSpec.describe Legion::Gaia do
       expect(status).to have_key(:wired_phases)
       expect(status).to have_key(:buffer_depth)
       expect(status[:notification_gate]).to include(:schedule, :presence, :behavioral)
-    end
-  end
-
-  describe '.settings' do
-    it 'returns default settings hash' do
-      settings = described_class.settings
-      expect(settings).to be_a(Hash)
-      expect(settings[:heartbeat_interval]).to eq(1)
-      expect(settings[:channels]).to have_key(:cli)
     end
   end
 
@@ -555,227 +296,90 @@ RSpec.describe Legion::Gaia do
       expect(status[:mode]).to eq(:router)
       expect(status[:router_routes]).to eq(0)
     end
-
-    it 'boots agent bridge when worker_id is configured without router mode' do
-      settings = described_class.settings.merge(router: described_class.settings[:router].merge(
-        mode: false,
-        worker_id: 'worker-a'
-      ))
-      allow(described_class).to receive(:settings).and_return(settings)
-      mock_bridge = instance_double(Legion::Gaia::Router::AgentBridge, start: true, stop: true)
-      allow(Legion::Gaia::Router::AgentBridge).to receive(:new).with(worker_id: 'worker-a').and_return(mock_bridge)
-
-      described_class.boot(mode: :agent)
-
-      expect(Legion::Gaia::Router::AgentBridge).to have_received(:new).with(worker_id: 'worker-a')
-      expect(mock_bridge).to have_received(:start)
-    end
   end
 
-  describe '.respond with agent_bridge' do
-    it 'publishes through agent_bridge when available' do
-      described_class.boot
-      mock_bridge = instance_double(Legion::Gaia::Router::AgentBridge, started?: true)
-      allow(mock_bridge).to receive(:publish_output).and_return({ published: true })
-      allow(mock_bridge).to receive(:stop)
-      described_class.instance_variable_set(:@agent_bridge, mock_bridge)
+  describe 'authenticated first contact and observation ownership' do
+    before { described_class.boot }
 
-      result = described_class.respond(content: 'test', channel_id: :cli)
-      expect(result[:published]).to be true
-      expect(mock_bridge).to have_received(:publish_output)
-    end
-  end
-
-  describe '.ingest with partner observation' do
-    before do
-      allow(Legion::Gaia::BondRegistry).to receive(:bond).and_return(:unknown)
-
-      described_class.instance_variable_set(:@started, true)
-      described_class.instance_variable_set(:@sensory_buffer, Legion::Gaia::SensoryBuffer.new)
-      described_class.instance_variable_set(:@session_store, Legion::Gaia::SessionStore.new)
-      described_class.instance_variable_set(:@partner_observations, [])
+    def human_frame(identity:, exchange_id:, **metadata)
+      Legion::Gaia::InputFrame.new(content: 'hello', channel_id: :cli,
+                                   session_continuity_id: metadata.delete(:session_continuity_id),
+                                   auth_context: { principal_id: identity, user_id: "native-#{identity}" },
+                                   metadata: { source_type: :human_direct, exchange_id: exchange_id }.merge(metadata))
     end
 
-    it 'populates partner_observations buffer from auth_context identity' do
-      frame = Legion::Gaia::InputFrame.new(
-        content: 'hello',
-        channel_id: :cli,
-        auth_context: { identity: 'esity' }
+    it 'preserves first-contact channel details and never reinforces one input twice' do
+      frame = human_frame(identity: 'A', exchange_id: 'a1')
+      expect(described_class.ingest(frame)[:ingested]).to be true
+      entry = Legion::Gaia::BondRegistry.entry(identity: 'A')
+      expect(entry).to include(last_channel: :cli, channel_identity: 'native-A')
+      strength = entry[:strength]
+      expect(described_class.ingest(frame)).to include(ingested: false, reason: :duplicate)
+      described_class.observe_from_pipeline(identity: 'A', exchange_id: 'a1',
+                                            caller: { requested_by: { type: :human, principal_id: 'A' } })
+      expect(Legion::Gaia::BondRegistry.entry(identity: 'A')[:strength]).to eq(strength)
+      expect(described_class.partner_observations.map { |observation| observation[:identity] }).to eq(['A'])
+    end
+
+    it 'observes an actual input even when its pipeline notification arrived first' do
+      described_class.observe_from_pipeline(identity: 'A', exchange_id: 'a1',
+                                            caller: { requested_by: { type: :human, principal_id: 'A' } })
+      expect(described_class.ingest(human_frame(identity: 'A', exchange_id: 'a1'))[:ingested]).to be true
+      expect(described_class.partner_observations.map do |observation|
+        observation[:observed_exchange_id]
+      end).to eq(['a1'])
+    end
+
+    it 'does not give another principal the first human session or queued growth' do
+      first = described_class.ingest(human_frame(identity: 'A', exchange_id: 'a1', conversation_id: 'shared-label'))
+      second = described_class.ingest(human_frame(identity: 'B', exchange_id: 'b1', conversation_id: 'shared-label',
+                                                  session_continuity_id: first[:session_id]))
+      expect(second[:session_id]).not_to eq(first[:session_id])
+      described_class.send(:enqueue_growth_frame, message: 'A learned something', identity: 'A',
+                                                  conversation_id: 'shared-label')
+      expect(described_class.drain_growth_frames(identity: 'B', conversation_id: 'shared-label')).to eq([])
+      expect(described_class.drain_growth_frames(identity: 'A', conversation_id: 'other')).to eq([])
+      expect(described_class.drain_growth_frames(identity: 'A',
+                                                 conversation_id: 'shared-label')).to eq(['A learned something'])
+    end
+
+    it 'does not borrow an unscoped response when feedback lacks correlation' do
+      described_class.ingest(human_frame(identity: 'A', exchange_id: 'feedback', conversation_id: 'conversation'))
+      observation = described_class.partner_observations.last
+      expect(observation).to include(identity: 'A', conversation_id: 'conversation', observed_exchange_id: 'feedback')
+      expect(observation.values_at(:exchange_id, :advisory_id, :in_reply_to)).to eq([nil, nil, nil])
+      expect(Legion::Gaia::ResponseAttribution.status_for(identity: 'A')).to include(pending: 0, completed: 0)
+    end
+
+    it 'uses an explicit correction without requiring a scoped calibration provider' do
+      Legion::Gaia::BondRegistry.register('A', bond: :partner, strength: 0.8, origin: :observed)
+      synapse = Legion::Gaia::BehavioralSynapse.crystallize(
+        identity: 'A', domain: 'communication', directive: 'Use long paragraphs', origin: 'explicit'
       )
-      described_class.ingest(frame)
-
-      obs = described_class.partner_observations
-      expect(obs.size).to eq(1)
-      expect(obs.first[:identity]).to eq('esity')
-      expect(obs.first[:bond_role]).to eq(:unknown)
-    end
-
-    it 'skips observation for anonymous identity' do
-      frame = Legion::Gaia::InputFrame.new(
-        content: 'hello',
-        channel_id: :cli,
-        auth_context: {}
+      caller = { requested_by: { type: :human, principal_id: 'A' } }
+      advisory = Legion::Gaia::Advisory.advise(caller: caller, conversation_id: 'c1', exchange_id: 'response')
+      described_class.record_response_applied(
+        advisory_id: advisory.fetch(:advisory_id), identity: 'A',
+        applied: { behavioral_synapse_ids: [synapse[:id]], delivery_status: :returned,
+                   conversation_id: 'c1', exchange_id: 'response' }
       )
-      described_class.ingest(frame)
-
-      expect(described_class.partner_observations).to be_empty
-    end
-
-    it 'detects partner role from BondRegistry' do
-      allow(Legion::Gaia::BondRegistry).to receive(:bond).with('esity').and_return(:partner)
-
-      frame = Legion::Gaia::InputFrame.new(
-        content: 'hello',
-        channel_id: :teams,
-        auth_context: { identity: 'esity' }
-      )
-      described_class.ingest(frame)
-
-      obs = described_class.partner_observations.first
-      expect(obs[:bond_role]).to eq(:partner)
-      expect(obs[:channel]).to eq(:teams)
-    end
-
-    it 'adds partner:<identity> domain tag to interaction trace (H0)' do
-      stub_const('Legion::Extensions::Agentic::Memory::Trace::Runners::Traces', Module.new)
-      allow(Legion::Gaia::BondRegistry).to receive(:bond).with('esity').and_return(:partner)
-      allow(Legion::Gaia::BondRegistry).to receive(:partner?).with('esity').and_return(true)
-
-      frame = Legion::Gaia::InputFrame.new(
-        content: 'hello',
-        channel_id: :teams,
-        auth_context: { identity: 'esity' }
-      )
-
-      expect_any_instance_of(Object).to receive(:store_trace) do |_runner, payload|
-        expect(payload[:domain_tags]).to include('partner:esity')
-      end.and_return({ trace_id: SecureRandom.uuid })
-
-      described_class.ingest(frame)
-    end
-
-    it 'stores partner interaction traces with scalar affect and valence context' do
-      stub_const('Legion::Extensions::Agentic::Memory::Trace::Runners::Traces', Module.new)
-      allow(Legion::Gaia::BondRegistry).to receive(:bond).with('esity').and_return(:partner)
-      allow(Legion::Gaia::BondRegistry).to receive(:partner?).with('esity').and_return(true)
-      described_class.instance_variable_set(:@last_valences, [
-                                              {
-                                                urgency: 0.6,
-                                                novelty: 0.4,
-                                                importance: 0.8,
-                                                familiarity: 0.2
-                                              }
-                                            ])
-
-      frame = Legion::Gaia::InputFrame.new(
-        content: 'hello',
-        channel_id: :teams,
-        auth_context: { identity: 'esity' }
-      )
-
-      expect_any_instance_of(Object).to receive(:store_trace) do |_runner, payload|
-        expect(payload[:type]).to eq(:episodic)
-        expect(payload[:emotional_valence]).to eq(0.0)
-        expect(payload[:emotional_intensity]).to be_within(0.001).of(0.6)
-        expect(payload[:content_payload]).to include(
-          interaction_type: :text,
-          channel: :teams,
-          direct_address: false,
-          bond_role: :partner
-        )
-        expect(payload[:content_payload][:emotional_context]).to include(
-          urgency: 0.6,
-          novelty: 0.4,
-          importance: 0.8,
-          familiarity: 0.2
-        )
-      end.and_return({ trace_id: SecureRandom.uuid, trace_type: :episodic, strength: 0.6 })
-
-      described_class.ingest(frame)
-    end
-
-    it 'records the last channel and channel-native identity for known bonds' do
-      allow(Legion::Gaia::BondRegistry).to receive(:bond).and_call_original
-      Legion::Gaia::BondRegistry.reset!
-      Legion::Gaia::BondRegistry.register('aad-123', bond: :partner, strength: 0.7)
-
-      frame = Legion::Gaia::InputFrame.new(
-        content: 'hello',
-        channel_id: :teams,
-        auth_context: { aad_object_id: 'aad-123', user_id: 'teams-user-123' }
-      )
-      described_class.ingest(frame)
-
-      entry = Legion::Gaia::BondRegistry.partner_entry
-      expect(entry[:last_channel]).to eq(:teams)
-      expect(entry[:channel_identity]).to eq('teams-user-123')
-    ensure
-      Legion::Gaia::BondRegistry.reset!
-    end
-
-    it 'extracts identity from aad_object_id fallback' do
-      frame = Legion::Gaia::InputFrame.new(
-        content: 'hello',
-        channel_id: :teams,
-        auth_context: { aad_object_id: 'aad-123', user_name: 'Test' }
-      )
-      described_class.ingest(frame)
-
-      obs = described_class.partner_observations
-      expect(obs.size).to eq(1)
-      expect(obs.first[:identity]).to eq('aad-123')
+      described_class.ingest(human_frame(
+                               identity: 'A', exchange_id: 'correction', conversation_id: 'c1',
+                               advisory_id: advisory[:advisory_id], response_exchange_id: 'response',
+                               corrected_constraint: 'Use short bullets', domain: 'communication'
+                             ))
+      following = Legion::Gaia::Advisory.advise(caller: caller, conversation_id: 'c1', exchange_id: 'next')
+      expect(following.fetch(:system_prompt)).to include('Use short bullets')
+      expect(following.fetch(:system_prompt)).not_to include('Use long paragraphs')
+      expect(Legion::Gaia::BehavioralSynapse.for(identity: 'A', domain: 'communication')[:confidence])
+        .to be_within(0.0001).of(0.7)
     end
   end
 
   describe '.erase_attribution!' do
-    context 'when Apollo Local is not available' do
-      it 'returns erased: false with reason :no_apollo_local' do
-        result = described_class.erase_attribution!(identity: 'X')
-        expect(result).to include(erased: false, identity: 'X', count: 0, reason: :no_apollo_local)
-      end
-    end
-
-    context 'when Apollo Local is available but has no delete_by_tags' do
-      let(:mock_store) do
-        double('ApolloLocal', started?: true).tap do |s|
-          allow(s).to receive(:respond_to?).with(:delete_by_tags).and_return(false)
-        end
-      end
-
-      before do
-        stub_const('Legion::Apollo::Local', mock_store)
-      end
-
-      it 'returns erased: true with count: 0' do
-        result = described_class.erase_attribution!(identity: 'X')
-        expect(result).to include(erased: true, identity: 'X', count: 0)
-      end
-    end
-
-    context 'when Apollo Local is available and has delete_by_tags' do
-      let(:mock_store) do
-        double('ApolloLocal', started?: true).tap do |s|
-          allow(s).to receive(:respond_to?).with(:delete_by_tags).and_return(true)
-          allow(s).to receive(:delete_by_tags)
-            .with(tags: %w[self-knowledge attribution partner:X])
-            .and_return({ success: true, count: 3 })
-        end
-      end
-
-      before do
-        stub_const('Legion::Apollo::Local', mock_store)
-      end
-
-      it 'delegates to store.delete_by_tags and returns count' do
-        result = described_class.erase_attribution!(identity: 'X')
-        expect(result).to include(erased: true, identity: 'X', count: 3)
-      end
-    end
-  end
-
-  describe 'VERSION' do
-    it 'has a version number' do
-      expect(Legion::Gaia::VERSION).not_to be_nil
+    it 'does not acknowledge durable erasure without a storage receipt' do
+      allow(described_class).to receive(:apollo_local_store).and_return(nil)
+      expect(described_class.erase_attribution!(identity: 'A')).to include(erased: false, durable: false)
     end
   end
 end

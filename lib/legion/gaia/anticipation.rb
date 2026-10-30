@@ -35,18 +35,15 @@ module Legion
       #   { prediction_id:, content:, confidence:, pre_staged: [...] }
       #   nil when lex-agentic-inference not loaded or no actionable predictions
       def build(identity:, context:)
+        return nil if identity.to_s.empty?
+        return nil if Legion::Gaia::BondRegistry.blocked?(identity: identity)
         return nil unless inference_available?
 
-        runner = inference_runner
-        result = runner.pending_predictions(identity: identity.to_s)
-        predictions = Array(result[:predictions])
-        return nil if predictions.empty?
+        runner = inference_runner(identity: identity)
+        return nil unless runner
 
-        actionable = predictions.select { |p| p[:confidence].to_f >= actionable_threshold }
-        return nil if actionable.empty?
-
-        # Pick the highest-confidence actionable prediction
-        best = actionable.max_by { |p| p[:confidence].to_f }
+        best = actionable_prediction(runner: runner, identity: identity, conversation_id: context[:conversation_id])
+        return nil unless best
 
         # Emotional modulation: defer negative-valence anticipation when affect baseline is low
         if deferred?(identity: identity, anticipation: best)
@@ -71,6 +68,16 @@ module Legion
         nil
       end
 
+      def actionable_prediction(runner:, identity:, conversation_id:)
+        result = runner.pending_predictions(identity: identity.to_s)
+        threshold = actionable_threshold
+        actionable = Array(result[:predictions]).first(100).select do |prediction|
+          prediction_matches?(prediction: prediction, identity: identity, conversation_id: conversation_id) &&
+            prediction[:confidence].to_f >= threshold
+        end
+        actionable.max_by { |prediction| prediction[:confidence].to_f }
+      end
+
       # Resolve a pending anticipation against the partner's actual next input.
       #
       # Grades the prediction as :correct, :incorrect, or :partial and records the outcome.
@@ -82,7 +89,9 @@ module Legion
       # @return [Hash, nil]
       #   { resolved: true/false, outcome:, prediction_id: }
       #   nil when dependencies unavailable
-      def resolve(identity:, prediction_id:, actual:)
+      def resolve(identity:, prediction_id:, actual:, conversation_id: nil)
+        return nil if identity.to_s.empty?
+        return nil if Legion::Gaia::BondRegistry.blocked?(identity: identity)
         return nil unless inference_available?
 
         identity_str = identity.to_s
@@ -92,8 +101,20 @@ module Legion
           return { resolved: false, reason: :high_entropy, prediction_id: prediction_id }
         end
 
+        runner = inference_runner(identity: identity_str)
+        return nil unless runner
+
+        found = runner.get_prediction(prediction_id: prediction_id, identity: identity_str)
+        prediction = found[:prediction] if found[:found]
+        unless prediction && prediction_matches?(prediction: prediction, identity: identity_str,
+                                                 conversation_id: conversation_id)
+          return { resolved: false, reason: :not_found }
+        end
+        return { resolved: false, reason: :already_resolved } unless prediction[:status].to_s == 'pending'
+
         outcome = grade_prediction(prediction_id: prediction_id, actual: actual, identity: identity_str)
-        runner = inference_runner
+        return { resolved: false, reason: :ungraded } unless outcome
+
         result = runner.resolve_prediction(prediction_id: prediction_id, outcome: outcome,
                                            actual: actual, identity: identity_str)
 
@@ -131,10 +152,8 @@ module Legion
         defined?(Legion::Extensions::Agentic::Inference::Prediction::Runners::Prediction) == 'constant'
       end
 
-      def inference_runner
-        runner = Object.new
-        runner.extend(Legion::Extensions::Agentic::Inference::Prediction::Runners::Prediction)
-        runner
+      def inference_runner(identity:)
+        Legion::Gaia.registry&.runner_instances_for(identity: identity.to_s)&.dig(:Prediction_Prediction)
       end
 
       def actionable_threshold
@@ -152,7 +171,7 @@ module Legion
         rag_count = context[:rag_entry_count].to_i
         return [] if rag_count.zero?
 
-        cap = [(rag_count * PRESTAGE_CAP_RATIO).ceil, 1].max
+        cap = (rag_count * PRESTAGE_CAP_RATIO).floor.clamp(0, 20)
         prediction_context = prediction[:context]
         return [] unless prediction_context.is_a?(Hash) && prediction_context[:pre_stage_entries].is_a?(Array)
 
@@ -161,11 +180,13 @@ module Legion
 
       # Grade a prediction as :correct, :incorrect, or :partial.
       def grade_prediction(prediction_id:, actual:, identity:)
-        return :incorrect unless inference_available?
+        return nil unless inference_available?
 
-        runner = inference_runner
+        runner = inference_runner(identity: identity)
+        return nil unless runner
+
         pred_result = runner.get_prediction(prediction_id: prediction_id, identity: identity)
-        return :incorrect unless pred_result[:found]
+        return nil unless pred_result[:found]
 
         prediction = pred_result[:prediction]
         predicted = prediction[:description].to_s.downcase.strip
@@ -183,7 +204,7 @@ module Legion
       rescue StandardError => e
         handle_exception(e, level: :debug, operation: 'gaia.anticipation.grade_prediction',
                             prediction_id: prediction_id)
-        :incorrect
+        nil
       end
 
       def partial_match?(predicted, actual)
@@ -198,14 +219,18 @@ module Legion
 
       # Returns true when the partner's affect baseline is below LOW_AFFECT_BASELINE.
       def affect_baseline_low?(identity:)
-        return false unless defined?(Legion::Extensions::Agentic::Affect::Empathy::Helpers::ModelStore)
+        runners = Legion::Gaia.registry&.runner_instances_for(identity: identity.to_s) || {}
+        runner = runners.values.find do |candidate|
+          candidate.respond_to?(:perspective_take)
+        end
+        return false unless runner
 
-        model_store = Legion::Extensions::Agentic::Affect::Empathy::Helpers::ModelStore.new
-        model = model_store.get(identity)
-        return false unless model.respond_to?(:emotional_state)
+        result = runner.perspective_take(agent_id: identity.to_s)
+        return false unless result.is_a?(Hash)
 
-        negative_states = %i[stressed anxious frustrated overwhelmed sad]
-        negative_states.include?(model.emotional_state)
+        state = result.dig(:model, :emotional_state)
+        negative_states = %w[stressed anxious frustrated overwhelmed sad]
+        negative_states.include?(state.to_s)
       rescue StandardError => e
         handle_exception(e, level: :debug, operation: 'gaia.anticipation.affect_baseline_low', identity: identity)
         false
@@ -223,15 +248,28 @@ module Legion
       end
 
       def high_entropy?(identity:)
-        return false unless defined?(Legion::Extensions::Agentic::Self::Helpers::IdentityFingerprint)
+        runners = Legion::Gaia.registry&.runner_instances_for(identity: identity.to_s) || {}
+        runner = runners.values.find do |candidate|
+          candidate.respond_to?(:check_entropy)
+        end
+        return false unless runner
 
-        runner = Object.new
-        runner.extend(Legion::Extensions::Agentic::Self::Helpers::IdentityFingerprint)
-        entropy = runner.identity_entropy(identity: identity)
+        result = runner.check_entropy
         threshold = Legion::Gaia.settings&.dig(:identity, :high_entropy_threshold) || 0.7
-        entropy.to_f >= threshold
-      rescue StandardError
-        false
+        result[:entropy].to_f >= threshold
+      rescue StandardError => e
+        handle_exception(e, level: :warn, operation: 'gaia.anticipation.high_entropy')
+        true
+      end
+
+      def prediction_matches?(prediction:, identity:, conversation_id:)
+        return false unless prediction.is_a?(Hash)
+        return false if prediction[:identity] && prediction[:identity].to_s != identity.to_s
+
+        predicted_conversation = prediction.dig(:context, :conversation_id) if prediction[:context].is_a?(Hash)
+        return false if predicted_conversation.to_s != conversation_id.to_s
+
+        true
       end
     end
   end

@@ -28,6 +28,15 @@ RSpec.describe Legion::Gaia::Channels::CliAdapter do
       expect(frame.device_context[:platform]).to eq(:desktop)
       expect(frame.device_context[:input_method]).to eq(:keyboard)
     end
+
+    it 'retains trusted CLI authentication and correlation without borrowing process identity' do
+      metadata = { conversation_id: 'conversation-a', exchange_id: 'exchange-a' }
+      frame = adapter.translate_inbound('hello', auth_context: { identity: 'human-a' },
+                                                 session_continuity_id: 'session-a', metadata: metadata)
+      expect(frame.to_signal).to include(identity: 'human-a', session_continuity_id: 'session-a',
+                                         conversation_id: 'conversation-a', exchange_id: 'exchange-a')
+      expect(adapter.translate_inbound('anonymous').authenticated_identity).to be_nil
+    end
   end
 
   describe '#translate_outbound' do

@@ -3,188 +3,79 @@
 require 'spec_helper'
 
 RSpec.describe Legion::Gaia::AuditObserver do
-  before { described_class.instance.reset! }
+  subject(:observer) { described_class.instance }
 
-  describe '#process_event' do
-    let(:event) do
-      {
-        request_id: 'req_abc',
-        caller: { requested_by: { identity: 'user:matt', type: :user } },
-        routing: { provider: :anthropic, model: 'claude-opus-4-6' },
-        tokens: { input: 100, output: 50, total: 150 },
-        messages: [{ role: :user, content: 'list my files' }],
-        tools_used: [{ name: 'list_files' }],
-        timestamp: Time.now
-      }
-    end
-
-    it 'records user routing preference' do
-      described_class.instance.process_event(event)
-      prefs = described_class.instance.user_preferences('user:matt')
-      expect(prefs[:routing]).to include(provider: :anthropic)
-    end
-
-    it 'records tool usage patterns' do
-      described_class.instance.process_event(event)
-      patterns = described_class.instance.tool_patterns
-      expect(patterns).to have_key('list_files')
-      expect(patterns['list_files'][:count]).to eq(1)
-    end
-
-    it 'accumulates across multiple events' do
-      3.times { described_class.instance.process_event(event) }
-      patterns = described_class.instance.tool_patterns
-      expect(patterns['list_files'][:count]).to eq(3)
-    end
-
-    it 'exposes learned data for advisory' do
-      described_class.instance.process_event(event)
-      learned = described_class.instance.learned_data_for('user:matt')
-      expect(learned).to have_key(:routing_preference)
-      expect(learned).to have_key(:tool_predictions)
-    end
-
-    it 'does not raise on malformed event' do
-      expect { described_class.instance.process_event({}) }.not_to raise_error
-      expect { described_class.instance.process_event(nil) }.not_to raise_error
-    end
+  before do
+    observer.reset!
+    Legion::Gaia::BondRegistry.reset!
   end
 
-  describe '#user_preferences' do
-    it 'returns empty hash for unknown identity' do
-      expect(described_class.instance.user_preferences('unknown')).to eq({})
-    end
+  after { Legion::Gaia::BondRegistry.reset! }
+
+  def audit_event(identity:, tool:, provider: :anthropic, **requested_by)
+    { caller: { requested_by: { type: :human, principal_id: identity }.merge(requested_by) },
+      routing: { provider: provider, model: 'model' }, tools_used: [{ name: tool }], timestamp: Time.now.utc }
   end
 
-  describe '#tool_patterns' do
-    it 'returns empty hash when no events processed' do
-      expect(described_class.instance.tool_patterns).to eq({})
-    end
+  it 'keeps interleaved human hints private rather than promoting them to global patterns' do
+    observer.process_event(audit_event(identity: 'A', tool: 'private_a'))
+    observer.process_event(audit_event(identity: 'B', tool: 'private_b', provider: :openai))
+    observer.process_event(audit_event(identity: 'A', tool: 'private_a'))
+
+    expect(observer.learned_data_for('A')[:tool_predictions].transform_values do |value|
+      value[:count]
+    end).to eq('private_a' => 2)
+    expect(observer.learned_data_for('B')[:tool_predictions].keys).to eq(['private_b'])
+    expect(observer.learned_data_for('B')[:routing_preference][:provider]).to eq(:openai)
+    expect(observer.tool_patterns).to eq({})
   end
 
-  describe '#reset!' do
-    it 'clears all accumulated state' do
-      event = {
-        caller: { requested_by: { identity: 'user:matt', type: :user } },
-        routing: { provider: :anthropic }, tokens: {},
-        tools_used: [{ name: 'list_files' }], timestamp: Time.now
-      }
-      described_class.instance.process_event(event)
-      described_class.instance.reset!
-      expect(described_class.instance.tool_patterns).to eq({})
-      expect(described_class.instance.user_preferences('user:matt')).to eq({})
-    end
+  it 'keys human hints by authenticated principal rather than a colliding display identity' do
+    event = audit_event(identity: 'principal-a', tool: 'private')
+    event[:caller][:requested_by][:identity] = 'same-name'
+    observer.process_event(event)
+    expect(observer.tool_patterns_for('principal-a').keys).to eq(['private'])
+    expect(observer.user_preferences('same-name')).to eq({})
   end
 
-  describe 'per-identity tool patterns (H0)' do
-    let(:event_x) do
-      {
-        caller: { requested_by: { identity: 'user:x' } },
-        routing: { provider: :anthropic },
-        tools_used: [{ name: 'read_file' }],
-        timestamp: Time.now
-      }
-    end
-
-    let(:event_y) do
-      {
-        caller: { requested_by: { identity: 'user:y' } },
-        routing: { provider: :openai },
-        tools_used: [{ name: 'write_file' }],
-        timestamp: Time.now
-      }
-    end
-
-    it 'tool_patterns_for returns only tools used by the given identity' do
-      described_class.instance.process_event(event_x)
-      described_class.instance.process_event(event_y)
-      x_patterns = described_class.instance.tool_patterns_for('user:x')
-      expect(x_patterns).to have_key('read_file')
-      expect(x_patterns).not_to have_key('write_file')
-    end
-
-    it 'tool_patterns_for for Y never sees X data' do
-      described_class.instance.process_event(event_x)
-      described_class.instance.process_event(event_y)
-      y_patterns = described_class.instance.tool_patterns_for('user:y')
-      expect(y_patterns).to have_key('write_file')
-      expect(y_patterns).not_to have_key('read_file')
-    end
-
-    it 'learned_data_for returns per-identity tool predictions' do
-      described_class.instance.process_event(event_x)
-      described_class.instance.process_event(event_y)
-      learned_x = described_class.instance.learned_data_for('user:x')
-      expect(learned_x[:tool_predictions]).to have_key('read_file')
-      expect(learned_x[:tool_predictions]).not_to have_key('write_file')
-    end
-
-    it 'tool_patterns (global legacy) still accumulates all tools' do
-      described_class.instance.process_event(event_x)
-      described_class.instance.process_event(event_y)
-      patterns = described_class.instance.tool_patterns
-      expect(patterns).to have_key('read_file')
-      expect(patterns).to have_key('write_file')
-    end
-
-    it 'erase_partner! removes all tool patterns for the identity' do
-      described_class.instance.process_event(event_x)
-      described_class.instance.process_event(event_x)
-      described_class.instance.erase_partner!(identity: 'user:x')
-      expect(described_class.instance.tool_patterns_for('user:x')).to eq({})
-      expect(described_class.instance.user_preferences('user:x')).to eq({})
-    end
-
-    it 'erase_partner! for X leaves Y untouched' do
-      described_class.instance.process_event(event_x)
-      described_class.instance.process_event(event_y)
-      described_class.instance.erase_partner!(identity: 'user:x')
-      y_patterns = described_class.instance.tool_patterns_for('user:y')
-      expect(y_patterns).to have_key('write_file')
-    end
-
-    it 'erase_partner! is a no-op for unknown identity' do
-      expect { described_class.instance.erase_partner!(identity: 'nobody') }.not_to raise_error
-    end
+  it 'does not let a service report overwrite a human routing preference' do
+    observer.process_event(audit_event(identity: 'A', tool: 'human_tool'))
+    observer.process_event(audit_event(identity: 'A', tool: 'service_tool', provider: :openai, type: :service))
+    expect(observer.user_preferences('A')[:routing][:provider]).to eq(:anthropic)
+    expect(observer.tool_patterns_for('A').keys).to eq(['human_tool'])
+    expect(observer.tool_patterns.keys).to eq(['service_tool'])
   end
 
-  describe 'dual-read identity extraction (§9.4)' do
-    it 'uses :identity when :id is absent' do
-      event = {
-        caller: { requested_by: { identity: 'user:matt' } },
-        routing: { provider: :anthropic },
-        tools_used: [], timestamp: Time.now
-      }
-      described_class.instance.process_event(event)
-      prefs = described_class.instance.user_preferences('user:matt')
-      expect(prefs[:routing]).to include(provider: :anthropic)
-    end
+  it 'does not resurrect hints from late events after a lifecycle barrier' do
+    observer.process_event(audit_event(identity: 'A', tool: 'private_a'))
+    observer.process_event(audit_event(identity: 'B', tool: 'private_b'))
+    Legion::Gaia::BondRegistry.set_bond_state('A', :terminating)
+    observer.erase_partner!(identity: 'A')
+    observer.process_event(audit_event(identity: 'A', tool: 'private_a'))
+    expect(observer.learned_data_for('A')).to include(routing_preference: nil, tool_predictions: {})
+    expect(observer.tool_patterns_for('B').keys).to eq(['private_b'])
+  end
 
-    it 'uses :identity over :id for canonical_name key (preference key stability)' do
-      event = {
-        caller: { requested_by: { identity: 'user:matt', id: 'some-uuid-1234' } },
-        routing: { provider: :anthropic },
-        tools_used: [], timestamp: Time.now
-      }
-      described_class.instance.process_event(event)
-      prefs = described_class.instance.user_preferences('user:matt')
-      expect(prefs[:routing]).to include(provider: :anthropic)
-    end
+  it 'returns snapshots that cannot mutate another reader of learned data' do
+    observer.process_event(audit_event(identity: 'A', tool: 'private_a'))
+    snapshot = observer.learned_data_for('A')
+    snapshot[:routing_preference][:provider] = :forged
+    snapshot[:tool_predictions]['private_a'][:count] = 99
+    expect(observer.user_preferences('A')[:routing][:provider]).to eq(:anthropic)
+    expect(observer.tool_patterns_for('A')['private_a'][:count]).to eq(1)
+  end
 
-    it 'falls back to :id when :identity is absent' do
-      event = {
-        caller: { requested_by: { id: 'fallback-uuid-5678' } },
-        routing: { provider: :openai },
-        tools_used: [], timestamp: Time.now
-      }
-      described_class.instance.process_event(event)
-      prefs = described_class.instance.user_preferences('fallback-uuid-5678')
-      expect(prefs[:routing]).to include(provider: :openai)
-    end
+  it 'does not infer a human from an untyped legacy identity or bare id' do
+    observer.process_event(caller: { requested_by: { identity: 'A', id: 'B' } }, routing: { provider: :openai })
+    expect(observer.user_preferences('A')).to eq({})
+    expect(observer.user_preferences('B')).to eq({})
+  end
 
-    it 'does not error when caller is absent' do
-      event = { routing: { provider: :anthropic }, tools_used: [], timestamp: Time.now }
-      expect { described_class.instance.process_event(event) }.not_to raise_error
-    end
+  it 'clears accumulated private and anonymous hints on reset' do
+    observer.process_event(audit_event(identity: 'A', tool: 'private_a'))
+    observer.process_event(tools_used: [{ name: 'public_tool' }], timestamp: Time.now.utc)
+    observer.reset!
+    expect(observer.learned_data_for('A')).to include(routing_preference: nil, tool_predictions: {})
+    expect(observer.tool_patterns).to eq({})
   end
 end

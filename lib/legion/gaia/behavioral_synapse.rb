@@ -4,6 +4,9 @@ require 'concurrent/hash'
 require 'securerandom'
 require 'legion/json'
 require 'legion/logging/helper'
+require 'time'
+require 'forwardable'
+require_relative 'bond_registry'
 
 module Legion
   module Gaia
@@ -54,7 +57,8 @@ module Legion
       end
 
       @store = Concurrent::Hash.new
-      @dirty = false
+      @revision = 0
+      @clean_revision = 0
       @mutex = Mutex.new
 
       module_function
@@ -97,17 +101,22 @@ module Legion
       # --- Public API ---
 
       def for(identity:, domain:)
-        key = store_key(identity, domain)
-        entry = @store[key]
-        return nil unless entry
+        @mutex.synchronize do
+          return nil if BondRegistry.blocked?(identity: identity)
 
-        apply_lazy_decay(entry)
+          entry = @store[store_key(identity, domain)]
+          return nil unless entry
+
+          apply_lazy_decay(entry)
+          snapshot(entry)
+        end
       end
 
       def crystallize(identity:, domain:, directive:, evidence_trace_ids: [], origin: 'emergent')
         key = store_key(identity, domain)
         @mutex.synchronize do
-          return @store[key] if @store[key]
+          return nil if BondRegistry.blocked?(identity: identity)
+          return snapshot(@store[key]) if @store[key]
 
           conf   = starting_score(origin.to_sym)
           now    = Time.now.utc
@@ -121,24 +130,26 @@ module Legion
             emotional_intensity: 0.0,
             consecutive_failures: 0,
             consecutive_successes: 0,
-            directive: directive,
-            evidence_trace_ids: Array(evidence_trace_ids),
+            directive: snapshot(directive),
+            evidence_trace_ids: snapshot(Array(evidence_trace_ids)),
             status: 'active',
             last_applied_at: nil,
             last_reinforced_at: now,
             created_at: now
           }
           @store[key] = entry
-          @dirty = true
+          @revision += 1
           log.info("[gaia] synapse crystallized identity=#{identity} domain=#{domain} origin=#{origin} conf=#{conf}")
-          entry
+          snapshot(entry)
         end
       end
 
-      def record_outcome(id:, outcome:, multiplier: 1.0)
+      def record_outcome(id:, identity:, outcome:, multiplier: 1.0)
         @mutex.synchronize do
+          return { found: false } if BondRegistry.blocked?(identity: identity)
+
           entry = find_by_id(id)
-          return { found: false } unless entry
+          return { found: false } unless entry && entry[:identity] == identity.to_s
 
           conf = entry[:confidence]
           base_event = outcome.to_sym
@@ -158,83 +169,86 @@ module Legion
 
           entry[:confidence]          = scaled_conf
           entry[:last_reinforced_at]  = Time.now.utc
-          @dirty = true
+          @revision += 1
 
           apply_pain(entry) if entry[:consecutive_failures].to_i >= 3
 
-          entry
+          snapshot(entry)
         end
       end
 
       def all_for(identity:)
-        prefix = "#{identity}:"
-        @store.select { |key, _| key.start_with?(prefix) }.values
+        @mutex.synchronize do
+          return [] if BondRegistry.blocked?(identity: identity)
+
+          @store.values.select { |entry| entry[:identity] == identity.to_s }.map { |entry| snapshot(entry) }
+        end
       end
 
       def erase_partner!(identity:)
-        prefix = "#{identity}:"
-        keys = @store.keys.select { |key| key.start_with?(prefix) }
-        keys.each { |key| @store.delete(key) }
-        @mutex.synchronize { @dirty = true } unless keys.empty?
-        log.info("[gaia] BehavioralSynapse erased identity=#{identity} count=#{keys.size}")
-        keys.size
-      end
-
-      def store
-        @store
+        @mutex.synchronize do
+          keys = @store.keys.select { |key| @store[key][:identity] == identity.to_s }
+          keys.each { |key| @store.delete(key) }
+          @revision += 1 unless keys.empty?
+          keys.size
+        end
       end
 
       def reset!
         @mutex.synchronize do
           @store = Concurrent::Hash.new
-          @dirty = false
+          @revision = 0
+          @clean_revision = 0
         end
       end
 
       # --- TrackerPersistence support ---
 
       def dirty?
-        @dirty == true
+        @mutex.synchronize { @revision != @clean_revision }
       end
 
-      def mark_clean!
-        @dirty = false
+      def dirty_revision
+        @mutex.synchronize { @revision }
+      end
+
+      def mark_clean!(revision: dirty_revision)
+        @mutex.synchronize { @clean_revision = revision if @revision == revision }
       end
 
       def to_apollo_entries
-        @store.values.map do |entry|
-          identity = entry[:identity]
-          {
-            content: Legion::JSON.dump(entry),
-            tags: TO_APOLLO_TAGS + ["partner:#{identity}"],
-            confidence: entry[:confidence] || 0.3,
-            access_scope: 'local'
-          }
+        @mutex.synchronize do
+          @store.values.filter_map do |entry|
+            next if BondRegistry.blocked?(identity: entry[:identity])
+
+            identity_key = TrackerPersistence.identity_tag(identity: entry[:identity])
+            { content: Legion::JSON.dump(entry.merge(identity_key: identity_key)),
+              tags: TO_APOLLO_TAGS + [identity_key,
+                                      "d:#{Digest::SHA256.hexdigest(entry[:domain])[0, 62]}"],
+              confidence: entry[:confidence], access_scope: 'private' }
+          end
         end
       end
 
       def from_apollo(store: nil)
-        return unless store
+        return false unless store
 
-        result = store.query(text: 'behavior', tags: TO_APOLLO_TAGS)
-        return unless result.is_a?(Hash) && result[:success]
-
-        count = 0
-        result[:results]&.each do |entry|
+        records = TrackerPersistence.entries_for(store: store, tags: TO_APOLLO_TAGS)
+        records.sort_by { |entry| TrackerPersistence.record_order(entry: entry) }.each do |entry|
           hydrate_apollo_entry(entry)
-          count += 1
         rescue StandardError => e
-          log.debug("[gaia] BehavioralSynapse skipped unparseable Apollo entry: #{e.message}")
+          log.warn("BehavioralSynapse skipped invalid state: #{e.class}")
         end
-        log.info("[gaia] BehavioralSynapse hydrated from Apollo count=#{count}")
+        true
       rescue StandardError => e
         handle_exception(e, level: :warn, operation: 'gaia.behavioral_synapse.from_apollo')
+        false
       end
 
       private
 
       def store_key(identity, domain)
-        "#{identity}:#{domain}"
+        [identity.to_s, domain.to_s]
       end
 
       def find_by_id(id)
@@ -249,12 +263,9 @@ module Legion
         effective_hours = hours / (1 + (intensity * e_weight))
         return entry if effective_hours < 0.001
 
-        new_conf = decay_confidence(entry[:confidence], hours: effective_hours)
-        @mutex.synchronize do
-          entry[:confidence]         = new_conf
-          entry[:last_reinforced_at] = Time.now.utc
-          @dirty = true
-        end
+        entry[:confidence] = decay_confidence(entry[:confidence], hours: effective_hours)
+        entry[:last_reinforced_at] = Time.now.utc
+        @revision += 1
         entry
       end
 
@@ -274,31 +285,34 @@ module Legion
       end
 
       def hydrate_apollo_entry(raw_entry)
-        return unless raw_entry[:content].to_s.start_with?('{')
-
         parsed = Legion::JSON.load(raw_entry[:content])
-        return unless parsed[:id] && parsed[:identity] && parsed[:domain]
+        return unless parsed.is_a?(Hash) && parsed[:id] && parsed[:identity] && parsed[:domain]
+        return if BondRegistry.blocked?(identity: parsed[:identity])
 
-        key = store_key(parsed[:identity], parsed[:domain])
-        @mutex.synchronize do
-          @store[key] = {
-            id: parsed[:id],
-            identity: parsed[:identity].to_s,
-            domain: parsed[:domain].to_s,
-            origin: parsed[:origin].to_s,
-            confidence: parsed[:confidence].to_f,
-            emotional_valence: parsed[:emotional_valence].to_f,
-            emotional_intensity: parsed[:emotional_intensity].to_f,
-            consecutive_failures: parsed[:consecutive_failures].to_i,
-            consecutive_successes: parsed[:consecutive_successes].to_i,
-            directive: parsed[:directive],
-            evidence_trace_ids: Array(parsed[:evidence_trace_ids]),
-            status: parsed[:status].to_s,
-            last_applied_at: parsed[:last_applied_at],
-            last_reinforced_at: parse_time(parsed[:last_reinforced_at]),
-            created_at: parse_time(parsed[:created_at])
-          }
+        identity_key = TrackerPersistence.identity_tag(identity: parsed[:identity])
+        return if parsed.key?(:identity_key) && parsed[:identity_key] != identity_key
+
+        entry = deserialize_entry(parsed: parsed)
+        key = store_key(entry[:identity], entry[:domain])
+        @mutex.synchronize { @store[key] = entry }
+      end
+
+      def deserialize_entry(parsed:)
+        entry = parsed.slice(:id, :directive)
+        %i[identity domain origin status].each { |key| entry[key] = parsed[key].to_s }
+        %i[confidence emotional_valence emotional_intensity].each do |key|
+          entry[key] = Float(parsed[key] || 0)
+          raise ArgumentError, 'non-finite behavior evidence' unless entry[key].finite?
         end
+        %i[consecutive_failures consecutive_successes].each do |key|
+          entry[key] = Integer(parsed[key] || 0)
+          raise ArgumentError, 'negative behavior evidence' if entry[key].negative?
+        end
+        raise ArgumentError, 'invalid behavior confidence' unless entry[:confidence].between?(0.0, 1.0)
+
+        %i[last_applied_at last_reinforced_at created_at].each { |key| entry[key] = parse_time(parsed[key]) }
+        entry[:evidence_trace_ids] = Array(parsed[:evidence_trace_ids])
+        entry
       end
 
       def parse_time(value)
@@ -306,29 +320,27 @@ module Legion
         return nil if value.nil?
 
         Time.parse(value.to_s)
-      rescue ArgumentError, TypeError
-        nil
+      rescue ArgumentError, TypeError => e
+        log.warn("BehavioralSynapse invalid timestamp: #{e.class}")
+        raise
       end
 
-      module_function :store_key, :find_by_id, :apply_lazy_decay, :apply_pain, :hydrate_apollo_entry, :parse_time
+      def snapshot(value)
+        case value
+        when Hash then value.transform_values { |item| snapshot(item) }
+        when Array then value.map { |item| snapshot(item) }
+        when String, Time then value.dup
+        else value
+        end
+      end
 
-      # Wrapper class that satisfies TrackerPersistence interface
+      module_function :store_key, :find_by_id, :apply_lazy_decay, :apply_pain,
+                      :hydrate_apollo_entry, :deserialize_entry, :parse_time, :snapshot
+
       class Tracker
-        def dirty?
-          BehavioralSynapse.dirty?
-        end
+        extend Forwardable
 
-        def mark_clean!
-          BehavioralSynapse.mark_clean!
-        end
-
-        def to_apollo_entries
-          BehavioralSynapse.to_apollo_entries
-        end
-
-        def from_apollo(store: nil)
-          BehavioralSynapse.from_apollo(store: store)
-        end
+        def_delegators BehavioralSynapse, :dirty?, :dirty_revision, :mark_clean!, :to_apollo_entries, :from_apollo
       end
     end
   end

@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require 'time'
 require 'legion/logging/helper'
 
 module Legion
@@ -76,16 +77,19 @@ module Legion
         end
 
         def reconstruct_input_frame(payload)
+          metadata = (payload[:metadata] || {}).dup
+          metadata[:source_type] = metadata[:source_type].to_sym if metadata[:source_type]
           InputFrame.new(
             id: payload[:id],
             content: payload[:content],
             content_type: payload[:content_type]&.to_sym || :text,
             channel_id: payload[:channel_id]&.to_sym,
-            channel_capabilities: payload[:channel_capabilities] || [],
+            channel_capabilities: (payload[:channel_capabilities] || []).map(&:to_sym),
             device_context: payload[:device_context] || {},
             session_continuity_id: payload[:session_continuity_id],
             auth_context: payload[:auth_context] || {},
-            metadata: payload[:metadata] || {},
+            metadata: metadata,
+            received_at: payload[:received_at] ? Time.parse(payload[:received_at].to_s) : Time.now.utc,
             principal_id: payload[:principal_id]
           )
         rescue StandardError => e

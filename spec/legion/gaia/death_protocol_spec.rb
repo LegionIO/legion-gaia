@@ -1,173 +1,122 @@
 # frozen_string_literal: true
 
 require 'spec_helper'
+require 'sequel'
+require 'sequel/extensions/migration'
+require 'legion/apollo/local'
+require 'legion/gaia/bond_tracker'
 
 RSpec.describe Legion::Gaia::DeathProtocol do
-  let(:identity_x) { 'partner-x' }
-  let(:identity_y) { 'partner-y' }
+  let(:db) { Sequel.sqlite }
+  let(:store) { Legion::Apollo::Local }
+  let(:bonds) { Legion::Gaia::BondRegistry }
+  let(:behavior) { Legion::Gaia::BehavioralSynapse }
+  let(:persistence) { Legion::Gaia::TrackerPersistence }
 
   before do
-    Legion::Gaia::BondRegistry.reset!
-    Legion::Gaia::BehavioralSynapse.reset!
-    Legion::Gaia::BondRegistry.register(identity_x, bond: :partner, strength: 0.8)
-    Legion::Gaia::BondRegistry.register(identity_y, bond: :partner, strength: 0.7)
-    Legion::Gaia::BehavioralSynapse.crystallize(
-      identity: identity_x, domain: 'brevity', directive: 'be brief', origin: 'explicit'
-    )
-    Legion::Gaia::BehavioralSynapse.crystallize(
-      identity: identity_y, domain: 'detail', directive: 'be detailed', origin: 'explicit'
-    )
+    local_db = db
+    stub_const('Legion::Data::Local', Module.new do
+      define_singleton_method(:connected?) { true }
+      define_singleton_method(:connection) { local_db }
+      define_singleton_method(:register_migrations) { |**_| nil }
+    end)
+    Sequel::Migrator.run(db, store::MIGRATION_PATH)
+    store.start
+    bonds.reset!
+    behavior.reset!
+    persistence.reset!
+    allow(Legion::Gaia).to receive(:apollo_local_store).and_return(store)
+    Legion::Gaia.boot
+    if defined?(Legion::Extensions::Mesh::Helpers::PreferenceProfile)
+      hide_const('Legion::Extensions::Mesh::Helpers::PreferenceProfile')
+    end
+    Legion::Gaia::AuditObserver.instance.reset!
+    %w[a a:b].each do |identity|
+      bonds.register(identity, bond: :partner, strength: 0.8)
+      behavior.crystallize(identity: identity, domain: 'tone', directive: "private #{identity}", origin: 'explicit')
+    end
+    persistence.flush_all(store: store)
   end
 
   after do
-    Legion::Gaia::BondRegistry.reset!
-    Legion::Gaia::BehavioralSynapse.reset!
+    Legion::Gaia.shutdown if Legion::Gaia.started?
+    store.reset!
+    bonds.reset!
+    behavior.reset!
+    persistence.reset!
+    db.disconnect
   end
 
-  describe '.terminate_bond' do
-    context 'without confirm: true' do
-      it 'raises ArgumentError' do
-        expect { described_class.terminate_bond(identity: identity_x, confirm: false) }
-          .to raise_error(ArgumentError, /confirm: must be true/)
-      end
-
-      it 'raises when confirm is nil' do
-        expect { described_class.terminate_bond(identity: identity_x, confirm: nil) }
-          .to raise_error(ArgumentError, /confirm: must be true/)
-      end
-    end
-
-    context 'happy path' do
-      subject(:result) { described_class.terminate_bond(identity: identity_x, confirm: true) }
-
-      it 'returns terminated: true' do
-        expect(result[:terminated]).to be true
-      end
-
-      it 'returns the identity string' do
-        expect(result[:identity]).to eq(identity_x)
-      end
-
-      it 'includes a receipt hash' do
-        expect(result[:receipt]).to be_a(Hash)
-      end
-
-      it 'includes bond store in receipt' do
-        expect(result[:receipt]).to have_key(:bond)
-      end
-
-      it 'includes behavioral_synapses in receipt' do
-        expect(result[:receipt]).to have_key(:behavioral_synapses)
-      end
-
-      it 'includes session in receipt' do
-        expect(result[:receipt]).to have_key(:session)
-      end
-
-      it 'includes audit in receipt' do
-        expect(result[:receipt]).to have_key(:audit)
-      end
-
-      it 'includes attribution in receipt' do
-        expect(result[:receipt]).to have_key(:attribution)
-      end
-
-      it 'erases bond registry entry for X' do
-        result
-        expect(Legion::Gaia::BondRegistry.bond(identity_x)).to eq(:unknown)
-      end
-
-      it 'erases behavioral synapses for X' do
-        result
-        expect(Legion::Gaia::BehavioralSynapse.all_for(identity: identity_x)).to be_empty
-      end
-
-      it 'sets bond state to :terminated' do
-        result
-        expect(Legion::Gaia::BondRegistry.terminated?(identity_x)).to be true
-      end
-    end
-
-    context 'Y untouched after X terminated' do
-      before { described_class.terminate_bond(identity: identity_x, confirm: true) }
-
-      it 'leaves Y bond intact' do
-        expect(Legion::Gaia::BondRegistry.bond(identity_y)).to eq(:partner)
-      end
-
-      it 'leaves Y synapses intact' do
-        expect(Legion::Gaia::BehavioralSynapse.all_for(identity: identity_y)).not_to be_empty
-      end
-
-      it 'does not mark Y as terminated' do
-        expect(Legion::Gaia::BondRegistry.terminated?(identity_y)).to be false
-      end
-    end
-
-    context 'event emission' do
-      it 'emits gaia.bond.terminated when Legion::Events is available' do
-        events_stub = double('Events')
-        stub_const('Legion::Events', events_stub)
-        allow(events_stub).to receive(:respond_to?).with(:emit).and_return(true)
-        # BondRegistry.erase_partner! also emits gaia.bond.erased — allow it
-        allow(events_stub).to receive(:emit).with('gaia.bond.erased', anything)
-        expect(events_stub).to receive(:emit).with(
-          'gaia.bond.terminated',
-          hash_including(identity: identity_x)
-        )
-        described_class.terminate_bond(identity: identity_x, confirm: true)
-      end
-
-      it 'does not raise if Legion::Events is not defined' do
-        hide_const('Legion::Events') if defined?(Legion::Events)
-        expect { described_class.terminate_bond(identity: identity_x, confirm: true) }.not_to raise_error
-      end
-    end
+  it 'requires explicit confirmation before changing a relationship' do
+    expect { described_class.terminate_bond(identity: 'a', confirm: false, store: store) }.to raise_error(ArgumentError)
+    expect(bonds.partner?('a')).to be true
   end
 
-  describe 'ingress barrier' do
-    context 'when identity is :terminating' do
-      before { Legion::Gaia::BondRegistry.set_bond_state(identity_x, :terminating) }
-
-      it 'terminating? returns true' do
-        expect(Legion::Gaia::BondRegistry.terminating?(identity_x)).to be true
-      end
-
-      it 'terminated? returns false' do
-        expect(Legion::Gaia::BondRegistry.terminated?(identity_x)).to be false
-      end
-    end
-
-    context 'when identity is :terminated' do
-      before { described_class.terminate_bond(identity: identity_x, confirm: true) }
-
-      it 'terminated? returns true' do
-        expect(Legion::Gaia::BondRegistry.terminated?(identity_x)).to be true
-      end
-
-      it 'terminating? returns false after full termination' do
-        expect(Legion::Gaia::BondRegistry.terminating?(identity_x)).to be false
-      end
-    end
+  it 'does not erase anything when the privacy barrier write fails' do
+    allow(store).to receive(:upsert).and_return(success: false)
+    result = described_class.terminate_bond(identity: 'a', confirm: true, store: store)
+    expect(result).to include(terminated: false, durable: false, reason: :barrier_not_persisted)
+    expect(bonds.terminating?('a')).to be true
+    expect(bonds.entry(identity: 'a')).not_to be_nil
+    expect(persistence.entries_for(store: store, tags: behavior::TO_APOLLO_TAGS).map do |row|
+      Legion::JSON.load(row[:content])[:identity]
+    end)
+      .to contain_exactly('a', 'a:b')
   end
 
-  describe 'irreversibility — cannot re-bond after termination' do
-    before { described_class.terminate_bond(identity: identity_x, confirm: true) }
+  it 'physically erases the exact identity while preserving another identity and its state after restart' do
+    result = described_class.terminate_bond(identity: 'a', confirm: true, store: store)
+    expect(result).to include(terminated: true, durable: true)
+    expect(result[:receipt][:local_snapshots]).to include(erased: true, durable: true)
+    bonds.reset!
+    behavior.reset!
+    expect(persistence.hydrate_all(store: store)).to be true
+    expect(bonds.terminated?('a')).to be true
+    expect(bonds.entry(identity: 'a')).to be_nil
+    expect(behavior.all_for(identity: 'a')).to be_empty
+    expect(bonds.partner?('a:b')).to be true
+    expect(behavior.for(identity: 'a:b', domain: 'tone')[:directive]).to eq('private a:b')
+    expect(bonds.register('a', bond: :partner, strength: 1.0)).to be_nil
+  end
 
-    it 'observe_interlocutor no-ops for terminated identity' do
-      frame = instance_double(
-        Legion::Gaia::InputFrame,
-        auth_context: { identity: identity_x },
-        channel_id: :cli,
-        content_type: :text,
-        content: 'hello',
-        metadata: { direct_address: false },
-        received_at: Time.now.utc
-      )
-      # If observe_interlocutor returned without registering, bond stays :unknown
-      Legion::Gaia.send(:observe_interlocutor, frame, identity_x)
-      # Bond should remain :unknown — terminated identity not re-registered
-      expect(Legion::Gaia::BondRegistry.bond(identity_x)).to eq(:unknown)
-    end
+  it 'retains a durable barrier across process loss between journal commit and erasure' do
+    expect(bonds.persist_lifecycle(identity: 'a', state: :terminating, store: store)).to be true
+    bonds.reset!
+    behavior.reset!
+    expect(persistence.hydrate_all(store: store)).to be true
+    expect(bonds.terminating?('a')).to be true
+    expect(bonds.entry(identity: 'a')).to be_nil
+    expect(behavior.all_for(identity: 'a')).to be_empty
+    result = described_class.resume_pending(store: store)
+    expect(result['a']).to include(terminated: true, durable: true)
+    expect(persistence.entries_for(store: store, tags: behavior::TO_APOLLO_TAGS).map do |row|
+      Legion::JSON.load(row[:content])[:identity]
+    end)
+      .to eq(['a:b'])
+  end
+
+  it 'reports partial erasure honestly and completes it on retry' do
+    allow(Legion::Gaia).to receive(:erase_attribution!).and_return(erased: false, durable: false)
+    result = described_class.terminate_bond(identity: 'a', confirm: true, store: store)
+    expect(result).to include(terminated: false, durable: false)
+    expect(bonds.terminating?('a')).to be true
+    bonds.reset!
+    behavior.reset!
+    persistence.hydrate_all(store: store)
+    expect(bonds.terminating?('a')).to be true
+    allow(Legion::Gaia).to receive(:erase_attribution!).and_call_original
+    expect(described_class.resume_pending(store: store)['a'][:terminated]).to be true
+  end
+
+  it 'loads consent revocations even if a historical storage TTL has expired' do
+    expect(bonds.persist_lifecycle(identity: 'a', state: :revoked, store: store)).to be true
+    db[:local_knowledge].update(expires_at: '2000-01-01T00:00:00.000Z')
+    bonds.reset!
+    behavior.reset!
+    expect(persistence.hydrate_all(store: store)).to be true
+    expect(bonds.blocked?(identity: 'a')).to be true
+    expect(bonds.bond_state('a')).to eq(:revoked)
+    expect(behavior.all_for(identity: 'a')).to be_empty
+    expect(bonds.entry(identity: 'a:b')).not_to be_nil
   end
 end

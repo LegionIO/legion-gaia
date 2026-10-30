@@ -12,8 +12,15 @@ module Legion
       end
 
       def route(output_frame)
+        identity = output_frame.metadata[:identity]
+        if identity && Legion::Gaia::BondRegistry.blocked?(identity: identity)
+          return { delivered: false, reason: :bond_blocked }
+        end
+
         if @notification_gate
           decision = @notification_gate.evaluate(output_frame)
+          return { delivered: false, reason: :bond_blocked } if decision == :discard
+
           if decision == :delay
             @notification_gate.enqueue(output_frame)
             return { delivered: false, reason: :delayed, pending: @notification_gate.pending_count }
@@ -21,6 +28,10 @@ module Legion
         end
 
         frame = render(output_frame)
+        if identity && Legion::Gaia::BondRegistry.blocked?(identity: identity)
+          return { delivered: false, reason: :bond_blocked }
+        end
+
         channel_registry.deliver(frame)
       end
 
@@ -28,7 +39,7 @@ module Legion
         return [] unless @notification_gate
 
         frames = @notification_gate.process_delayed
-        frames.map { |frame| channel_registry.deliver(frame) }
+        frames.map { |frame| route(frame) }
       end
 
       def route_to(output_frame, channel_id:)

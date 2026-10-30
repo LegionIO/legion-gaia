@@ -18,7 +18,7 @@ module Legion
           @mutex = Mutex.new
         end
 
-        def translate_inbound(raw_input)
+        def translate_inbound(raw_input, auth_context: {}, principal_id: nil, session_continuity_id: nil, metadata: {})
           text = raw_input.is_a?(String) ? raw_input : raw_input.to_s
 
           InputFrame.new(
@@ -27,7 +27,10 @@ module Legion
             content_type: :text,
             channel_capabilities: CAPABILITIES,
             device_context: { platform: :desktop, input_method: :keyboard },
-            metadata: { source_type: :human_direct, salience: 0.9, direct_address: direct_address?(text) }
+            auth_context: auth_context,
+            principal_id: principal_id,
+            session_continuity_id: session_continuity_id,
+            metadata: metadata.merge(source_type: :human_direct, salience: 0.9, direct_address: direct_address?(text))
           )
         end
 
