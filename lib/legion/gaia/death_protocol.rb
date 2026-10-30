@@ -1,6 +1,8 @@
 # frozen_string_literal: true
 
 require 'legion/logging/helper'
+require_relative 'bond_registry'
+require_relative 'behavioral_synapse'
 
 module Legion
   module Gaia
@@ -9,139 +11,88 @@ module Legion
 
       module_function
 
-      # The single entry point for bond termination.
-      # confirm: must be true (explicit consent gate).
-      # Returns: { terminated: true, identity:, receipt: { store => result } }
-      def terminate_bond(identity:, confirm:)
+      # A durable barrier precedes every destructive action. An interrupted attempt
+      # remains blocked and retryable; success never means merely clearing RAM.
+      def terminate_bond(identity:, confirm:, store: nil)
         raise ArgumentError, 'confirm: must be true to terminate' unless confirm == true
+        raise ArgumentError, 'identity is required' if identity.to_s.empty?
 
-        identity_str = identity.to_s
+        store ||= Legion::Gaia.send(:apollo_local_store)
+        TrackerPersistence::WRITE_LOCK.synchronize do
+          unless BondRegistry.persist_lifecycle(identity: identity, state: :terminating, store: store)
+            return { terminated: false, durable: false, identity: identity.to_s, reason: :barrier_not_persisted,
+                     receipt: {} }
+          end
 
-        # 1. Set bond state to :terminating (blocks new writes)
-        Legion::Gaia::BondRegistry.set_bond_state(identity_str, :terminating)
-
-        # 2. Walk every store's erase_partner!
-        receipt = build_erasure_receipt(identity_str)
-
-        # 3. Set bond state to :terminated
-        Legion::Gaia::BondRegistry.set_bond_state(identity_str, :terminated)
-
-        # 4. Emit event
-        if defined?(Legion::Events) && Legion::Events.respond_to?(:emit)
-          Legion::Events.emit('gaia.bond.terminated', identity: identity_str, receipt: receipt)
+          receipt = build_erasure_receipt(identity: identity.to_s, store: store)
+          complete = receipt.values.all? { |value| value[:erased] == true || value[:not_applicable] == true }
+          complete &&= BondRegistry.persist_lifecycle(identity: identity, state: :terminated, store: store)
+          if complete && defined?(Legion::Events) && Legion::Events.respond_to?(:emit)
+            Legion::Events.emit('gaia.bond.terminated', identity: identity.to_s, receipt: receipt)
+          end
+          { terminated: complete, durable: complete, identity: identity.to_s, receipt: receipt }
         end
-
-        # 5. Log receipt
-        log.info("[gaia] bond terminated identity=#{identity_str} stores=#{receipt.keys.size}")
-
-        { terminated: true, identity: identity_str, receipt: receipt }
       end
 
-      private
+      def resume_pending(store:)
+        pending = BondRegistry.lifecycle_identities.reject { |identity| BondRegistry.bond_state(identity) == :revoked }
+        pending.to_h do |identity|
+          # Retry even completed barriers: legacy snapshots or interrupted external
+          # erasure must not be mistaken for authorization to restore a relationship.
+          [identity, terminate_bond(identity: identity, confirm: true, store: store)]
+        end
+      end
 
-      def build_erasure_receipt(identity_str)
-        {
-          bond: erase_store(:bond) { Legion::Gaia::BondRegistry.erase_partner!(identity: identity_str) },
-          behavioral_synapses: erase_store(:behavioral_synapses) do
-            Legion::Gaia::BehavioralSynapse.erase_partner!(identity: identity_str)
+      def build_erasure_receipt(identity:, store:)
+        receipt = {
+          bond: erase_store(name: :bond) { BondRegistry.erase_partner!(identity: identity) },
+          behavioral_synapses: erase_store(name: :behavioral_synapses) do
+            { erased: true, count: BehavioralSynapse.erase_partner!(identity: identity), durable: false }
           end,
-          session: erase_store(:session) do
-            Legion::Gaia.session_store&.erase_partner!(identity: identity_str)
+          session: erase_store(name: :session) do
+            session_store = Legion::Gaia.session_store
+            session_store ? session_store.erase_partner!(identity: identity) : { not_applicable: true }
           end,
-          audit: erase_store(:audit) do
-            Legion::Gaia::AuditObserver.instance.erase_partner!(identity: identity_str)
+          audit: erase_store(name: :audit) do
+            observer = Legion::Gaia::AuditObserver.instance
+            observer.erase_partner!(identity: identity)
+            remaining = observer.learned_data_for(identity)
+            { erased: remaining[:routing_preference].nil? && Array(remaining[:tool_predictions]).empty?,
+              durable: false }
           end,
-          attribution: erase_store(:attribution) { Legion::Gaia.erase_attribution!(identity: identity_str) },
-          calibration: erase_calibration(identity_str),
-          preferences: erase_preferences(identity_str),
-          memory_traces: erase_memory_traces(identity_str),
-          predictions: erase_predictions(identity_str),
-          trust: erase_trust(identity_str)
+          attribution: erase_store(name: :attribution) { Legion::Gaia.erase_attribution!(identity: identity) },
+          preferences: erase_store(name: :preferences) do
+            if defined?(Legion::Extensions::Mesh::Helpers::PreferenceProfile)
+              Legion::Extensions::Mesh::Helpers::PreferenceProfile.erase_partner!(identity: identity)
+            else
+              { not_applicable: true }
+            end
+          end
         }
-      end
+        runners = Legion::Gaia.registry&.runner_instances_for(identity: identity) || {}
+        runners.each do |name, runner|
+          next unless runner.respond_to?(:erase_partner!)
 
-      def erase_store(name)
+          receipt[name] = erase_store(name: name) { runner.erase_partner!(identity: identity) }
+        end
+        receipt[:runners] = erase_store(name: :runners) do
+          Legion::Gaia.registry ? Legion::Gaia.registry.erase_identity(identity: identity) : { not_applicable: true }
+        end
+        receipt[:local_snapshots] = TrackerPersistence.erase_identity_entries(identity: identity, store: store)
+        receipt
+      end
+      private_class_method :build_erasure_receipt
+
+      def erase_store(name:)
         result = yield
-        result.is_a?(Hash) ? result : { erased: true }
+        return result if result.is_a?(Hash) && (result.key?(:erased) || result[:not_applicable] == true)
+
+        { erased: false, durable: false, reason: :erasure_not_acknowledged }
       rescue StandardError => e
-        log.error("[gaia] death_protocol store=#{name} error=#{e.message}")
-        raise
+        handle_exception(e, level: :error, operation: 'gaia.death_protocol.erase_store', store: name)
+        { erased: false, durable: false, reason: :erasure_failed }
       end
-
-      def erase_calibration(identity_str)
-        unless defined?(Legion::Extensions::Agentic::Social::Calibration::Runners::Calibration)
-          return { skipped: true, reason: :calibration_unavailable }
-        end
-
-        runner = Object.new
-        runner.extend(Legion::Extensions::Agentic::Social::Calibration::Runners::Calibration)
-        return { skipped: true, reason: :no_erase_method } unless runner.respond_to?(:erase_partner!)
-
-        erase_store(:calibration) { runner.erase_partner!(identity: identity_str) }
-      rescue StandardError => e
-        log.error("[gaia] death_protocol store=calibration error=#{e.message}")
-        raise
-      end
-
-      def erase_preferences(identity_str)
-        unless defined?(Legion::Extensions::Mesh::Helpers::PreferenceProfile)
-          return { skipped: true, reason: :preferences_unavailable }
-        end
-
-        klass = Legion::Extensions::Mesh::Helpers::PreferenceProfile
-        return { skipped: true, reason: :no_erase_method } unless klass.respond_to?(:erase_partner!)
-
-        erase_store(:preferences) { klass.erase_partner!(identity: identity_str) }
-      rescue StandardError => e
-        log.error("[gaia] death_protocol store=preferences error=#{e.message}")
-        raise
-      end
-
-      def erase_memory_traces(identity_str)
-        unless defined?(Legion::Extensions::Agentic::Memory::Trace::Runners::Traces)
-          return { skipped: true, reason: :memory_trace_unavailable }
-        end
-
-        runner = Object.new
-        runner.extend(Legion::Extensions::Agentic::Memory::Trace::Runners::Traces)
-        return { skipped: true, reason: :no_erase_method } unless runner.respond_to?(:erase_partner!)
-
-        erase_store(:memory_traces) { runner.erase_partner!(identity: identity_str) }
-      rescue StandardError => e
-        log.error("[gaia] death_protocol store=memory_traces error=#{e.message}")
-        raise
-      end
-
-      def erase_predictions(identity_str)
-        unless defined?(Legion::Extensions::Agentic::Prediction::Helpers::Store)
-          return { skipped: true, reason: :predictions_unavailable }
-        end
-
-        store = Legion::Extensions::Agentic::Prediction::Helpers::Store
-        return { skipped: true, reason: :no_erase_method } unless store.respond_to?(:erase_partner!)
-
-        erase_store(:predictions) { store.erase_partner!(identity: identity_str) }
-      rescue StandardError => e
-        log.error("[gaia] death_protocol store=predictions error=#{e.message}")
-        raise
-      end
-
-      def erase_trust(identity_str)
-        unless defined?(Legion::Extensions::Agentic::Social::Trust::Helpers::TrustStore)
-          return { skipped: true, reason: :trust_unavailable }
-        end
-
-        store = Legion::Extensions::Agentic::Social::Trust::Helpers::TrustStore
-        return { skipped: true, reason: :no_erase_method } unless store.respond_to?(:erase_partner!)
-
-        erase_store(:trust) { store.erase_partner!(identity: identity_str) }
-      rescue StandardError => e
-        log.error("[gaia] death_protocol store=trust error=#{e.message}")
-        raise
-      end
-
-      module_function :build_erasure_receipt, :erase_store, :erase_calibration, :erase_preferences,
-                      :erase_memory_traces, :erase_predictions, :erase_trust
+      private_class_method :erase_store
     end
   end
 end

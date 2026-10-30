@@ -110,10 +110,7 @@ module Legion
         end
 
         def extract_identity(input_frame)
-          input_frame.auth_context[:principal_id] ||
-            input_frame.auth_context[:aad_object_id] ||
-            input_frame.auth_context[:identity] ||
-            input_frame.auth_context[:user_id]
+          input_frame.authenticated_identity
         end
 
         def publish_input_frame(input_frame, worker_id:)
@@ -171,9 +168,16 @@ module Legion
         end
 
         def deliver_output(adapter, rendered, frame)
+          if frame.metadata[:proactive] && adapter.respond_to?(:deliver_proactive)
+            return adapter.deliver_proactive(frame)
+          end
+
           conversation_id = frame.metadata[:conversation_id]
-          if adapter.respond_to?(:deliver) && conversation_id
-            adapter.deliver(rendered, conversation_id: conversation_id)
+          if adapter.respond_to?(:deliver) && frame.channel_id.to_s == 'teams'
+            return { error: :no_target_conversation } if conversation_id.to_s.empty?
+            return { error: :no_target_tenant } if frame.metadata[:tenant_id].to_s.empty?
+
+            adapter.deliver(rendered, conversation_id: conversation_id, tenant_id: frame.metadata[:tenant_id])
           elsif adapter.respond_to?(:deliver)
             adapter.deliver(rendered)
           else

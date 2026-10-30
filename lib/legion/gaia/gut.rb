@@ -28,6 +28,9 @@ module Legion
       #   { conflict: false }
       #   nil when gut check unavailable (no memory, no synapses, or latency exceeded)
       def check(identity:, draft_stats:)
+        return nil if identity.to_s.empty?
+        return nil if Legion::Gaia::BondRegistry.blocked?(identity: identity)
+
         deadline = monotonic_now + (latency_budget_ms / 1000.0)
 
         gut_synapse = Legion::Gaia::BehavioralSynapse.for(identity: identity.to_s, domain: 'gut')
@@ -35,24 +38,11 @@ module Legion
 
         return nil if gut_mode == :unavailable
 
-        violations = check_correction_traces(identity: identity.to_s, draft_stats: draft_stats,
-                                             deadline: deadline)
-
-        if violations.nil?
+        all_violations = collect_violations(identity: identity.to_s, draft_stats: draft_stats, deadline: deadline)
+        unless all_violations
           log.debug("[gut] latency budget exceeded identity=#{identity}")
           return nil
         end
-
-        synapse_violations = check_transform_synapses(identity: identity.to_s,
-                                                      draft_stats: draft_stats,
-                                                      deadline: deadline)
-
-        if synapse_violations.nil?
-          log.debug("[gut] latency budget exceeded (synapse phase) identity=#{identity}")
-          return nil
-        end
-
-        all_violations = violations + synapse_violations
         return { conflict: false } if all_violations.empty?
 
         violated_trace_ids = all_violations.flat_map { |v| v[:trace_ids] }.uniq
@@ -67,6 +57,20 @@ module Legion
       rescue StandardError => e
         handle_exception(e, level: :warn, operation: 'gaia.gut.check', identity: identity)
         nil
+      end
+
+      def collect_violations(identity:, draft_stats:, deadline:)
+        corrections = correction_traces_for(identity: identity, draft_stats: draft_stats, deadline: deadline)
+        return unless corrections
+
+        violations = check_correction_traces(identity: identity, draft_stats: draft_stats,
+                                             deadline: deadline, traces: corrections)
+        return unless violations
+
+        corrected_domains = corrections.filter_map { |trace| corrected_domain(trace: trace) }
+        synapse_violations = check_transform_synapses(identity: identity, draft_stats: draft_stats,
+                                                      deadline: deadline, excluded_domains: corrected_domains)
+        violations + synapse_violations if synapse_violations
       end
 
       def latency_budget_ms
@@ -92,69 +96,95 @@ module Legion
 
       # Compare draft_stats against high-strength correction traces for the partner.
       # Returns array of violation hashes, or nil if deadline exceeded.
-      def check_correction_traces(identity:, draft_stats:, deadline:)
-        return [] unless defined?(Legion::Extensions::Agentic::Memory::Trace::Runners::Traces)
+      def check_correction_traces(identity:, draft_stats:, deadline:, traces: nil)
+        correction_traces = traces || correction_traces_for(identity: identity, draft_stats: draft_stats,
+                                                            deadline: deadline)
+        return nil unless correction_traces
 
-        return nil if deadline_exceeded?(deadline)
-
-        runner = Object.new
-        runner.extend(Legion::Extensions::Agentic::Memory::Trace::Runners::Traces)
-
-        result = runner.retrieve_by_domain(
-          domain_tag: "partner:#{identity}",
-          min_strength: correction_min_strength,
-          limit: correction_trace_limit
-        )
-
-        return nil if deadline_exceeded?(deadline)
-
-        correction_traces = Array(result[:traces]).select { |t| correction_trace?(t) }
-        violations = []
-
-        correction_traces.each do |trace|
+        correction_traces.filter_map do |trace|
           return nil if deadline_exceeded?(deadline)
 
           next unless trace_conflicts_with_draft?(trace, draft_stats)
 
-          violations << {
-            trace_ids: [trace[:trace_id].to_s],
-            strength: trace[:strength].to_f,
-            directive: directive_from_trace(trace)
-          }
+          { trace_ids: [trace[:trace_id].to_s], strength: trace[:strength].to_f,
+            directive: directive_from_trace(trace) }
         end
-
-        violations
       rescue StandardError => e
         handle_exception(e, level: :debug, operation: 'gaia.gut.check_correction_traces', identity: identity)
         []
       end
 
+      def correction_traces_for(identity:, draft_stats:, deadline:)
+        return nil if deadline_exceeded?(deadline)
+
+        traces = memory_correction_traces(identity: identity)
+        return nil if deadline_exceeded?(deadline)
+
+        scoped = Legion::Gaia::PartnerModel.scoped_traces(
+          identity: identity, conversation_id: draft_stats[:conversation_id], traces: traces
+        )
+        rejected = scoped.flat_map do |trace|
+          payload = trace[:content_payload]
+          payload.is_a?(Hash) ? Array(payload[:applied_trace_ids]) : []
+        end.map(&:to_s)
+        corrected_domains = {}
+        scoped.first(correction_trace_limit).select do |trace|
+          next false unless correction_trace?(trace)
+          next false unless trace[:strength].to_f >= correction_min_strength
+          next false if rejected.include?(trace[:trace_id].to_s)
+
+          domain = corrected_domain(trace: trace)
+          if domain
+            next false if corrected_domains[domain]
+
+            corrected_domains[domain] = true
+          end
+          true
+        end
+      rescue StandardError => e
+        handle_exception(e, level: :warn, operation: 'gaia.gut.correction_traces_for')
+        nil
+      end
+
+      def corrected_domain(trace:)
+        payload = trace[:content_payload]
+        payload[:domain].to_s if payload.is_a?(Hash) && payload[:corrected_constraint] && payload[:domain]
+      end
+
+      def memory_correction_traces(identity:)
+        runner = Legion::Gaia.registry&.runner_instances_for(identity: identity)&.dig(:Memory_Traces)
+        return [] unless runner.respond_to?(:retrieve_by_domain)
+
+        result = runner.retrieve_by_domain(domain_tag: "partner:#{identity}",
+                                           min_strength: correction_min_strength, limit: correction_trace_limit)
+        Array(result[:traces])
+      rescue StandardError => e
+        handle_exception(e, level: :warn, operation: 'gaia.gut.memory_correction_traces')
+        []
+      end
+
       # Check transform-tier behavioral synapses for conflicts with draft stats.
       # Returns array of violation hashes, or nil if deadline exceeded.
-      def check_transform_synapses(identity:, draft_stats:, deadline:)
+      def check_transform_synapses(identity:, draft_stats:, deadline:, excluded_domains: [])
         return nil if deadline_exceeded?(deadline)
 
         synapses = Legion::Gaia::BehavioralSynapse.all_for(identity: identity)
-        transform_synapses = synapses.select do |s|
+        transform_synapses = synapses.first(128).select do |s|
+          next false unless s[:identity].to_s == identity && s[:status].to_s == 'active'
+          next false if excluded_domains.include?(s[:domain].to_s)
+
           mode = Legion::Gaia::BehavioralSynapse::Math.autonomy_mode(s[:confidence].to_f)
           %i[transform autonomous].include?(mode)
         end
 
-        violations = []
-
-        transform_synapses.each do |synapse|
+        transform_synapses.filter_map do |synapse|
           return nil if deadline_exceeded?(deadline)
 
           next unless synapse_conflicts_with_draft?(synapse, draft_stats)
 
-          violations << {
-            trace_ids: Array(synapse[:evidence_trace_ids]),
-            strength: synapse[:confidence].to_f,
-            directive: synapse[:directive].is_a?(Hash) ? synapse[:directive] : {}
-          }
+          { trace_ids: Array(synapse[:evidence_trace_ids]), strength: synapse[:confidence].to_f,
+            directive: synapse[:directive].is_a?(Hash) ? synapse[:directive] : {} }
         end
-
-        violations
       rescue StandardError => e
         handle_exception(e, level: :debug, operation: 'gaia.gut.check_transform_synapses', identity: identity)
         []
@@ -170,25 +200,23 @@ module Legion
       # Checks if a correction trace conflicts with the draft stats.
       # Conflict = the draft exhibits a pattern that the correction explicitly negated.
       def trace_conflicts_with_draft?(trace, draft_stats)
-        payload = trace[:content_payload]
+        payload = correction_payload(trace: trace)
         return false unless payload.is_a?(Hash)
 
         stats = draft_stats.is_a?(Hash) ? draft_stats : {}
         trace_verbosity_conflict?(payload, stats) ||
           trace_format_conflict?(payload, stats) ||
           trace_content_flag_conflict?(payload, stats) ||
-          trace_domain_conflict?(payload, stats)
+          trace_source_conflict?(payload, stats)
       end
 
       def trace_verbosity_conflict?(payload, stats)
-        type = payload[:correction_type].to_s
-        return false unless type.include?('verbosity') || type.include?('length')
-
         budget = payload[:budget_tokens] || payload[:max_tokens]
         budget && stats[:length_tokens].to_i > budget.to_i
       end
 
       def trace_format_conflict?(payload, stats)
+        return stats[:format].to_s != payload[:format].to_s if payload[:format] && stats[:format]
         return false unless payload[:rejected_format]
 
         stats[:format].to_s == payload[:rejected_format].to_s
@@ -202,12 +230,15 @@ module Legion
         draft_flags.intersect?(rejected)
       end
 
-      def trace_domain_conflict?(payload, stats)
+      def trace_source_conflict?(payload, stats)
         return false unless payload[:correction_type].to_s == 'explicit_negative_feedback'
 
-        applied_domains = Array(stats[:applied_domains]).map(&:to_s)
-        blocked_domains = Array(payload[:blocked_domains]).map(&:to_s)
-        blocked_domains.any? && applied_domains.intersect?(blocked_domains)
+        applied_ids = Array(stats[:behavioral_synapse_ids]) + Array(stats.dig(:applied_signals,
+                                                                              :behavioral_synapse_ids))
+        return true if applied_ids.map(&:to_s).intersect?(Array(payload[:applied_synapse_ids]).map(&:to_s))
+
+        applied_trace_ids = Array(stats[:trace_ids]) + Array(stats.dig(:applied_signals, :trace_ids))
+        applied_trace_ids.map(&:to_s).intersect?(Array(payload[:applied_trace_ids]).map(&:to_s))
       end
 
       # Checks if a transform-tier synapse's directive conflicts with draft stats.
@@ -235,14 +266,17 @@ module Legion
       end
 
       def directive_from_trace(trace)
-        payload = trace[:content_payload]
+        payload = correction_payload(trace: trace)
         return {} unless payload.is_a?(Hash)
 
-        dir = {}
-        dir[:budget_tokens] = payload[:budget_tokens] if payload[:budget_tokens]
-        dir[:rejected_format] = payload[:rejected_format] if payload[:rejected_format]
-        dir[:correction_type] = payload[:correction_type] if payload[:correction_type]
-        dir
+        payload.slice(:budget_tokens, :max_tokens, :format, :rejected_format, :rejected_content_flags, :correction_type)
+      end
+
+      def correction_payload(trace:)
+        payload = trace[:content_payload]
+        return payload unless payload.is_a?(Hash) && payload[:corrected_constraint].is_a?(Hash)
+
+        payload.merge(payload[:corrected_constraint])
       end
 
       def correction_min_strength
@@ -252,7 +286,7 @@ module Legion
 
       def correction_trace_limit
         settings = Legion::Gaia.settings
-        settings&.dig(:gut, :correction_trace_limit) || 20
+        (settings&.dig(:gut, :correction_trace_limit) || 20).to_i.clamp(0, 100)
       end
     end
   end

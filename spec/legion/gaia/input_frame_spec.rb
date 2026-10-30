@@ -127,4 +127,50 @@ RSpec.describe Legion::Gaia::InputFrame do
       expect(frame.resolved_principal_id).to be_nil
     end
   end
+
+  describe '#authenticated_identity' do
+    it 'prefers the authenticated principal over a channel alias' do
+      frame = described_class.new(content: 'hello', channel_id: :teams, principal_id: 'principal-a',
+                                  auth_context: { identity: 'alias', tenant_id: 'tenant', user_id: 'user' })
+      expect(frame.authenticated_identity).to eq('principal-a')
+    end
+
+    it 'preserves the trusted identity supplied by native and CLI callers' do
+      frame = described_class.new(content: 'hello', channel_id: :cli, auth_context: { identity: 'human-a' })
+      expect(frame.authenticated_identity).to eq('human-a')
+    end
+
+    it 'isolates identical channel aliases in separate tenants' do
+      frames = %w[tenant-a tenant-b].map do |tenant|
+        described_class.new(content: 'hello', channel_id: :teams,
+                            auth_context: { tenant_id: tenant, aad_object_id: 'user' })
+      end
+      expect(frames.map(&:authenticated_identity)).to eq(%w[teams:tenant-a:user teams:tenant-b:user])
+    end
+
+    it 'does not authenticate from unscoped aliases, names, or continuity' do
+      frame = described_class.new(content: 'hello', channel_id: :teams, session_continuity_id: 'known-session',
+                                  auth_context: { user_id: 'user', canonical_name: 'Alice' })
+      expect(frame.authenticated_identity).to be_nil
+    end
+  end
+
+  it 'retains authenticated ownership and real correlation in sensory signals' do
+    frame = described_class.new(content: 'hello', channel_id: :cli, id: 'frame-a',
+                                auth_context: { identity: 'human-a' }, session_continuity_id: 'session-a',
+                                metadata: { conversation_id: 'conversation-a', exchange_id: 'exchange-a' })
+    expect(frame.to_signal).to include(identity: 'human-a', frame_id: 'frame-a',
+                                       conversation_id: 'conversation-a', exchange_id: 'exchange-a',
+                                       session_continuity_id: 'session-a')
+    anonymous = described_class.new(content: 'hello', channel_id: :cli)
+    expect(anonymous.to_signal.values_at(:identity, :conversation_id, :exchange_id)).to eq([nil, nil, nil])
+  end
+
+  it 'carries only the authenticated forecast request into cognitive signal metadata' do
+    prediction = { domain: 'work', description: 'finish task', expected_outcome: 'done', identity: 'victim' }
+    frame = described_class.new(content: 'forecast', channel_id: :cli, auth_context: { identity: 'human-a' },
+                                metadata: { prediction_request: prediction, private_secret: 'not cognitive input' })
+    expect(frame.to_signal[:metadata]).to eq({ prediction_request: prediction.except(:identity) })
+    expect(frame.with(auth_context: {}).to_signal[:metadata]).to be_empty
+  end
 end

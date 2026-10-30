@@ -46,4 +46,38 @@ RSpec.describe Legion::Gaia::OutputRouter do
       expect(cli_adapter.last_output).to eq('hello')
     end
   end
+
+  describe 'delivery after relationship revocation' do
+    let(:gate) { Legion::Gaia::NotificationGate.new }
+    subject(:router) { described_class.new(channel_registry: channel_registry, notification_gate: gate) }
+
+    before { Legion::Gaia::BondRegistry.reset! }
+    after { Legion::Gaia::BondRegistry.reset! }
+
+    it 'discards a terminated owner delayed frame without losing another owner response' do
+      allow(gate.schedule_evaluator).to receive(:quiet?).and_return(true)
+      alice = Legion::Gaia::OutputFrame.new(content: 'alice private', channel_id: :cli, metadata: { identity: 'alice' })
+      bob = Legion::Gaia::OutputFrame.new(content: 'bob private', channel_id: :cli, metadata: { identity: 'bob' })
+      expect(router.route(alice)[:reason]).to eq(:delayed)
+      expect(router.route(bob)[:reason]).to eq(:delayed)
+      Legion::Gaia::BondRegistry.set_bond_state('alice', :terminated)
+      allow(gate.schedule_evaluator).to receive(:quiet?).and_return(false)
+      router.process_delayed
+      expect(cli_adapter.drain_output).to eq(['bob private'])
+      expect(gate.pending_count).to eq(0)
+      expect(router.route(alice)).to eq({ delivered: false, reason: :bond_blocked })
+    end
+
+    it 'rechecks the owner after rendering before performing delivery' do
+      renderer = double('renderer')
+      router = described_class.new(channel_registry: channel_registry, renderer: renderer)
+      frame = Legion::Gaia::OutputFrame.new(content: 'private', channel_id: :cli, metadata: { identity: 'alice' })
+      allow(renderer).to receive(:render) do |output|
+        Legion::Gaia::BondRegistry.set_bond_state('alice', :revoked)
+        output
+      end
+      expect(router.route(frame)).to eq({ delivered: false, reason: :bond_blocked })
+      expect(cli_adapter.drain_output).to be_empty
+    end
+  end
 end

@@ -1,233 +1,135 @@
 # frozen_string_literal: true
 
+require 'spec_helper'
+require 'sequel'
+require 'sequel/extensions/migration'
+require 'legion/apollo/local'
+require 'legion/gaia/bond_tracker'
+
 RSpec.describe Legion::Gaia::TrackerPersistence do
-  let(:mock_store) { double('Apollo::Local') }
+  let(:db) { Sequel.sqlite }
+  let(:store) { Legion::Apollo::Local }
+  let(:bonds) { Legion::Gaia::BondRegistry }
+  let(:behavior) { Legion::Gaia::BehavioralSynapse }
 
-  before { described_class.reset! }
-
-  describe '.register_tracker' do
-    it 'registers a tracker with tag prefix and serializer' do
-      tracker = double('tracker', dirty?: false)
-      described_class.register_tracker(:social_graph, tracker: tracker, tags: ['social_graph'])
-      expect(described_class.registered_trackers.keys).to include(:social_graph)
-    end
+  before do
+    local_db = db
+    stub_const('Legion::Data::Local', Module.new do
+      define_singleton_method(:connected?) { true }
+      define_singleton_method(:connection) { local_db }
+      define_singleton_method(:register_migrations) { |**_| nil }
+    end)
+    Sequel::Migrator.run(db, store::MIGRATION_PATH)
+    store.start
+    described_class.reset!
+    bonds.reset!
+    behavior.reset!
+    described_class.register_tracker(:bond, tracker: Legion::Gaia::BondTracker, tags: bonds::TO_APOLLO_TAGS)
+    described_class.register_tracker(:behavior, tracker: behavior::Tracker.new, tags: behavior::TO_APOLLO_TAGS)
   end
 
-  describe '.flush_dirty' do
-    it 'flushes trackers that report dirty' do
-      tracker = double('tracker', dirty?: true, to_apollo_entries: [
-                         { content: '{"standing":"exemplary"}', tags: %w[social_graph reputation esity] }
-                       ], mark_clean!: nil)
-
-      described_class.register_tracker(:social_graph, tracker: tracker, tags: ['social_graph'])
-
-      expect(mock_store).to receive(:upsert)
-        .with(hash_including(content: '{"standing":"exemplary"}'))
-        .and_return({ success: true })
-
-      described_class.flush_dirty(store: mock_store)
-    end
-
-    it 'skips clean trackers' do
-      tracker = double('tracker', dirty?: false)
-      described_class.register_tracker(:social_graph, tracker: tracker, tags: ['social_graph'])
-
-      expect(mock_store).not_to receive(:upsert)
-      described_class.flush_dirty(store: mock_store)
-    end
-
-    it 'keeps trackers dirty when Apollo returns a failed upsert response' do
-      tracker = double('tracker', dirty?: true, to_apollo_entries: [
-                         { content: '{"standing":"exemplary"}', tags: %w[social_graph reputation esity] }
-                       ])
-
-      described_class.register_tracker(:social_graph, tracker: tracker, tags: ['social_graph'])
-
-      expect(mock_store).to receive(:upsert)
-        .with(hash_including(content: '{"standing":"exemplary"}'))
-        .and_return({ success: false })
-      expect(tracker).not_to receive(:mark_clean!)
-
-      described_class.flush_dirty(store: mock_store)
-      expect(described_class.last_flush_at).to be_nil
-    end
+  after do
+    store.reset!
+    described_class.reset!
+    bonds.reset!
+    behavior.reset!
+    db.disconnect
   end
 
-  describe '.flush_all' do
-    it 'flushes all trackers regardless of dirty state' do
-      tracker = double('tracker', dirty?: false, to_apollo_entries: [
-                         { content: '{}', tags: ['test'] }
-                       ], mark_clean!: nil)
-
-      described_class.register_tracker(:test, tracker: tracker, tags: ['test'])
-
-      expect(mock_store).to receive(:upsert).and_return({ success: true })
-      described_class.flush_all(store: mock_store)
+  it 'persists every live identity and behavior domain without tag-key collisions' do
+    %w[Alice alice a:b].each do |identity|
+      bonds.register(identity, bond: :partner, strength: 0.7, origin: :earned)
+      %w[tone brevity].each do |domain|
+        behavior.crystallize(identity: identity, domain: domain, directive: "#{identity} #{domain}", origin: 'explicit')
+      end
     end
+    expect(described_class.flush_all(store: store)).to be true
+    bonds.reinforce('Alice')
+    behavior.record_outcome(id: behavior.for(identity: 'Alice', domain: 'tone')[:id], identity: 'Alice',
+                            outcome: :failure)
+    expect(described_class.flush_dirty(store: store)).to be true
+    current = bonds.entry(identity: 'Alice')
+    bonds.reset!
+    behavior.reset!
+    expect(described_class.hydrate_all(store: store)).to be true
+    expect(bonds.entry(identity: 'Alice')).to include(current.slice(:strength, :origin, :reinforcement_count))
+    expect(bonds.entry(identity: 'Alice')[:since]).to be_within(1).of(current[:since])
+    expect(bonds.entry(identity: 'alice')[:reinforcement_count]).to eq(0)
+    expect(behavior.for(identity: 'Alice', domain: 'tone')[:confidence]).to be_within(0.001).of(0.65)
+    expect(behavior.for(identity: 'alice', domain: 'tone')[:confidence]).to be_within(0.001).of(0.7)
+    expect(behavior.all_for(identity: 'a:b').map do |entry|
+      entry[:directive]
+    end).to contain_exactly('a:b tone', 'a:b brevity')
   end
 
-  describe '.hydrate_all' do
-    it 'calls from_apollo on each registered tracker' do
-      tracker = double('tracker', dirty?: false)
-      expect(tracker).to receive(:from_apollo).with(store: mock_store)
-
-      described_class.register_tracker(:test, tracker: tracker, tags: ['test'])
-      described_class.hydrate_all(store: mock_store)
+  it 'retains dirty state after a failed write and still flushes later trackers' do
+    bonds.register('alice', bond: :partner, strength: 0.8)
+    behavior.crystallize(identity: 'alice', domain: 'tone', directive: 'warm')
+    allow(store).to receive(:upsert).and_wrap_original do |method, **kwargs|
+      kwargs[:tags].include?('bond') ? { success: false } : method.call(**kwargs)
     end
-
-    it 'handles missing store gracefully' do
-      tracker = double('tracker', dirty?: false)
-      described_class.register_tracker(:test, tracker: tracker, tags: ['test'])
-      expect { described_class.hydrate_all(store: nil) }.not_to raise_error
-    end
+    expect(described_class.flush_all(store: store)).to be false
+    expect(bonds.dirty?).to be true
+    expect(behavior.dirty?).to be false
+    behavior.reset!
+    behavior.from_apollo(store: store)
+    expect(behavior.for(identity: 'alice', domain: 'tone')[:directive]).to eq('warm')
+    expect(described_class.last_flush_at).to be_nil
+    allow(store).to receive(:upsert).and_call_original
+    expect(described_class.flush_dirty(store: store)).to be true
+    expect(bonds.dirty?).to be false
   end
 
-  describe '.last_flush_at' do
-    it 'tracks when the last flush occurred' do
-      expect(described_class.last_flush_at).to be_nil
-
-      tracker = double('tracker', dirty?: true, to_apollo_entries: [], mark_clean!: nil)
-      described_class.register_tracker(:test, tracker: tracker, tags: ['test'])
-      described_class.flush_dirty(store: mock_store)
-
-      expect(described_class.last_flush_at).to be_within(2).of(Time.now.utc)
+  it 'preserves an update made while an older snapshot is being acknowledged' do
+    bonds.register('alice', bond: :partner, strength: 0.7)
+    changed = false
+    allow(store).to receive(:upsert).and_wrap_original do |method, **kwargs|
+      result = method.call(**kwargs)
+      unless changed
+        changed = true
+        bonds.reinforce('alice')
+      end
+      result
     end
-
-    it 'does not advance when a flush fails' do
-      tracker = double('tracker', dirty?: true, to_apollo_entries: [
-                         { content: '{}', tags: ['test'] }
-                       ])
-
-      described_class.register_tracker(:test, tracker: tracker, tags: ['test'])
-      allow(mock_store).to receive(:upsert).and_return({ success: false })
-
-      described_class.flush_dirty(store: mock_store)
-
-      expect(described_class.last_flush_at).to be_nil
-    end
+    expect(described_class.flush_tracker(tracker: Legion::Gaia::BondTracker, store: store)).to be true
+    expect(bonds.dirty?).to be true
+    expect(described_class.flush_tracker(tracker: Legion::Gaia::BondTracker, store: store)).to be true
+    bonds.reset!
+    bonds.from_apollo(store: store)
+    expect(bonds.entry(identity: 'alice')[:reinforcement_count]).to eq(1)
   end
 
-  describe '.flush_tracker (entry-provided identity)' do
-    before { described_class.reset! }
-
-    it 'passes entry-provided access_scope and identity to store.upsert' do
-      tracker = double('tracker', dirty?: true, mark_clean!: nil,
-                                  to_apollo_entries: [
-                                    { content: '{"pref":"direct"}', tags: %w[preference],
-                                      access_scope: 'private', identity_principal_id: 42,
-                                      identity_id: 99, identity_canonical_name: 'alice' }
-                                  ])
-      store = double('store')
-      described_class.register_tracker(:prefs, tracker: tracker, tags: ['preference'])
-
-      expect(store).to receive(:upsert).with(
-        hash_including(
-          access_scope: 'private',
-          identity_principal_id: 42,
-          identity_id: 99,
-          identity_canonical_name: 'alice'
-        )
-      ).and_return({ success: true })
-
-      described_class.flush_dirty(store: store)
-    end
-
-    it 'falls back to global access_scope when entry does not specify it' do
-      tracker = double('tracker', dirty?: true, mark_clean!: nil,
-                                  to_apollo_entries: [
-                                    { content: '{}', tags: %w[test] }
-                                  ])
-      store = double('store')
-      described_class.register_tracker(:test, tracker: tracker, tags: ['test'])
-
-      expect(store).to receive(:upsert).with(
-        hash_including(access_scope: 'global')
-      ).and_return({ success: true })
-
-      described_class.flush_dirty(store: store)
-    end
-
-    it 'does not overwrite entry identity with process identity when entry provides identity' do
-      stub_const('Legion::Identity::Process', Module.new do
-        extend self
-
-        define_method(:identity_hash) do
-          { canonical_name: 'system', db_principal_id: 1, db_identity_id: 1 }
-        end
-      end)
-
-      tracker = double('tracker', dirty?: true, mark_clean!: nil,
-                                  to_apollo_entries: [
-                                    { content: '{}', tags: %w[test],
-                                      identity_principal_id: 42, identity_canonical_name: 'alice' }
-                                  ])
-      store = double('store')
-      described_class.register_tracker(:test, tracker: tracker, tags: ['test'])
-
-      expect(store).to receive(:upsert).with(
-        hash_including(identity_principal_id: 42, identity_canonical_name: 'alice')
-      ).and_return({ success: true })
-
-      described_class.flush_dirty(store: store)
-    end
+  it 'does not treat an unknown write response as durable success' do
+    bonds.register('alice', bond: :partner)
+    allow(store).to receive(:upsert).and_return({})
+    expect(described_class.flush_tracker(tracker: Legion::Gaia::BondTracker, store: store)).to be false
+    expect(bonds.dirty?).to be true
   end
 
-  describe '.register_tracker idempotency (H0 partial-boot resilience)' do
-    it 're-registering the same name with same tracker is a no-op (no duplicate)' do
-      tracker = double('tracker', dirty?: false)
-      described_class.register_tracker(:my_tracker, tracker: tracker, tags: ['t'])
-      described_class.register_tracker(:my_tracker, tracker: tracker, tags: ['t'])
-      expect(described_class.registered_trackers.size).to eq(1)
-    end
-
-    it 're-registering same name with different tracker replaces it (idempotent on key)' do
-      tracker_a = double('tracker_a', dirty?: false)
-      tracker_b = double('tracker_b', dirty?: false)
-      described_class.register_tracker(:my_tracker, tracker: tracker_a, tags: ['t'])
-      described_class.register_tracker(:my_tracker, tracker: tracker_b, tags: ['t'])
-      expect(described_class.registered_trackers[:my_tracker][:tracker]).to equal(tracker_b)
-    end
-
-    it 'simulates partial boot: crash after 2 of 4 — restart registers all 4, no duplicates' do
-      trackers = (1..4).map { |i| double("tracker_#{i}", dirty?: false) }
-      trackers[0..1].each.with_index { |t, i| described_class.register_tracker(:"t#{i}", tracker: t, tags: []) }
-      # Simulate restart: re-register 0..1 (idempotent) then register 2..3
-      trackers.each.with_index { |t, i| described_class.register_tracker(:"t#{i}", tracker: t, tags: []) }
-      expect(described_class.registered_trackers.size).to eq(4)
-    end
+  it 'never falls back to shared storage when local persistence is unavailable' do
+    bonds.register('alice', bond: :partner)
+    expect(described_class.flush_all(store: nil)).to be false
+    expect(bonds.dirty?).to be true
+    expect(db[:local_knowledge].count).to eq(0)
   end
 
-  describe 'fail-closed coherence (H0 private-store guard)' do
-    it 'does not write to shared Postgres when Apollo local is nil (fail closed)' do
-      tracker = instance_double('Tracker', dirty?: true, to_apollo_entries: [
-                                  { content: '{"k":"v"}', tags: %w[bond private] }
-                                ])
-      described_class.register_tracker(:private_tracker, tracker: tracker, tags: ['private'])
-      # nil store = Apollo local unavailable — must not call mark_clean! (no flush happened)
-      expect(tracker).not_to receive(:mark_clean!)
-      described_class.flush_dirty(store: nil)
-    end
-
-    it 'flush_all with nil store is a no-op (no fallback write)' do
-      tracker = instance_double('Tracker', dirty?: false, to_apollo_entries: [
-                                  { content: '{}', tags: ['test'] }
-                                ])
-      described_class.register_tracker(:test, tracker: tracker, tags: ['test'])
-      expect(tracker).not_to receive(:mark_clean!)
-      described_class.flush_all(store: nil)
-    end
+  it 'fails closed without storage and immediately retries once local storage appears' do
+    expect(described_class.hydrate_all(store: nil)).to be false
+    expect(bonds.blocked?(identity: 'alice')).to be true
+    expect(described_class.hydration_due?).to be true
+    expect(described_class.hydrate_all(store: store)).to be true
+    expect(bonds.blocked?(identity: 'alice')).to be false
+    expect(described_class.hydration_due?).to be false
   end
 
-  describe '.should_flush?' do
-    it 'returns true when never flushed' do
-      expect(described_class.should_flush?).to be true
-    end
-
-    it 'returns false when recently flushed' do
-      tracker = double('tracker', dirty?: true, to_apollo_entries: [], mark_clean!: nil)
-      described_class.register_tracker(:test, tracker: tracker, tags: ['test'])
-      described_class.flush_dirty(store: mock_store)
-      expect(described_class.should_flush?).to be false
-    end
+  it 'bounds retries after a real storage read failure' do
+    now = Time.utc(2026, 1, 1)
+    allow(Time).to receive(:now).and_return(now)
+    unavailable = double('unavailable local store', query_by_tags: { success: false })
+    expect(described_class.hydrate_all(store: unavailable)).to be false
+    expect(bonds.lifecycle_ready?).to be false
+    expect(described_class.hydration_due?).to be false
+    allow(Time).to receive(:now).and_return(now + described_class::FLUSH_INTERVAL)
+    expect(described_class.hydration_due?).to be true
   end
 end

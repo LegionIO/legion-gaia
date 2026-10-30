@@ -1,43 +1,29 @@
 # frozen_string_literal: true
 
 require 'spec_helper'
-require 'legion/gaia/bond_store'
-require 'legion/gaia/bond_registry'
 require 'legion/gaia/bond_tracker'
 
 RSpec.describe Legion::Gaia::BondTracker do
-  before do
-    Legion::Gaia::BondRegistry.reset!
-    described_class.instance_variable_set(:@dirty, false)
-  end
-
+  before { Legion::Gaia::BondRegistry.reset! }
   after { Legion::Gaia::BondRegistry.reset! }
 
-  describe '.dirty?' do
-    it 'returns false by default' do
-      expect(described_class).not_to be_dirty
-    end
+  it 'serializes the live relationship rather than a disconnected evidence accumulator' do
+    Legion::Gaia::BondRegistry.register('alice', bond: :partner, strength: 0.7, origin: :earned)
+    Legion::Gaia::BondRegistry.reinforce('alice')
+    state = Legion::JSON.load(described_class.to_apollo_entries.fetch(0).fetch(:content))
+    expect(state).to include(identity: 'alice', origin: 'earned', reinforcement_count: 1)
+    expect(state[:strength]).to eq(Legion::Gaia::BondRegistry.entry(identity: 'alice')[:strength])
+    expect(described_class.dirty?).to be true
   end
 
-  describe '.dirty!' do
-    it 'sets dirty flag' do
-      described_class.dirty!
-      expect(described_class).to be_dirty
-    end
-  end
-
-  describe '.mark_clean!' do
-    it 'clears dirty flag' do
-      described_class.dirty!
-      described_class.mark_clean!
-      expect(described_class).not_to be_dirty
-    end
-  end
-
-  describe '.to_apollo_entries' do
-    it 'returns empty array when no dirty stores' do
-      entries = described_class.to_apollo_entries
-      expect(entries).to be_empty
-    end
+  it 'does not clear live changes while serializing or acknowledging an older revision' do
+    Legion::Gaia::BondRegistry.register('alice', bond: :partner, strength: 0.7)
+    revision = described_class.dirty_revision
+    described_class.to_apollo_entries
+    Legion::Gaia::BondRegistry.reinforce('alice')
+    described_class.mark_clean!(revision: revision)
+    expect(described_class.dirty?).to be true
+    described_class.mark_clean!(revision: described_class.dirty_revision)
+    expect(described_class.dirty?).to be false
   end
 end
