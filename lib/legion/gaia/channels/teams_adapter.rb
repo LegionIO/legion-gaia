@@ -39,7 +39,7 @@ module Legion
           log.info("TeamsAdapter presence updated status=#{status}")
         end
 
-        def translate_inbound(activity)
+        def translate_inbound(activity, auth_context: {})
           return nil unless activity.is_a?(Hash)
 
           identity = Teams::BotFrameworkAuth.extract_identity(activity)
@@ -56,13 +56,15 @@ module Legion
             content_type: detect_content_type(activity),
             channel_capabilities: capabilities_for_device(activity),
             device_context: build_device_context(activity),
-            auth_context: build_auth_context(identity, activity),
+            auth_context: build_auth_context(identity, activity).merge(auth_context),
             metadata: {
               source_type: :human_direct,
               salience: 0.9,
               **build_intent_metadata(text.strip),
               conversation_id: conversation['id'] || conversation[:id],
+              tenant_id: identity[:tenant_id],
               activity_id: activity['id'] || activity[:id],
+              exchange_id: activity['id'] || activity[:id],
               activity_type: activity['type'] || activity[:type]
             }
           )
@@ -77,9 +79,9 @@ module Legion
           end
         end
 
-        def deliver(rendered_content, conversation_id: nil)
+        def deliver(rendered_content, conversation_id: nil, tenant_id: nil)
           resolved_id = conversation_id || @default_conversation_id
-          ref = resolved_id && conversation_store.lookup(resolved_id)
+          ref = resolved_id && conversation_store.lookup(resolved_id, tenant_id: tenant_id)
           unless ref
             log.error("TeamsAdapter deliver failed conversation_id=#{resolved_id} error=no_conversation_reference")
             return { error: :no_conversation_reference }
@@ -93,19 +95,21 @@ module Legion
           user_id = output_frame.metadata[:target_user]
           return { error: :no_target_user } unless user_id
 
-          conversation_id = resolve_proactive_conversation(user_id)
+          tenant_id = output_frame.metadata[:tenant_id] || conversation_store.lookup_user_profile(user_id)&.tenant_id
+          conversation_id = resolve_proactive_conversation(user_id, tenant_id: tenant_id)
           return conversation_id if conversation_id.is_a?(Hash) && conversation_id[:error]
 
           rendered = translate_outbound(output_frame)
           log.info("TeamsAdapter proactive delivery user_id=#{user_id} conversation_id=#{conversation_id}")
-          deliver(rendered, conversation_id: conversation_id)
+          deliver(rendered, conversation_id: conversation_id, tenant_id: tenant_id)
         end
 
         def create_proactive_conversation(user_id:, tenant_id: nil)
-          profile = conversation_store.lookup_user_profile(user_id)
+          profile = conversation_store.lookup_user_profile(user_id, tenant_id: tenant_id)
           service_url = profile&.service_url
           resolved_tenant = tenant_id || profile&.tenant_id
           return { error: :no_service_url } unless service_url
+          return { error: :no_target_tenant } if resolved_tenant.to_s.empty?
           return { error: :bot_runner_not_available } unless bot_runner_available?
 
           bot = Legion::Extensions::MicrosoftTeams::Client.new
@@ -121,7 +125,9 @@ module Legion
           conversation_store.store(
             conversation_id: conversation_id,
             service_url: service_url,
-            tenant_id: resolved_tenant
+            tenant_id: resolved_tenant,
+            user_id: user_id,
+            conversation_type: 'personal'
           )
           log.info("TeamsAdapter created proactive conversation user_id=#{user_id} conversation_id=#{conversation_id}")
           conversation_id
@@ -219,8 +225,8 @@ module Legion
           defined?(Legion::Extensions::MicrosoftTeams::Client)
         end
 
-        def resolve_proactive_conversation(user_id)
-          existing = conversation_store.conversations_for_user(user_id)
+        def resolve_proactive_conversation(user_id, tenant_id: nil)
+          existing = conversation_store.conversations_for_user(user_id, tenant_id: tenant_id)
           unless existing.empty?
             log.debug(
               'TeamsAdapter reused proactive conversation ' \
@@ -229,7 +235,7 @@ module Legion
             return existing.first.conversation_id
           end
 
-          create_proactive_conversation(user_id: user_id)
+          create_proactive_conversation(user_id: user_id, tenant_id: tenant_id)
         end
       end
     end

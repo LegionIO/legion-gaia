@@ -11,7 +11,7 @@ RSpec.describe Legion::Gaia::Channels::TeamsAdapter do
       'serviceUrl' => 'https://smba.trafficmanager.net/teams/',
       'from' => { 'id' => 'user-1', 'name' => 'Alice', 'aadObjectId' => 'oid-1' },
       'recipient' => { 'id' => 'bot-1', 'name' => 'MyBot' },
-      'conversation' => { 'id' => 'conv-1', 'tenantId' => 'tid-1' },
+      'conversation' => { 'id' => 'conv-1', 'tenantId' => 'tid-1', 'conversationType' => 'personal' },
       'channelData' => { 'tenant' => { 'id' => 'tid-1' }, 'clientInfo' => { 'platform' => 'Windows' } },
       'entities' => []
     }
@@ -64,6 +64,14 @@ RSpec.describe Legion::Gaia::Channels::TeamsAdapter do
       expect(frame.metadata[:conversation_id]).to eq('conv-1')
       expect(frame.metadata[:activity_id]).to eq('activity-1')
       expect(frame.metadata[:activity_type]).to eq('message')
+    end
+
+    it 'scopes the native identity and preserves real exchange correlation' do
+      frame = adapter.translate_inbound(base_activity)
+      expect(frame.to_signal).to include(identity: 'teams:tid-1:oid-1',
+                                         conversation_id: 'conv-1', exchange_id: 'activity-1')
+      mapped = adapter.translate_inbound(base_activity, auth_context: { principal_id: 'principal-a' })
+      expect(mapped.authenticated_identity).to eq('principal-a')
     end
 
     it 'strips bot mention from text' do
@@ -173,15 +181,12 @@ RSpec.describe Legion::Gaia::Channels::TeamsAdapter do
       expect(result[:error]).to eq(:bot_runner_not_available)
     end
 
-    it 'uses provided tenant_id when no profile tenant exists' do
-      # store profile without tenant
+    it 'does not reuse an unscoped user profile for an arbitrary tenant' do
       adapter.conversation_store.store_user_profile(
-        user_id: 'u-no-tenant',
-        service_url: 'https://smba.trafficmanager.net/teams/'
+        user_id: 'u-no-tenant', service_url: 'https://smba.trafficmanager.net/teams/'
       )
       result = adapter.create_proactive_conversation(user_id: 'u-no-tenant', tenant_id: 'tid-override')
-      # bot runner not available in test context
-      expect(result[:error]).to eq(:bot_runner_not_available)
+      expect(result[:error]).to eq(:no_service_url)
     end
   end
 
@@ -228,8 +233,25 @@ RSpec.describe Legion::Gaia::Channels::TeamsAdapter do
       )
       # Bot runner not available — falls through to conversation lookup then delivery error
       result = adapter.deliver_proactive(frame)
-      # conv-1 exists for tid-1, user-1 profile has tenant tid-1 so conv found
+      # Only the exact user's personal conversation is eligible.
       expect(result[:error]).to eq(:bot_runner_not_available)
+    end
+
+    it 'delivers to the requested user rather than a peer in the same tenant' do
+      adapter.translate_inbound(base_activity)
+      adapter.translate_inbound(base_activity.merge(
+                                  'from' => { 'id' => 'user-2', 'aadObjectId' => 'oid-2' },
+                                  'conversation' => { 'id' => 'conv-2', 'tenantId' => 'tid-1',
+                                                      'conversationType' => 'personal' }
+                                ))
+      client = double('TeamsClient')
+      stub_const('Legion::Extensions::MicrosoftTeams::Client', double('TeamsClientClass', new: client))
+      expect(client).to receive(:send_text).with(service_url: 'https://smba.trafficmanager.net/teams/',
+                                                 conversation_id: 'conv-2', text: 'private')
+                                           .and_return({ delivered: true })
+      frame = Legion::Gaia::OutputFrame.new(content: 'private', channel_id: :teams,
+                                            metadata: { target_user: 'user-2', tenant_id: 'tid-1' })
+      expect(adapter.deliver_proactive(frame)).to eq({ delivered: true })
     end
   end
 end

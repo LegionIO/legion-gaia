@@ -33,9 +33,14 @@ module Legion
           @default_webhook = default_webhook
         end
 
-        def translate_inbound(event)
+        def translate_inbound(event, auth_context: {})
           return nil unless event.is_a?(Hash)
 
+          envelope = event
+          event = envelope['event'] || envelope[:event] || envelope
+          return nil unless event.is_a?(Hash)
+
+          team_id = event['team'] || event[:team] || envelope['team_id'] || envelope[:team_id]
           user = event['user'] || event[:user]
           InputFrame.new(
             content: strip_bot_mention(event['text'] || event[:text] || ''),
@@ -43,7 +48,7 @@ module Legion
             content_type: :text,
             channel_capabilities: CAPABILITIES,
             device_context: { platform: :desktop, input_method: :keyboard },
-            auth_context: { user_id: user, team_id: event['team'] || event[:team], identity: user },
+            auth_context: { user_id: user, team_id: team_id }.merge(auth_context),
             metadata: build_slack_metadata(event)
           )
         end
@@ -60,6 +65,8 @@ module Legion
         end
 
         def deliver(rendered_content, webhook: nil)
+          return deliver_via_api(rendered_content) if rendered_content.is_a?(Hash) && rendered_content[:channel]
+
           target_webhook = webhook || @default_webhook
           log.info(
             'SlackAdapter delivering ' \
@@ -122,6 +129,8 @@ module Legion
             slack_channel: event['channel'] || event[:channel],
             slack_ts: event['ts'] || event[:ts],
             slack_thread_ts: event['thread_ts'] || event[:thread_ts],
+            conversation_id: event['thread_ts'] || event[:thread_ts] || event['channel'] || event[:channel],
+            exchange_id: event['ts'] || event[:ts],
             event_type: event['type'] || event[:type]
           }
         end
@@ -146,15 +155,17 @@ module Legion
           return { error: :no_bot_token } unless @bot_token
 
           text = content.is_a?(Hash) ? content[:text] : content.to_s
-          channel = (content.is_a?(Hash) && content[:channel]) || @channel_id.to_s
-          post_to_slack_api(channel: channel, text: text)
+          channel = content.is_a?(Hash) && content[:channel]
+          return { error: :no_target_channel } unless channel
+
+          post_to_slack_api(channel: channel, text: text, thread_ts: content[:thread_ts])
         rescue StandardError => e
           handle_exception(e, level: :warn, operation: 'gaia.channels.slack_adapter.deliver_via_api',
                               channel: channel)
           { error: :network_error, message: e.message }
         end
 
-        def post_to_slack_api(channel:, text:)
+        def post_to_slack_api(channel:, text:, thread_ts: nil)
           uri = URI('https://slack.com/api/chat.postMessage')
           http = Net::HTTP.new(uri.host, uri.port)
           http.use_ssl = true
@@ -162,7 +173,7 @@ module Legion
           request = Net::HTTP::Post.new(uri.path)
           request['Authorization'] = "Bearer #{@bot_token}"
           request['Content-Type'] = 'application/json'
-          request.body = ::JSON.generate({ channel: channel, text: text })
+          request.body = ::JSON.generate({ channel: channel, text: text, thread_ts: thread_ts }.compact)
 
           response = http.request(request)
           parsed = ::JSON.parse(response.body, symbolize_names: true)

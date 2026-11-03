@@ -62,7 +62,8 @@ module Legion
               user_id: from['id'] || from[:id],
               user_name: from['name'] || from[:name],
               tenant_id: activity.dig('channelData', 'tenant', 'id') ||
-                activity.dig(:channelData, :tenant, :id)
+                activity.dig(:channelData, :tenant, :id) ||
+                activity.dig('conversation', 'tenantId') || activity.dig(:conversation, :tenantId)
             }
           end
 

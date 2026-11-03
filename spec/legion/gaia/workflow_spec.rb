@@ -244,8 +244,8 @@ RSpec.describe Legion::Gaia::Workflow do
 
     it 'can rollback from staging' do
       inst = Legion::Gaia::Workflow::Instance.new(definition: definition)
-      inst.transition!(:testing,    build_success: true)
-      inst.transition!(:staging,    tests_passed: true)
+      inst.transition!(:testing, build_success: true)
+      inst.transition!(:staging, tests_passed: true)
       inst.transition!(:rolled_back)
       expect(inst.current_state).to eq(:rolled_back)
     end

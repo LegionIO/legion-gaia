@@ -89,46 +89,42 @@ RSpec.describe Legion::Gaia::ChannelRegistry do
       expect(result[:channel_id]).to eq(:cli)
     end
 
-    it 'passes conversation_id to adapters that accept it' do
-      teams_adapter = Legion::Gaia::Channels::TeamsAdapter.new
-      teams_adapter.start
-      frame = Legion::Gaia::OutputFrame.new(
-        content: 'hello',
-        channel_id: :teams,
-        metadata: { conversation_id: 'conv-1' }
-      )
-
-      registry.register(teams_adapter)
-      allow(teams_adapter).to receive(:translate_outbound).with(frame).and_return({ type: 'text', text: 'hello' })
-      allow(teams_adapter).to receive(:deliver).with({ type: 'text', text: 'hello' },
-                                                     conversation_id: 'conv-1').and_return({ delivered: true })
-
-      result = registry.deliver(frame)
-      expect(result[:delivered]).to be true
+    it 'delivers a Teams response only to its explicit tenant and conversation' do
+      teams = Legion::Gaia::Channels::TeamsAdapter.new(default_conversation_id: 'wrong-destination')
+      teams.start
+      teams.conversation_store.store(conversation_id: 'conv-a', tenant_id: 'tenant-a', service_url: 'https://tenant-a.example')
+      teams.conversation_store.store(conversation_id: 'conv-a', tenant_id: 'tenant-b', service_url: 'https://tenant-b.example')
+      registry.register(teams)
+      client = double('TeamsClient')
+      stub_const('Legion::Extensions::MicrosoftTeams::Client', double('TeamsClientClass', new: client))
+      expect(client).to receive(:send_text).with(service_url: 'https://tenant-b.example',
+                                                 conversation_id: 'conv-a', text: 'private')
+                                           .and_return({ delivered: true })
+      frame = Legion::Gaia::OutputFrame.new(content: 'private', channel_id: :teams,
+                                            metadata: { conversation_id: 'conv-a', tenant_id: 'tenant-b' })
+      expect(registry.deliver(frame)[:delivered]).to be true
+      missing = Legion::Gaia::OutputFrame.new(content: 'private', channel_id: :teams)
+      expect(registry.deliver(missing)).to include(delivered: false, error: :no_target_conversation)
+      unscoped = missing.with(metadata: { conversation_id: 'conv-a' })
+      expect(registry.deliver(unscoped)).to include(delivered: false, error: :no_target_tenant)
     end
 
-    it 'caches conversation_id signature detection per adapter class' do
-      adapter_class = Class.new do
-        def channel_id = :cached
-        def started? = true
-        def translate_outbound(frame) = frame.content
-
-        def deliver(rendered,
-                    conversation_id: nil)
-          { delivered: true, rendered: rendered, conversation_id: conversation_id }
-        end
+    it 'routes an actual proactive frame to its user rather than the channel default' do
+      teams = Legion::Gaia::Channels::TeamsAdapter.new(default_conversation_id: 'wrong-destination')
+      teams.start
+      %w[alice bob].each do |user|
+        teams.conversation_store.store(conversation_id: "#{user}-dm", tenant_id: 'tenant', user_id: user,
+                                       service_url: 'https://tenant.example', conversation_type: 'personal')
       end
-      adapter = adapter_class.new
-      frame = Legion::Gaia::OutputFrame.new(
-        content: 'hello',
-        channel_id: :cached,
-        metadata: { conversation_id: 'conv-1' }
-      )
-
-      registry.register(adapter)
-      expect(adapter_class).to receive(:instance_method).with(:deliver).once.and_call_original
-
-      2.times { expect(registry.deliver(frame)[:delivered]).to be true }
+      registry.register(teams)
+      client = double('TeamsClient')
+      stub_const('Legion::Extensions::MicrosoftTeams::Client', double('TeamsClientClass', new: client))
+      expect(client).to receive(:send_text).with(service_url: 'https://tenant.example',
+                                                 conversation_id: 'bob-dm', text: 'private')
+                                           .and_return({ delivered: true })
+      frame = Legion::Gaia::OutputFrame.new(content: 'private', channel_id: :teams,
+                                            metadata: { proactive: true, target_user: 'bob', tenant_id: 'tenant' })
+      expect(registry.deliver(frame)[:delivered]).to be true
     end
   end
 

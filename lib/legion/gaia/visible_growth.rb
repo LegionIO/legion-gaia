@@ -15,7 +15,7 @@ module Legion
         observe: 'noticing patterns',
         filter: 'adjusting my approach',
         transform: 'actively shaping my responses',
-        autonomous: 'acting on this without asking'
+        autonomous: 'applying this response preference consistently'
       }.freeze
 
       DOMAIN_PHRASES = {
@@ -36,7 +36,9 @@ module Legion
       # @param old_mode [Symbol]
       # @return [String, nil] acknowledgment message, or nil if already fired
       def milestone_acknowledgment(identity:, domain:, new_mode:, old_mode:)
-        key = "#{identity}:#{domain}:#{old_mode}->#{new_mode}"
+        return nil if identity.to_s.empty?
+
+        key = [identity.to_s, domain.to_s, old_mode.to_s, new_mode.to_s]
         @mutex.synchronize do
           return nil if @acknowledged_milestones.include?(key)
 
@@ -54,10 +56,12 @@ module Legion
 
       # Called when pain fires (3 consecutive failures → dampened status).
       #
-      # @param identity [String] (unused, reserved for future per-identity routing)
+      # @param identity [String] partner receiving the acknowledgment
       # @param domain   [String]
       # @return [String]
-      def pain_revert_acknowledgment(domain:, identity: nil) # rubocop:disable Lint/UnusedMethodArgument
+      def pain_revert_acknowledgment(domain:, identity:)
+        return nil if identity.to_s.empty?
+
         phrase = domain_phrase(domain)
         "I've been getting #{phrase} wrong — I've reset that. What works for you?"
       rescue StandardError => e
@@ -70,13 +74,15 @@ module Legion
       # @param identity [String]
       # @return [String, nil]
       def graduation_acknowledgment(identity:)
+        return nil if identity.to_s.empty?
+
         @mutex.synchronize do
           return nil if @graduated_identities.include?(identity.to_s)
 
           @graduated_identities.add(identity.to_s)
         end
 
-        "I feel like I know how you work now — I'll ask less and do more. Correct me if I drift."
+        "I've had more chances to learn how we work together. Please keep correcting assumptions that don't fit."
       rescue StandardError => e
         VisibleGrowth.log_quietly(e, 'visible_growth.graduation_acknowledgment')
         nil
@@ -88,6 +94,8 @@ module Legion
       # @param identity [String]
       # @return [String, nil] content string for OutputFrame, or nil if already sent
       def onboarding_frame(identity:)
+        return nil if identity.to_s.empty?
+
         @mutex.synchronize do
           return nil if @onboarded_identities.include?(identity.to_s)
 
@@ -107,10 +115,12 @@ module Legion
       # @param domain   [String, nil] current exchange domain, if known
       # @return [String, nil]
       def epistemic_qualifier(identity:, domain: nil)
-        imprint_active = imprint_active_for?
+        return nil if identity.to_s.empty?
+
+        imprint_active = imprint_active_for?(identity: identity)
         synapse = domain ? Legion::Gaia::BehavioralSynapse.for(identity: identity.to_s, domain: domain.to_s) : nil
 
-        return imprint_qualifier if imprint_active
+        return imprint_qualifier(identity: identity) if imprint_active
         return observe_qualifier(domain) if synapse_observe_tier?(synapse)
 
         nil
@@ -134,28 +144,18 @@ module Legion
         DOMAIN_PHRASES.fetch(domain.to_s, domain.to_s.tr('_', ' '))
       end
 
-      def imprint_active_for?
-        return false unless defined?(Legion::Extensions::Coldstart)
-        return false unless Legion::Extensions::Coldstart.respond_to?(:connected?) &&
-                            Legion::Extensions::Coldstart.connected?
-
-        bootstrap = Legion::Extensions::Coldstart::Helpers::Bootstrap.instance
-        bootstrap.respond_to?(:imprint_active?) && bootstrap.imprint_active?
-      rescue StandardError
-        false
+      def imprint_active_for?(identity:)
+        state = Legion::Gaia::Disclosure.fetch_imprint_state(identity: identity.to_s)
+        state.is_a?(Hash) && state[:active] == true
       end
 
-      def imprint_observation_count
-        return nil unless defined?(Legion::Extensions::Coldstart)
-
-        bootstrap = Legion::Extensions::Coldstart::Helpers::Bootstrap.instance
-        bootstrap.respond_to?(:observation_count) ? bootstrap.observation_count : nil
-      rescue StandardError
-        nil
+      def imprint_observation_count(identity:)
+        state = Legion::Gaia::Disclosure.fetch_imprint_state(identity: identity.to_s)
+        state[:observations_count] if state.is_a?(Hash)
       end
 
-      def imprint_qualifier
-        count = imprint_observation_count
+      def imprint_qualifier(identity:)
+        count = imprint_observation_count(identity: identity)
         return "I'm still figuring out how you like things — was this right?" if count.nil? || count < 5
 
         "I'm still learning your style — let me know if this missed."
@@ -175,8 +175,9 @@ module Legion
         lines = [
           "I'll be learning as we work together — what you prefer, how you like information, " \
           'what lands and what misses.',
-          'Everything stays on this machine — nothing is sent anywhere else.',
-          'You can end this at any time — your data goes with it, completely.'
+          'Selected context may be sent to the configured model provider; ' \
+          'storage and retention depend on this deployment.',
+          'You can ask to inspect or end this relationship. Deletion reports cover the stores GAIA can actually erase.'
         ]
 
         bond = Legion::Gaia::BondRegistry.bond(identity.to_s)
@@ -185,13 +186,13 @@ module Legion
         lines.join(' ')
       rescue StandardError => e
         VisibleGrowth.log_quietly(e, 'visible_growth.build_onboarding_text')
-        "I'm learning as we go. Everything stays local. You can end this any time."
+        "I'm learning as we go. You can inspect what I use, correct it, or ask to end this relationship."
       end
 
       def log_quietly(exception, operation)
         return unless defined?(Legion::Logging)
 
-        Legion::Logging.debug("[gaia] #{operation} rescued: #{exception.class}: #{exception.message}")
+        Legion::Logging.debug("[gaia] #{operation} unavailable: #{exception.class}")
       end
 
       module_function :domain_phrase, :imprint_active_for?, :imprint_observation_count,

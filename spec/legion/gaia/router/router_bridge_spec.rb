@@ -57,6 +57,14 @@ RSpec.describe Legion::Gaia::Router::RouterBridge do
         expect(result[:worker_id]).to eq('worker-a')
         expect(result[:transport]).to eq(:mock)
       end
+
+      it 'routes by explicit principal rather than a conflicting alias' do
+        bridge.worker_routing.register(identity: 'principal-a', worker_id: 'worker-a')
+        bridge.worker_routing.register(identity: 'alias', worker_id: 'worker-b')
+        frame = Legion::Gaia::InputFrame.new(content: 'private', channel_id: :cli,
+                                             principal_id: 'principal-a', auth_context: { identity: 'alias' })
+        expect(bridge.route_inbound(frame)[:worker_id]).to eq('worker-a')
+      end
     end
   end
 
@@ -90,11 +98,13 @@ RSpec.describe Legion::Gaia::Router::RouterBridge do
                                           channel_id: :teams,
                                           started?: true)
         channel_registry.register(failing_adapter)
-        failing_payload = payload.merge(channel_id: :teams, metadata: { conversation_id: 'conv-1' })
+        failing_payload = payload.merge(channel_id: :teams,
+                                        metadata: { conversation_id: 'conv-1',
+                                                    tenant_id: 'tenant' })
 
         allow(failing_adapter).to receive(:translate_outbound).and_return({ type: 'text', text: 'response text' })
         allow(failing_adapter).to receive(:deliver).with({ type: 'text', text: 'response text' },
-                                                         conversation_id: 'conv-1').and_return(
+                                                         conversation_id: 'conv-1', tenant_id: 'tenant').and_return(
                                                            { error: :no_conversation_reference }
                                                          )
 

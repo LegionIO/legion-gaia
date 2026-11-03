@@ -12,6 +12,9 @@ module Legion
       # @return [Hash]
       def report(identity:)
         identity_str = identity.to_s
+        return { available: false, reason: :missing_identity } if identity_str.empty?
+
+        local_store_available = defined?(Legion::Apollo::Local) && Legion::Apollo::Local.respond_to?(:started?) && Legion::Apollo::Local.started?
 
         {
           identity: identity_str,
@@ -19,17 +22,24 @@ module Legion
           behavioral_synapses: fetch_behavioral_synapses(identity_str),
           preferences: fetch_preferences(identity_str),
           calibration_weights: fetch_calibration_weights(identity_str),
-          imprint_state: fetch_imprint_state,
+          imprint_state: fetch_imprint_state(identity: identity_str),
           prediction_accuracy: fetch_prediction_accuracy(identity_str),
-          data_locality: 'All data is stored locally on this node. Nothing leaves this machine.',
-          termination_available: true
+          attribution: Legion::Gaia::ResponseAttribution.status_for(identity: identity_str),
+          data_locality: {
+            partner_store: local_store_available ? :apollo_local : :memory_only,
+            external_processing: :deployment_dependent,
+            explanation: 'Selected partner context may be sent to the configured model provider. ' \
+                         'Local persistence does not establish provider retention or backup deletion.'
+          },
+          termination_available: defined?(Legion::Gaia::DeathProtocol) == 'constant',
+          deletion_scope: :gaia_managed_state
         }
       end
 
       # --- private section ---
 
       def fetch_bond_state(identity)
-        entry = Legion::Gaia::BondRegistry.instance_variable_get(:@bonds)[identity]
+        entry = Legion::Gaia::BondRegistry.entry(identity: identity)
         return nil unless entry
 
         {
@@ -72,48 +82,43 @@ module Legion
       def fetch_preferences(identity)
         return nil unless defined?(Legion::Extensions::Mesh::Helpers::PreferenceProfile)
 
-        result = Legion::Extensions::Mesh::Helpers::PreferenceProfile.for_owner(owner_id: identity)
-        return nil unless result.is_a?(Hash) && result[:directives].is_a?(Array)
-
-        result[:directives]
+        Legion::Gaia::PartnerModel.preferences_for(identity: identity)
       rescue StandardError => e
         Legion::Gaia::Disclosure.handle_exception_quietly(e, 'disclosure.fetch_preferences')
         nil
       end
 
       def fetch_calibration_weights(identity)
-        return nil unless defined?(Legion::Extensions::Agentic::Social::Calibration::Runners::Calibration)
+        return nil unless Legion::Gaia.respond_to?(:calibration_runner_for)
 
-        runner = Object.new
-        runner.extend(Legion::Extensions::Agentic::Social::Calibration::Runners::Calibration)
-        result = runner.respond_to?(:calibration_weights_for) ? runner.calibration_weights_for(identity: identity) : nil
-        result.is_a?(Hash) ? result : nil
+        runner = Legion::Gaia.calibration_runner_for(identity: identity)
+        return nil unless runner.respond_to?(:calibration_weights)
+
+        result = runner.calibration_weights(identity: identity)
+        result.is_a?(Hash) && result[:success] == true ? result[:weights] : nil
       rescue StandardError => e
         Legion::Gaia::Disclosure.handle_exception_quietly(e, 'disclosure.fetch_calibration_weights')
         nil
       end
 
-      def fetch_imprint_state
-        return nil unless defined?(Legion::Extensions::Coldstart)
-        return nil unless Legion::Extensions::Coldstart.respond_to?(:connected?) &&
-                          Legion::Extensions::Coldstart.connected?
-
-        bootstrap = Legion::Extensions::Coldstart::Helpers::Bootstrap.instance
-        {
-          layer: bootstrap.respond_to?(:current_layer) ? bootstrap.current_layer : nil,
-          observations_count: bootstrap.respond_to?(:observation_count) ? bootstrap.observation_count : nil,
-          active: bootstrap.respond_to?(:imprint_active?) ? bootstrap.imprint_active? : nil
-        }
+      def fetch_imprint_state(identity:)
+        # The published Coldstart singleton is node-scoped, not evidence about this
+        # human. Only an explicitly identity-aware live implementation can report it.
+        runners = Legion::Gaia.registry&.runner_instances_for(identity: identity) || {}
+        runner = runners.values.find do |candidate|
+          candidate.respond_to?(:imprint_state_for)
+        end
+        runner&.imprint_state_for(identity: identity)
       rescue StandardError => e
         Legion::Gaia::Disclosure.handle_exception_quietly(e, 'disclosure.fetch_imprint_state')
         nil
       end
 
       def fetch_prediction_accuracy(identity)
-        return nil unless defined?(Legion::Extensions::AgenticInference)
-        return nil unless Legion::Extensions::AgenticInference.respond_to?(:accuracy_for)
+        runner = Legion::Gaia::Anticipation.inference_runner(identity: identity)
+        return nil unless runner.respond_to?(:prediction_accuracy)
 
-        Legion::Extensions::AgenticInference.accuracy_for(identity: identity)
+        runner.prediction_accuracy(identity: identity)
       rescue StandardError => e
         Legion::Gaia::Disclosure.handle_exception_quietly(e, 'disclosure.fetch_prediction_accuracy')
         nil
@@ -122,7 +127,7 @@ module Legion
       def handle_exception_quietly(exception, operation)
         return unless defined?(Legion::Logging)
 
-        Legion::Logging.debug("[gaia] #{operation} soft-guarded: #{exception.class}: #{exception.message}")
+        Legion::Logging.debug("[gaia] #{operation} unavailable: #{exception.class}")
       end
 
       module_function :fetch_bond_state, :fetch_behavioral_synapses, :fetch_preferences,

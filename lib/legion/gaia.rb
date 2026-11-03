@@ -32,6 +32,7 @@ require 'legion/gaia/proactive'
 require 'legion/gaia/offline_handler'
 require 'legion/gaia/proactive_dispatcher'
 require 'legion/gaia/bond_registry'
+require 'legion/gaia/bond_tracker'
 require 'legion/gaia/death_protocol'
 require 'legion/gaia/behavioral_synapse'
 require 'legion/gaia/gut'
@@ -40,6 +41,8 @@ require 'legion/gaia/partner_model'
 require 'legion/gaia/disclosure'
 require 'legion/gaia/visible_growth'
 require 'legion/gaia/tracker_persistence'
+require 'legion/gaia/response_attribution'
+require 'legion/gaia/calibration_tracker'
 require 'legion/gaia/router'
 
 module Legion
@@ -67,6 +70,9 @@ module Legion
       end
 
       def boot(mode: nil)
+        return status if started?
+        return { started: false, reason: :shutting_down } if heartbeat_mutex.synchronize { @shutdown_pending }
+
         @mode = mode || (settings&.dig(:router, :mode) ? :router : :agent)
         @shutting_down = false
         @active_heartbeats = 0
@@ -95,46 +101,19 @@ module Legion
 
       def shutdown
         log.info('Legion::Gaia shutting down')
+        deferred = heartbeat_mutex.synchronize do
+          return { stopped: false, quiescing: true } if @shutdown_pending
 
-        heartbeat_mutex.synchronize do
+          @shutdown_pending = true
           @shutting_down = true
           @started = false
           @tick_unavailable_warned = false
           wait_for_active_heartbeats
+          @deferred_shutdown = @active_heartbeats.to_i.positive?
         end
+        return { stopped: false, quiescing: true } if deferred
 
-        settings_hash = settings
-        settings_hash[:connected] = false if settings_hash
-
-        flush_trackers_on_shutdown
-        @router_bridge&.stop
-        @agent_bridge&.stop
-        @channel_registry&.stop_all
-        @sensory_buffer = nil
-        @registry = nil
-        @channel_registry = nil
-        @output_router = nil
-        @session_store = nil
-        @notification_gate = nil
-        @router_bridge = nil
-        @agent_bridge = nil
-        @partner_observations = nil
-        @partner_absence_misses = 0
-        @last_absence_signal_at = nil
-        @absence_pattern_cache = nil
-        @absence_pattern_checked_at = nil
-        @last_valences = nil
-        @last_response_at = nil
-        @last_applied = nil
-        @correction_counts = nil
-        @tick_history = nil
-        @tick_count = nil
-        @started_at = nil
-        @active_heartbeats = 0
-        @quiescing_phase_handlers_cache = nil
-        @pending_growth_frames = nil
-
-        log.info('Legion::Gaia shut down')
+        finalize_shutdown
       end
 
       def started?
@@ -157,53 +136,9 @@ module Legion
         return { error: :not_started } unless begin_heartbeat
 
         begin
-          signals = @sensory_buffer.drain
-          @registry.ensure_wired
-
-          tick_host = @registry.tick_host
-          unless tick_host
-            unless @tick_unavailable_warned
-              log.warn('[gaia] lex-tick not available, will retry next heartbeat')
-              @tick_unavailable_warned = true
-            end
-            return { error: :no_tick_extension }
+          tick_execution_mutex.synchronize do
+            TrackerPersistence::WRITE_LOCK.synchronize { execute_heartbeat }
           end
-          @tick_unavailable_warned = false if @tick_unavailable_warned
-
-          phase_handlers = quiescing_phase_handlers(@registry.phase_handlers)
-
-          log.debug("[gaia] heartbeat signals=#{signals.size} wired_phases=#{phase_handlers.size}")
-
-          observations = @partner_observations.dup
-          @partner_observations = []
-
-          result = tick_host.execute_tick(signals: signals, phase_handlers: phase_handlers,
-                                          partner_observations: observations)
-
-          @tick_history&.record(result)
-          @tick_count = (@tick_count || 0) + 1
-
-          if result.is_a?(Hash) && result[:results]
-            valence_result = result[:results][:emotional_evaluation]
-            @last_valences = [valence_result[:valence]] if valence_result.is_a?(Hash) && valence_result[:valence]
-            tick_host.last_tick_result = result
-            PhaseWiring.capture_tick_results(result[:results])
-            log_cognitive_markers(result, signals: signals, observations: observations)
-          end
-
-          check_partner_absence(observations, phase_handlers)
-
-          feed_notification_gate(result)
-          @output_router&.process_delayed
-
-          maybe_flush_trackers
-
-          if result.is_a?(Hash) && result[:results]
-            process_dream_proactive(result[:results])
-            try_dispatch_pending
-          end
-
-          result
         ensure
           finish_heartbeat
         end
@@ -212,33 +147,44 @@ module Legion
       def ingest(input_frame)
         return { ingested: false, reason: :not_started } unless started?
 
-        identity = extract_identity(input_frame)
-        if identity && (BondRegistry.terminating?(identity.to_s) || BondRegistry.terminated?(identity.to_s))
-          log.warn("[gaia] rejected ingest for terminated/terminating identity=#{identity}")
-          return { ingested: false, reason: :identity_terminated }
+        TrackerPersistence::WRITE_LOCK.synchronize do
+          return { ingested: false, reason: :not_started } unless started?
+
+          identity = input_frame.authenticated_identity
+          return { ingested: false, reason: :identity_blocked } if identity && identity_lifecycle_blocked?(identity)
+
+          session = @session_store&.find_or_create(identity: identity || :anonymous,
+                                                   session_continuity_id: input_frame.session_continuity_id)
+          @session_store&.touch(session.id, channel_id: input_frame.channel_id) if session
+          conversation_id = input_frame.metadata[:conversation_id] || session&.id
+          exchange_id = input_frame.metadata[:exchange_id] || input_frame.id
+          duplicate = identity && !mark_pipeline_observation(identity: identity, exchange_id: exchange_id, kind: :input)
+          return { ingested: false, reason: :duplicate, session_id: session&.id } if duplicate
+
+          signal = input_frame.to_signal.merge(identity: identity, conversation_id: conversation_id,
+                                               exchange_id: exchange_id)
+          if identity
+            observe_interlocutor(input_frame, identity, conversation_id: conversation_id, exchange_id: exchange_id)
+          end
+          remember_input_route(input_frame: input_frame, identity: identity)
+          outcome = record_confirmed_outcome(input_frame: input_frame, identity: identity)
+          @sensory_buffer.push(signal)
+          log.info("Legion::Gaia ingested frame_id=#{input_frame.id} buffer_depth=#{@sensory_buffer.size}")
+          { ingested: true, buffer_depth: @sensory_buffer.size, session_id: session&.id, exchange_id: exchange_id,
+            cognitive_outcome: outcome }.compact
         end
-
-        signal = input_frame.to_signal
-        @sensory_buffer.push(signal)
-
-        session = @session_store&.find_or_create(identity: identity || :anonymous)
-        @session_store&.touch(session.id, channel_id: input_frame.channel_id) if session
-
-        if identity
-          BondRegistry.record_channel(identity.to_s, channel_id: input_frame.channel_id,
-                                                     channel_identity: channel_identity(input_frame))
-        end
-        observe_interlocutor(input_frame, identity) if identity && identity != :anonymous
-
-        log.info(
-          "Legion::Gaia ingested frame_id=#{input_frame.id} " \
-          "channel=#{input_frame.channel_id} buffer_depth=#{@sensory_buffer.size}"
-        )
-        { ingested: true, buffer_depth: @sensory_buffer.size, session_id: session&.id }
       end
 
       def respond(content:, channel_id:, in_reply_to: nil, session_continuity_id: nil, metadata: {})
-        @last_response_at = Time.now.utc
+        route = observation_mutex.synchronize { @input_routes&.dig(in_reply_to) }
+        if route && route[:channel_id] == channel_id
+          if route[:identity] && identity_lifecycle_blocked?(route[:identity])
+            return { delivered: false,
+                     reason: :identity_blocked }
+          end
+
+          metadata = metadata.merge(route[:metadata]).merge(identity: route[:identity])
+        end
 
         frame = OutputFrame.new(
           content: content,
@@ -258,146 +204,354 @@ module Legion
       end
 
       def erase_attribution!(identity:)
-        store = apollo_local_store
-        unless store
-          log.info("[gaia] erase_attribution! skipped identity=#{identity} reason=no_apollo_local")
-          return { erased: false, identity: identity, count: 0, reason: :no_apollo_local }
-        end
+        TrackerPersistence::WRITE_LOCK.synchronize do
+          result = ResponseAttribution.erase_partner!(identity: identity, store: apollo_local_store)
+          return result unless result.is_a?(Hash) && result[:erased]
 
-        tags = %w[self-knowledge attribution] + ["partner:#{identity}"]
-        # TODO: legion-apollo needs delete_by_tags(tags:) — using query_by_tags + individual deletes once available
-        # Until then: store.delete_by_tags is the target API; this no-ops with count=0 until implemented
-        count = 0
-        if store.respond_to?(:delete_by_tags)
-          result = store.delete_by_tags(tags: tags)
-          count = result[:count].to_i if result.is_a?(Hash)
-        else
-          log.info("[gaia] erase_attribution! identity=#{identity} " \
-                   'reason=delete_by_tags_not_available count=0')
+          @calibration_runners&.delete(identity.to_s)
+          TrackerPersistence.unregister_tracker(name: [:calibration, identity.to_s])
+          @sensory_buffer&.erase_identity(identity: identity)
+          @notification_gate&.erase_identity(identity: identity)
+          clear_identity_context(identity: identity.to_s)
+          result
         end
-        log.info("[gaia] erase_attribution! identity=#{identity} count=#{count}")
-        { erased: true, identity: identity, count: count }
       rescue StandardError => e
         handle_exception(e, level: :warn, operation: 'gaia.erase_attribution', identity: identity)
-        { erased: false, identity: identity, count: 0 }
+        { erased: false, durable: false, identity: identity, reason: :erase_failed }
       end
 
-      def record_advisory_meta(advisory_id:, advisory_types:)
-        return unless started?
+      def record_advisory_meta(advisory_id:, identity:, advisory_types:, applied:)
+        return { recorded: false, reason: :not_started } unless started?
 
-        @last_response_at = Time.now.utc
-        return unless defined?(Legion::Extensions::Agentic::Social::Calibration::Runners::Calibration)
+        runner = calibration_runner_for(identity: identity)
+        return { recorded: false, reason: :scoped_calibration_unavailable } unless runner
 
-        ensure_calibration_runner
-        @calibration_runner.record_advisory_meta(advisory_id: advisory_id, advisory_types: advisory_types)
-        log.info(
-          "Legion::Gaia recorded advisory metadata advisory_id=#{advisory_id} " \
-          "types=#{Array(advisory_types).join(',')}"
-        )
+        result = runner.record_advisory_meta(advisory_id: advisory_id, identity: identity,
+                                             advisory_types: advisory_types, applied: applied)
+        { recorded: result.is_a?(Hash) && result[:success] == true }
       rescue StandardError => e
         handle_exception(e, level: :warn, operation: 'gaia.record_advisory_meta', advisory_id: advisory_id)
+        { recorded: false, reason: :calibration_failed }
       end
 
       def record_response_applied(advisory_id:, identity:, applied:)
-        return unless started?
+        return { recorded: false, reason: :not_started } unless started?
+        return { recorded: false, reason: :unattributed_identity } if identity.to_s.strip.empty?
+        return { recorded: false, reason: :identity_blocked } if identity_lifecycle_blocked?(identity.to_s)
 
-        identity_str = identity.to_s
-        if BondRegistry.terminating?(identity_str) || BondRegistry.terminated?(identity_str)
-          log.warn("[gaia] rejected write for terminated/terminating identity=#{identity_str}")
-          return { recorded: false, reason: :identity_terminated }
+        TrackerPersistence::WRITE_LOCK.synchronize do
+          result = ResponseAttribution.record_applied(advisory_id: advisory_id, identity: identity,
+                                                      applied: applied, store: apollo_local_store)
+          if result[:recorded]
+            receipt = result[:receipt]
+            types = applied_advisory_types(receipt)
+            record_advisory_meta(advisory_id: advisory_id, identity: identity, advisory_types: types, applied: receipt)
+          end
+          result
         end
-
-        synapse_count = Array(applied[:behavioral_synapse_ids]).size
-        log.info("[gaia] attribution advisory_id=#{advisory_id} identity=#{identity} synapses=#{synapse_count}")
-
-        store = apollo_local_store
-        store&.upsert(
-          content: Legion::JSON.dump(applied.merge(advisory_id: advisory_id, identity: identity)),
-          tags: %w[self-knowledge attribution] + ["partner:#{identity}"],
-          source_channel: 'gaia',
-          confidence: 0.9,
-          access_scope: 'local'
-        )
-
-        @last_applied = applied.merge(advisory_id: advisory_id, identity: identity)
-        { recorded: true, advisory_id: advisory_id }
       rescue StandardError => e
         handle_exception(e, level: :warn, operation: 'gaia.record_response_applied', advisory_id: advisory_id)
-        { recorded: false }
+        { recorded: false, reason: :receipt_failed }
       end
 
-      def status
+      def status(identity: nil)
         return { started: false } unless started?
 
-        base_status.merge(router_status)
+        base_status.merge(router_status).merge(
+          persistence_ready: @persistence_ready == true,
+          capabilities: @registry&.capabilities_for(identity: identity,
+                                                    enabled_optional_phases: settings.dig(
+                                                      :tick, :enabled_optional_phases
+                                                    ) || [])
+        )
       end
 
-      def drain_growth_frames
-        frames = @pending_growth_frames || []
-        @pending_growth_frames = []
-        frames
+      def drain_growth_frames(identity:, conversation_id: nil)
+        return [] if identity.to_s.strip.empty? || identity_lifecycle_blocked?(identity.to_s)
+
+        observation_mutex.synchronize do
+          (@pending_growth_frames || {}).delete([identity.to_s, conversation_id&.to_s]) || []
+        end
+      end
+
+      def tick_result_for(identity:, conversation_id:)
+        return nil unless started? && @registry
+        return nil if identity.to_s.strip.empty? || identity_lifecycle_blocked?(identity.to_s)
+
+        @registry.tick_result_for(identity: identity, conversation_id: conversation_id)
+      end
+
+      def calibration_runner_for(identity:, create: true)
+        return nil if identity.to_s.strip.empty? || identity_lifecycle_blocked?(identity.to_s)
+        return nil unless defined?(Legion::Extensions::Agentic::Social::Calibration::Runners::Calibration)
+
+        TrackerPersistence::WRITE_LOCK.synchronize do
+          @calibration_runners ||= {}
+          return @calibration_runners[identity.to_s] if @calibration_runners.key?(identity.to_s)
+          return nil unless create
+
+          runner = RunnerHost.new(Legion::Extensions::Agentic::Social::Calibration::Runners::Calibration)
+          scoped = runner.method(:record_advisory_meta).parameters.any? do |kind, name|
+            %i[key keyreq].include?(kind) && name == :identity
+          end
+          return nil unless scoped
+
+          tracker = CalibrationTracker.new(identity: identity,
+                                           tracker: runner.send(
+                                             :calibration_store, identity: identity
+                                           ))
+          store = apollo_local_store
+          return nil unless store && tracker.from_apollo(store: store)
+
+          TrackerPersistence.register_tracker([:calibration, identity.to_s], tracker: tracker,
+                                                                             tags: %w[bond calibration])
+          @calibration_runners[identity.to_s] = runner
+        end
       end
 
       def observe_from_pipeline(identity:, caller:, exchange_id:)
-        return unless started?
+        return unless started? && caller&.dig(:requested_by, :type)&.to_sym == :human
 
-        caller_type = caller&.dig(:requested_by, :type)
-        return unless caller_type == :human
-
-        identity_str = identity.to_s
-        return if identity_str.empty?
-        return if identity_lifecycle_blocked?(identity_str)
-        return if pipeline_observation_seen?(exchange_id)
-
-        mark_pipeline_observation(exchange_id)
-
-        if BondRegistry.bond(identity_str) == :unknown
-          if BondRegistry.partner_entry.nil?
-            BondRegistry.register(identity_str, bond: :partner, priority: :primary,
-                                                origin: :provisional,
-                                                strength: settings&.dig(:partner, :prior_strength) || 0.5)
-            log.info("[gaia] pipeline duckling bond identity=#{identity_str}")
-          else
-            BondRegistry.register(identity_str, bond: nil)
+        TrackerPersistence::WRITE_LOCK.synchronize do
+          authenticated = caller.dig(:requested_by, :principal_id) || caller.dig(:requested_by, :identity)
+          if authenticated.to_s.empty? || authenticated.to_s != identity.to_s
+            return { observed: false,
+                     reason: :identity_mismatch }
           end
+          return { observed: false, reason: :identity_blocked } if identity_lifecycle_blocked?(identity.to_s)
+          return { observed: false, reason: :unattributed_exchange } if exchange_id.to_s.empty?
+
+          observed = mark_pipeline_observation(identity: identity, exchange_id: exchange_id, kind: :pipeline)
+          return { observed: false, reason: :duplicate } unless observed
+
+          # This hook reports a returned pipeline result, not another human interaction.
+          # InputFrame ingestion owns reinforcement and coldstart observation counting.
+          register_interlocutor(identity.to_s)
+          { observed: true, identity: identity.to_s, exchange_id: exchange_id }
         end
-
-        BondRegistry.reinforce(identity_str, multiplier: fetch_imprint_multiplier)
-
-        if defined?(Legion::Extensions::Coldstart)
-          bootstrap = Legion::Extensions::Coldstart::Helpers::Bootstrap.instance
-          bootstrap.record_observation
-        end
-
-        log.debug("[gaia] pipeline observation identity=#{identity_str} exchange_id=#{exchange_id}")
       rescue StandardError => e
         handle_exception(e, level: :warn, operation: 'gaia.observe_from_pipeline', identity: identity)
+        { observed: false, reason: :observation_failed }
       end
 
-      def pipeline_observation_seen?(exchange_id)
+      def mark_pipeline_observation(identity:, exchange_id:, kind:)
         return false if exchange_id.nil?
 
-        @pipeline_observations ||= {}
-        @pipeline_observations.key?(exchange_id)
-      end
+        observation_mutex.synchronize do
+          @pipeline_observations ||= {}
+          @pipeline_observation_order ||= []
+          key = [identity.to_s, exchange_id.to_s]
+          return false if @pipeline_observations.dig(key, kind)
 
-      def mark_pipeline_observation(exchange_id)
-        return if exchange_id.nil?
-
-        @pipeline_observations ||= {}
-        @pipeline_observation_order ||= []
-
-        @pipeline_observations[exchange_id] = true
-        @pipeline_observation_order << exchange_id
-
-        max_size = settings&.dig(:pipeline_observation, :max_tracked) || 10_000
-        while @pipeline_observation_order.size > max_size
-          oldest = @pipeline_observation_order.shift
-          @pipeline_observations.delete(oldest)
+          @pipeline_observation_order << key unless @pipeline_observations.key?(key)
+          (@pipeline_observations[key] ||= {})[kind] = true
+          max_size = settings.dig(:pipeline_observation, :max_tracked) || 10_000
+          while @pipeline_observation_order.size > max_size
+            @pipeline_observations.delete(@pipeline_observation_order.shift)
+          end
+          true
         end
       end
 
       private
+
+      def observation_mutex
+        @observation_mutex ||= Mutex.new
+      end
+
+      def tick_execution_mutex
+        @tick_execution_mutex ||= Mutex.new
+      end
+
+      def finalize_shutdown
+        TrackerPersistence::WRITE_LOCK.synchronize do
+          settings_hash = settings
+          settings_hash[:connected] = false if settings_hash
+          flush_trackers_on_shutdown
+          @router_bridge&.stop
+          @agent_bridge&.stop
+          @channel_registry&.stop_all
+          clear_runtime_state
+          heartbeat_mutex.synchronize { @shutdown_pending = false }
+        end
+        log.info('Legion::Gaia shut down')
+        { stopped: true, quiescing: false }
+      end
+
+      def clear_runtime_state
+        @sensory_buffer = nil
+        @registry = nil
+        @channel_registry = nil
+        @output_router = nil
+        @session_store = nil
+        @notification_gate = nil
+        @router_bridge = nil
+        @agent_bridge = nil
+        @partner_observations = nil
+        @absence_state = {}
+        @last_valences = nil
+        @calibration_runners = nil
+        @pipeline_observations = nil
+        @pipeline_observation_order = nil
+        @input_routes = nil
+        @tick_history = nil
+        @tick_count = nil
+        @started_at = nil
+        @active_heartbeats = 0
+        @quiescing_phase_handlers_cache = nil
+        @pending_growth_frames = nil
+        @deferred_shutdown = false
+      end
+
+      def execute_heartbeat
+        return { error: :not_started } if shutting_down?
+
+        maybe_flush_trackers
+        @registry.ensure_wired
+        unless @registry.tick_host
+          log.warn('[gaia] lex-tick unavailable; retaining signals') unless @tick_unavailable_warned
+          @tick_unavailable_warned = true
+          return { error: :no_tick_extension }
+        end
+        @tick_unavailable_warned = false
+        signals = @sensory_buffer.drain_scope
+        context = heartbeat_context(signals: signals)
+        identity = context[:identity]
+        return { error: :identity_blocked } if identity && identity_lifecycle_blocked?(identity)
+
+        host = identity ? @registry.tick_host_for(identity: identity) : @registry.tick_host
+        handlers = identity ? @registry.phase_handlers_for(identity: identity) : @registry.phase_handlers
+        result = host.execute_tick(signals: signals, phase_handlers: quiescing_phase_handlers(handlers), **context)
+        result = record_scoped_tick(result: result, context: context, signals: signals) if result.is_a?(Hash)
+        finish_tick_work(result: result, handlers: handlers, identity: identity)
+        result
+      end
+
+      def heartbeat_context(signals:)
+        first = signals.first || {}
+        last = signals.last || {}
+        identity = first[:identity] || first[:principal_id]
+        conversation_id = first[:conversation_id]
+        context = {
+          identity: identity, conversation_id: conversation_id, exchange_id: last[:exchange_id],
+          prediction_request: last.dig(:metadata, :prediction_request),
+          partner_observations: drain_partner_observations(identity: identity, conversation_id: conversation_id)
+        }
+        requested = settings.dig(:tick, :enabled_optional_phases) || []
+        unless requested.empty?
+          context[:enabled_optional_phases] =
+            @registry.supported_optional_phases(identity: identity, requested: requested)
+        end
+        context
+      end
+
+      def record_scoped_tick(result:, context:, signals:)
+        scope = context.slice(:identity, :conversation_id, :exchange_id)
+        result = result.merge(scope)
+        @tick_history.record(result, **scope)
+        @tick_count += 1
+        @registry.record_tick_result(result: result, **scope)
+        if result[:results]
+          valence = result.dig(:results, :emotional_evaluation, :valence)
+          @last_valences = scope[:identity] ? nil : [valence].compact
+          log_cognitive_markers(result, signals: signals, observations: context[:partner_observations])
+        end
+        result
+      end
+
+      def finish_tick_work(result:, handlers:, identity:)
+        return if shutting_down?
+
+        unless identity
+          check_partner_absence(handlers)
+          feed_notification_gate(result)
+          process_dream_proactive(result[:results]) if result.is_a?(Hash) && result[:results]
+        end
+        @output_router&.process_delayed
+        maybe_flush_trackers
+        try_dispatch_pending
+      end
+
+      def remember_input_route(input_frame:, identity:)
+        observation_mutex.synchronize do
+          @input_routes ||= {}
+          @input_routes[input_frame.id] = {
+            identity: identity, channel_id: input_frame.channel_id,
+            metadata: input_frame.metadata.slice(:conversation_id, :tenant_id, :team_id, :user_id)
+          }
+          @input_routes.shift while @input_routes.size > SensoryBuffer::MAX_BUFFER_SIZE
+        end
+      end
+
+      def clear_identity_context(identity:)
+        observation_mutex.synchronize do
+          @partner_observations&.reject! { |item| item[:identity].to_s == identity }
+          @absence_state&.delete(identity)
+          @pending_growth_frames&.delete_if { |(owner, _conversation), _frames| owner == identity }
+          @input_routes&.delete_if { |_id, route| route[:identity].to_s == identity }
+          @pipeline_observations&.delete_if { |(owner, _exchange), _value| owner == identity }
+          @pipeline_observation_order&.reject! { |owner, _exchange| owner == identity }
+        end
+      end
+
+      def record_confirmed_outcome(input_frame:, identity:)
+        report = input_frame.metadata[:cognitive_outcome]
+        return nil unless report.is_a?(Hash)
+        unless identity && input_frame.human_direct? && report[:confirmation].to_s == 'human_observed'
+          return { recorded: false, reason: :unconfirmed_outcome }
+        end
+        return { recorded: false, reason: :outcome_registry_unavailable } unless @registry
+        return { recorded: false, reason: :ambiguous_outcome } if [report[:prediction_id],
+                                                                   report[:intention_id]].compact.size != 1
+
+        @registry.record_outcome(
+          identity: identity, exchange_id: report[:source_exchange_id],
+          prediction_id: report[:prediction_id], intention_id: report[:intention_id],
+          outcome: report[:outcome], verified: true,
+          actual: { source: :human_confirmation, observed_outcome: report[:actual], report_id: input_frame.id }
+        )
+      end
+
+      def applied_advisory_types(receipt)
+        applied_sources_for_receipt(receipt: receipt).map do |source|
+          (source[:advisory_type] || :partner_hint).to_sym
+        end.uniq
+      end
+
+      def applied_sources_for_receipt(receipt:)
+        behavior_ids = Array(receipt[:behavioral_synapse_ids]).map(&:to_s)
+        trace_ids = Array(receipt[:trace_ids]).map(&:to_s)
+        adjustment_ids = Array(receipt[:adjustment_ids]).map(&:to_s)
+        selected = receipt[:selected] || {}
+        prompt_applied = Array(selected[:adjustments]).any? do |adjustment|
+          adjustment[:field].to_s == 'system_prompt' && adjustment_ids.include?(adjustment[:adjustment_id].to_s)
+        end
+        types = Array(selected[:sources]).filter_map do |source|
+          used = case source[:type].to_s
+                 when 'synapse' then behavior_ids.include?(source[:source_id].to_s)
+                 when 'trace' then trace_ids.include?(source[:source_id].to_s)
+                 when 'preference' then prompt_applied
+                 else false
+                 end
+          source if used
+        end
+        Array(selected[:adjustments]).each do |adjustment|
+          next unless adjustment_ids.include?(adjustment[:adjustment_id].to_s)
+
+          types << adjustment
+        end
+        types
+      end
+
+      def drain_partner_observations(identity:, conversation_id:)
+        observation_mutex.synchronize do
+          selected, remaining = Array(@partner_observations).partition do |observation|
+            observation[:identity].to_s == identity.to_s && observation[:conversation_id].to_s == conversation_id.to_s
+          end
+          @partner_observations = remaining
+          selected
+        end
+      end
 
       def heartbeat_mutex
         @heartbeat_mutex ||= Mutex.new
@@ -417,10 +571,12 @@ module Legion
       end
 
       def finish_heartbeat
-        heartbeat_mutex.synchronize do
+        finalize = heartbeat_mutex.synchronize do
           @active_heartbeats = [@active_heartbeats.to_i - 1, 0].max
           heartbeat_condition.broadcast if @active_heartbeats.zero?
+          @deferred_shutdown && @active_heartbeats.zero?
         end
+        finalize_shutdown if finalize
       end
 
       def wait_for_active_heartbeats
@@ -497,10 +653,7 @@ module Legion
       def boot_agent
         @tick_unavailable_warned = false
         @partner_observations = []
-        @partner_absence_misses = 0
-        @last_absence_signal_at = nil
-        @absence_pattern_cache = nil
-        @absence_pattern_checked_at = nil
+        @absence_state = {}
         @tick_history = TickHistory.new
         @tick_count = 0
         @started_at = Time.now.utc
@@ -510,10 +663,18 @@ module Legion
         @registry.discover
         boot_channels
         boot_agent_bridge
-        @correction_counts = Concurrent::Hash.new(0)
+        @calibration_runners = {}
+        @pipeline_observations = {}
+        @pipeline_observation_order = []
+        @pending_growth_frames = {}
+        @input_routes = {}
+        TrackerPersistence.reset!
+        ResponseAttribution.reset!
+        TrackerPersistence.register_tracker(:bonds, tracker: BondTracker, tags: %w[bond])
         register_behavioral_synapse_tracker
+        TrackerPersistence.register_tracker(:responses, tracker: ResponseAttribution,
+                                                        tags: %w[self-knowledge attribution])
         hydrate_from_apollo_local
-        register_provisional_partner_prior
         log.info('Legion::Gaia agent mode boot complete')
       end
 
@@ -630,132 +791,88 @@ module Legion
         }
       end
 
-      def extract_identity(input_frame)
-        ctx = input_frame.auth_context
-        return nil if ctx.nil? || ctx.empty?
-
-        ctx[:principal_id] ||
-          ctx[:aad_object_id] ||
-          ctx[:identity] ||
-          ctx[:user_id]
-      end
-
       def channel_identity(input_frame)
         ctx = input_frame.auth_context || {}
         ctx[:channel_identity] || ctx[:user_id] || ctx[:identity]
       end
 
       def identity_lifecycle_blocked?(identity_str)
-        return false unless BondRegistry.terminating?(identity_str) || BondRegistry.terminated?(identity_str)
+        return false unless BondRegistry.blocked?(identity: identity_str)
 
-        log.warn("[gaia] rejected write for terminated/terminating identity=#{identity_str}")
+        log.warn("[gaia] private state unavailable for identity=#{identity_str}")
         true
       end
 
-      def observe_interlocutor(input_frame, identity) # rubocop:disable Metrics/AbcSize
+      def observe_interlocutor(input_frame, identity, conversation_id:, exchange_id:)
         identity_str = identity.to_s
-        return if identity_lifecycle_blocked?(identity_str)
+        return if identity_lifecycle_blocked?(identity_str) || !input_frame.human_direct?
 
-        auth_ctx = input_frame.auth_context || {}
+        register_interlocutor(identity_str)
+        prior_entry = BondRegistry.entry(identity: identity_str)
+        new_channel = prior_entry && prior_entry[:last_channel] != input_frame.channel_id
+        BondRegistry.record_channel(identity_str, channel_id: input_frame.channel_id,
+                                                  channel_identity: channel_identity(input_frame))
+        BondRegistry.reinforce(identity_str, direct_address: input_frame.metadata[:direct_address] == true,
+                                             new_channel: new_channel, multiplier: fetch_imprint_multiplier)
 
-        # Duckling: first authenticated human on a node with no partner → immediate partner
-        if BondRegistry.bond(identity_str) == :unknown
-          if BondRegistry.partner_entry.nil?
-            BondRegistry.register(identity_str, bond: :partner, priority: :primary,
-                                                origin: :provisional, strength: 0.5)
-            log.info("[gaia] duckling bond formed identity=#{identity_str}")
-          else
-            BondRegistry.register(identity_str, bond: nil)
-          end
+        observation = interlocutor_observation(input_frame: input_frame, identity: identity_str,
+                                               conversation_id: conversation_id, exchange_id: exchange_id)
+        observation_mutex.synchronize do
+          (@partner_observations ||= []) << observation
+          @partner_observations.shift while @partner_observations.size > SensoryBuffer::MAX_BUFFER_SIZE
         end
-
-        # Every interaction reinforces — the evidence accumulation loop
-        direct_address = input_frame.metadata[:direct_address] || false
-        current_entry  = BondRegistry.instance_variable_get(:@bonds)[identity_str]
-        new_channel    = current_entry ? current_entry[:last_channel] != input_frame.channel_id : false
-
-        BondRegistry.reinforce(
-          identity_str,
-          direct_address: direct_address,
-          new_channel: new_channel,
-          multiplier: fetch_imprint_multiplier
-        )
-
-        # Build observation hash
-        role = BondRegistry.bond(identity_str)
-        observation = {
-          identity: identity_str,
-          bond_role: role,
-          channel: input_frame.channel_id,
-          content_type: input_frame.content_type,
-          content: input_frame.content.to_s,
-          content_length: input_frame.content.to_s.length,
-          direct_address: direct_address,
-          latency: compute_response_latency,
-          timestamp: input_frame.received_at,
-          identity_principal_id: auth_ctx[:principal_id] || auth_ctx[:aad_object_id],
-          identity_canonical_name: auth_ctx[:canonical_name],
-          identity_id: auth_ctx[:identity]&.to_s
-        }
-
-        @partner_observations ||= []
-        @partner_observations.push(observation)
-        log.debug(
-          "Legion::Gaia observed interlocutor identity=#{identity_str} " \
-          "role=#{role} channel=#{input_frame.channel_id}"
-        )
-
-        if defined?(Legion::Extensions::Coldstart)
-          bootstrap = Legion::Extensions::Coldstart::Helpers::Bootstrap.instance
-          bootstrap.record_observation
+        @absence_state&.delete(identity_str)
+        if defined?(Legion::Extensions::Coldstart::Helpers::Bootstrap)
+          Legion::Extensions::Coldstart::Helpers::Bootstrap.instance.record_observation
         end
-
         run_partner_deep_learning(identity_str, observation) if BondRegistry.partner?(identity_str)
+        observation
       rescue StandardError => e
         handle_exception(e, level: :warn, operation: 'gaia.observe_interlocutor', identity: identity)
+        nil
       end
 
-      def register_provisional_partner_prior
-        return unless BondRegistry.partner_entry.nil?
-
-        process_identity = resolve_process_identity
-        return if process_identity.nil?
-
-        prior_strength = settings&.dig(:partner, :prior_strength) || 0.5
-
-        BondRegistry.register(
-          process_identity,
-          bond: :partner,
-          priority: :primary,
-          origin: :provisional,
-          strength: prior_strength
-        )
-        log.info(
-          "[gaia] provisional partner prior identity=#{process_identity} strength=#{prior_strength}"
-        )
+      def interlocutor_observation(input_frame:, identity:, conversation_id:, exchange_id:)
+        metadata = input_frame.metadata
+        auth = input_frame.auth_context || {}
+        {
+          identity: identity, bond_role: BondRegistry.bond(identity),
+          channel: input_frame.channel_id, content_type: input_frame.content_type,
+          content: input_frame.content.to_s, content_length: input_frame.content.to_s.length,
+          direct_address: metadata[:direct_address] == true, timestamp: input_frame.received_at,
+          conversation_id: conversation_id, feedback_id: input_frame.id,
+          observed_exchange_id: exchange_id, exchange_id: metadata[:response_exchange_id],
+          advisory_id: metadata[:advisory_id], in_reply_to: metadata[:in_reply_to],
+          corrected_constraint: metadata[:corrected_constraint], domain: metadata[:domain],
+          identity_principal_id: input_frame.resolved_principal_id, identity_canonical_name: auth[:canonical_name],
+          identity_id: auth[:identity]&.to_s
+        }
       end
 
-      def resolve_process_identity
-        return nil unless defined?(Legion::Identity::Process) && Legion::Identity::Process.respond_to?(:canonical_name)
+      def register_interlocutor(identity)
+        return unless BondRegistry.bond(identity) == :unknown
 
-        name = Legion::Identity::Process.canonical_name
-        return nil if name.nil? || name == 'anonymous'
-
-        name
+        if BondRegistry.partner_entry.nil?
+          BondRegistry.register(identity, bond: :partner, priority: :primary, origin: :provisional,
+                                          strength: settings.dig(:partner, :prior_strength) || 0.5)
+        else
+          BondRegistry.register(identity, bond: nil)
+        end
       end
 
       def record_interaction_trace(observation)
-        return unless defined?(Legion::Extensions::Agentic::Memory::Trace::Runners::Traces)
+        runner = @registry&.runner_instances_for(identity: observation[:identity])&.dig(:Memory_Traces)
+        return { stored: false, reason: :memory_unavailable } unless runner.respond_to?(:store_trace)
 
-        emotional_context = interaction_trace_emotional_context
-        runner = Object.new
-        runner.extend(Legion::Extensions::Agentic::Memory::Trace::Runners::Traces)
+        emotional_context = interaction_trace_emotional_context(observation)
         trace_result = runner.store_trace(
           type: :episodic,
           content_payload: {
             interaction_type: observation[:content_type],
             channel: observation[:channel],
             direct_address: observation[:direct_address],
+            identity: observation[:identity], conversation_id: observation[:conversation_id],
+            exchange_id: observation[:observed_exchange_id], content: observation[:content].to_s[0, 4096],
             bond_role: observation[:bond_role]
           }.tap do |payload|
             payload[:emotional_context] = emotional_context if emotional_context
@@ -768,6 +885,7 @@ module Legion
         )
         log.info("[gaia] memory+ episodic trace=#{trace_result[:trace_id].to_s[0, 8]} " \
                  "channel=#{observation[:channel]} role=#{observation[:bond_role]}")
+        trace_result
       rescue StandardError => e
         handle_exception(e, level: :debug, operation: 'gaia.record_interaction_trace',
                             identity: observation[:identity], channel: observation[:channel])
@@ -783,54 +901,69 @@ module Legion
       end
 
       def evaluate_calibration(observation)
-        return unless defined?(Legion::Extensions::Agentic::Social::Calibration::Runners::Calibration)
+        TrackerPersistence::WRITE_LOCK.synchronize do
+          identity = observation[:identity]
+          runner = calibration_runner_for(identity: identity)
+          detector = runner || @registry&.runner_instances_for(identity: identity)&.dig(:Social_Calibration)
+          if detector.respond_to?(:detect_explicit_feedback)
+            feedback = detector.detect_explicit_feedback(content: observation[:content].to_s)
+            observation = observation.merge(explicit_feedback: feedback[:feedback]) if feedback.is_a?(Hash)
+          end
+          unless runner || observation[:explicit_feedback] == :negative || observation[:corrected_constraint]
+            return { graded: false, reason: :scoped_calibration_unavailable }
+          end
 
-        ensure_calibration_runner
-        result = @calibration_runner.update_calibration(observation: observation)
-        @last_calibration_deltas = result[:deltas] if result[:success] && result[:deltas]
-        if result[:success] && result[:deltas].is_a?(Hash) && result[:deltas].any?
-          log.info("[gaia] calibration identity=#{observation[:identity]} " \
-                   "deltas=#{result[:deltas].keys.join(',')}")
+          store = apollo_local_store
+          claim = ResponseAttribution.claim_feedback(identity: identity, observation: observation, store: store)
+          return claim unless claim[:claimed]
+
+          apply_claimed_feedback(runner: runner, receipt: claim[:receipt], observation: observation, store: store)
         end
-
-        grade_behavioral_synapses(result) if result.is_a?(Hash) && result[:reaction_score]
       rescue StandardError => e
         handle_exception(e, level: :warn, operation: 'gaia.evaluate_calibration', identity: observation[:identity])
+        { graded: false, reason: :calibration_failed }
       end
 
-      def ensure_calibration_runner
-        return if @calibration_runner
+      def apply_claimed_feedback(runner:, receipt:, observation:, store:)
+        identity = receipt[:identity]
+        if observation[:explicit_feedback] == :negative || observation[:corrected_constraint]
+          record_correction_trace(identity: identity, applied: receipt, observation: observation)
+        end
+        unless runner
+          return ResponseAttribution.complete_feedback(
+            identity: identity, advisory_id: receipt[:advisory_id], feedback_id: observation[:feedback_id], store: store
+          ).merge(graded: false, reason: :scoped_calibration_unavailable)
+        end
 
-        runner = Object.new
-        runner.extend(Legion::Extensions::Agentic::Social::Calibration::Runners::Calibration)
-        TrackerPersistence.register_tracker(
-          :calibration,
-          tracker: runner.send(:calibration_store),
-          tags: %w[bond calibration]
-        )
-        @calibration_runner = runner
+        runner.record_advisory_meta(advisory_id: receipt[:advisory_id], identity: identity,
+                                    advisory_types: applied_advisory_types(receipt), applied: receipt)
+        correlation = receipt.slice(:advisory_id, :exchange_id, :conversation_id)
+        result = runner.update_calibration(identity: identity, observation: observation.merge(correlation))
+        unless result.is_a?(Hash) && result[:reaction_score] && result.dig(:applied,
+                                                                           :advisory_id) == receipt[:advisory_id]
+          return { graded: false, reason: :unmatched_calibration, advisory_id: receipt[:advisory_id] }
+        end
+
+        grade_behavioral_synapses(calibration_result: result, receipt: receipt)
+        unless TrackerPersistence.flush_dirty(store: store)
+          return { graded: true, persisted: false, reason: :learning_flush_failed, advisory_id: receipt[:advisory_id] }
+        end
+
+        ResponseAttribution.complete_feedback(identity: identity, advisory_id: receipt[:advisory_id],
+                                              feedback_id: observation[:feedback_id], store: store)
       end
 
-      def grade_behavioral_synapses(calibration_result)
-        return unless @last_applied.is_a?(Hash)
-
-        synapse_ids = Array(@last_applied[:behavioral_synapse_ids])
-        return if synapse_ids.empty?
-
+      def grade_behavioral_synapses(calibration_result:, receipt:)
         outcome = calibration_outcome(calibration_result[:reaction_score].to_f)
         return unless outcome
 
-        identity   = @last_applied[:identity]&.to_s
-        multiplier = fetch_imprint_multiplier
-        synapse_ids.each do |sid|
-          grade_single_synapse(sid, outcome: outcome, identity: identity, multiplier: multiplier)
-        end
+        identity = receipt[:identity]
+        return if identity_lifecycle_blocked?(identity)
 
-        log.info("[gaia] graded synapses count=#{synapse_ids.size} outcome=#{outcome} " \
-                 "reaction_score=#{calibration_result[:reaction_score].to_f.round(3)}")
-        @last_applied = nil
-      rescue StandardError => e
-        handle_exception(e, level: :warn, operation: 'gaia.grade_behavioral_synapses')
+        Array(receipt[:behavioral_synapse_ids]).each do |sid|
+          grade_single_synapse(sid, outcome: outcome, identity: identity, multiplier: fetch_imprint_multiplier,
+                                    conversation_id: receipt[:conversation_id])
+        end
       end
 
       def calibration_outcome(reaction_score)
@@ -841,25 +974,25 @@ module Legion
         end
       end
 
-      def grade_single_synapse(sid, outcome:, identity:, multiplier:)
-        pre_entry = BehavioralSynapse.store.values.find { |e| e[:id] == sid }
+      def grade_single_synapse(sid, outcome:, identity:, multiplier:, conversation_id:)
+        pre_entry = BehavioralSynapse.all_for(identity: identity).find { |entry| entry[:id] == sid }
         old_mode  = pre_entry ? BehavioralSynapse::Math.autonomy_mode(pre_entry[:confidence].to_f) : nil
 
-        result = BehavioralSynapse.record_outcome(id: sid, outcome: outcome, multiplier: multiplier)
+        result = BehavioralSynapse.record_outcome(id: sid, identity: identity, outcome: outcome, multiplier: multiplier)
         return unless result.is_a?(Hash) && result[:found] != false
 
-        surface_pain_frame(result, identity: identity, old_mode: old_mode)
-        surface_milestone_frame(result, identity: identity, old_mode: old_mode)
+        surface_pain_frame(result, identity: identity, old_mode: old_mode, conversation_id: conversation_id)
+        surface_milestone_frame(result, identity: identity, old_mode: old_mode, conversation_id: conversation_id)
       end
 
-      def surface_pain_frame(result, old_mode:, **)
+      def surface_pain_frame(result, identity:, old_mode:, conversation_id:)
         return unless result[:status] == 'dampened' && old_mode && old_mode != :observe
 
-        msg = VisibleGrowth.pain_revert_acknowledgment(domain: result[:domain].to_s)
-        enqueue_growth_frame(msg) if msg
+        msg = VisibleGrowth.pain_revert_acknowledgment(identity: identity, domain: result[:domain].to_s)
+        enqueue_growth_frame(message: msg, identity: identity, conversation_id: conversation_id) if msg
       end
 
-      def surface_milestone_frame(result, identity:, old_mode:)
+      def surface_milestone_frame(result, identity:, old_mode:, conversation_id:)
         new_mode = BehavioralSynapse::Math.autonomy_mode(result[:confidence].to_f)
         return unless old_mode && new_mode != old_mode && result[:status] == 'active'
 
@@ -869,14 +1002,13 @@ module Legion
           new_mode: new_mode,
           old_mode: old_mode
         )
-        enqueue_growth_frame(msg) if msg
+        enqueue_growth_frame(message: msg, identity: identity, conversation_id: conversation_id) if msg
       end
 
       def run_partner_deep_learning(identity_str, observation)
         record_interaction_trace(observation)
         evaluate_calibration(observation)
         update_preference_profile(identity_str, observation)
-        detect_and_record_correction(identity_str, observation)
       end
 
       def update_preference_profile(identity_str, observation)
@@ -889,72 +1021,31 @@ module Legion
         handle_exception(e, level: :debug, operation: 'gaia.update_preference_profile', identity: identity_str)
       end
 
-      def detect_and_record_correction(identity_str, observation)
-        return unless defined?(Legion::Extensions::Agentic::Social::Calibration::Runners::Calibration)
-        return unless @last_applied&.dig(:behavioral_synapse_ids)&.any?
-
-        ensure_calibration_runner
-        feedback_result = @calibration_runner.detect_explicit_feedback(content: observation[:content].to_s)
-        return unless feedback_result[:feedback] == :negative
-
-        record_correction_trace(identity: identity_str, applied: @last_applied, observation: observation)
-      rescue StandardError => e
-        handle_exception(e, level: :debug, operation: 'gaia.detect_and_record_correction', identity: identity_str)
-      end
-
       def record_correction_trace(identity:, applied:, observation:)
-        return unless defined?(Legion::Extensions::Agentic::Memory::Trace::Runners::Traces)
+        runner = @registry&.runner_instances_for(identity: identity)&.dig(:Memory_Traces)
+        return { stored: false, reason: :memory_unavailable } unless runner.respond_to?(:store_trace)
 
-        runner = Object.new
-        runner.extend(Legion::Extensions::Agentic::Memory::Trace::Runners::Traces)
-        runner.store_trace(
-          type: :correction,
+        sources = Array(applied.dig(:selected, :sources))
+        domain = observation[:domain] || sources.filter_map { |source| source[:domain] if source.is_a?(Hash) }.first
+        negative_feedback = observation[:explicit_feedback] == :negative
+        result = runner.store_trace(
+          type: :episodic,
           content_payload: {
-            correction_type: :explicit_negative_feedback,
-            applied_synapse_ids: Array(applied[:behavioral_synapse_ids]),
-            channel: observation[:channel],
-            content_type: observation[:content_type]
+            correction_type: negative_feedback ? :explicit_negative_feedback : :explicit_correction,
+            identity: identity,
+            applied_synapse_ids: Array(applied[:behavioral_synapse_ids]), advisory_id: applied[:advisory_id],
+            conversation_id: applied[:conversation_id], exchange_id: applied[:exchange_id],
+            feedback_id: observation[:feedback_id], corrected_constraint: observation[:corrected_constraint],
+            domain: domain, content: observation[:content].to_s[0, 4096],
+            channel: observation[:channel], content_type: observation[:content_type]
           },
-          domain_tags: ['correction', "partner:#{identity}"],
-          origin: :direct_experience,
-          emotional_valence: -0.5,
-          emotional_intensity: 0.6,
-          confidence: 0.9
-        ).tap do |trace_result|
-          log.info("[gaia] correction trace identity=#{identity} " \
-                   "trace=#{trace_result[:trace_id].to_s[0, 8]} " \
-                   "synapse_ids=#{Array(applied[:behavioral_synapse_ids]).size}")
-          check_crystallization(identity: identity, applied: applied, trace_id: trace_result[:trace_id])
-        end
-      rescue StandardError => e
-        handle_exception(e, level: :debug, operation: 'gaia.record_correction_trace', identity: identity)
-      end
-
-      def check_crystallization(identity:, applied:, trace_id:)
-        domain = applied[:domain].to_s
-        return if domain.empty?
-
-        threshold = settings&.dig(:partner_model, :crystallize_threshold) || 3
-        @correction_counts ||= Concurrent::Hash.new(0)
-        key = "#{identity}:#{domain}"
-        @correction_counts[key] += 1
-        count = @correction_counts[key]
-
-        return unless count >= threshold
-
-        synapse_ids = Array(applied[:behavioral_synapse_ids])
-        BehavioralSynapse.crystallize(
-          identity: identity,
-          domain: domain,
-          directive: applied[:directive].to_s,
-          evidence_trace_ids: synapse_ids + [trace_id.to_s],
-          origin: 'emergent'
+          domain_tags: ['correction', "partner:#{identity}"], origin: :direct_experience,
+          emotional_valence: -0.5, emotional_intensity: 0.6, confidence: 0.9
         )
-        @correction_counts[key] = 0
-        log.info("[gaia] crystallization triggered identity=#{identity} domain=#{domain} " \
-                 "corrections=#{count} threshold=#{threshold}")
+        { stored: !result[:trace_id].nil?, trace_id: result[:trace_id] }
       rescue StandardError => e
-        handle_exception(e, level: :debug, operation: 'gaia.check_crystallization', identity: identity)
+        handle_exception(e, level: :warn, operation: 'gaia.record_correction_trace', identity: identity)
+        { stored: false, reason: :correction_failed }
       end
 
       def fetch_imprint_multiplier
@@ -970,25 +1061,15 @@ module Legion
         settings&.dig(:bonds, :imprint_multiplier) || 3.0
       end
 
-      def compute_response_latency
-        return nil unless @last_response_at
-
-        (Time.now.utc - @last_response_at).to_f
-      end
-
-      def interaction_trace_emotional_context
-        context = @last_valences&.first
+      def interaction_trace_emotional_context(observation)
+        tick = tick_result_for(identity: observation[:identity], conversation_id: observation[:conversation_id])
+        context = tick&.dig(:results, :emotional_evaluation, :valence)
         context.is_a?(Hash) ? context.dup : nil
       end
 
       def interaction_trace_emotional_valence(emotional_context)
-        raw = emotional_context || @last_valences&.first
-        return raw.to_f.clamp(-1.0, 1.0) if raw.is_a?(Numeric)
-
-        numeric = Float(raw)
-        numeric.clamp(-1.0, 1.0)
-      rescue ArgumentError, TypeError
-        0.0
+        raw = emotional_context.is_a?(Hash) ? emotional_context[:valence] : emotional_context
+        raw.is_a?(Numeric) ? raw.to_f.clamp(-1.0, 1.0) : 0.0
       end
 
       def interaction_trace_emotional_intensity(emotional_context)
@@ -1003,81 +1084,44 @@ module Legion
         end
       end
 
-      def check_partner_absence(observations, phase_handlers)
-        has_partner = observations.any? { |o| o[:bond_role] == :partner }
-
-        if has_partner
-          @partner_absence_misses = 0
+      def check_partner_absence(phase_handlers)
+        unless @persistence_ready && phase_handlers.key?(:prediction_engine) && phase_handlers.key?(:action_selection)
           return
         end
 
-        return unless phase_handlers.key?(:prediction_engine)
+        partner = BondRegistry.partner_entry
+        return unless partner && !identity_lifecycle_blocked?(partner[:identity])
 
-        @partner_absence_misses += 1
-        inject_absence_valence(@partner_absence_misses)
-        queue_absence_signal_if_needed(@partner_absence_misses, phase_handlers)
+        identity = partner[:identity]
+        state = (@absence_state[identity] ||= { misses: 0 })
+        state[:misses] += 1
+        return if state[:misses] < ABSENCE_SIGNAL_THRESHOLD
+        return if state[:last_signal_at] && Time.now.utc - state[:last_signal_at] < ABSENCE_SIGNAL_COOLDOWN
+        return unless partner_absence_exceeds_pattern?(identity: identity, state: state)
+
+        @sensory_buffer.push(
+          value: ABSENCE_SIGNAL_TEXT, source_type: :partner_absence, salience: ABSENCE_SIGNAL_SALIENCE,
+          identity: identity, exchange_id: SecureRandom.uuid, trigger: :proactive_check_in
+        )
+        state[:last_signal_at] = Time.now.utc
       rescue StandardError => e
         handle_exception(e, level: :debug, operation: 'gaia.check_partner_absence')
       end
 
-      def inject_absence_valence(consecutive_misses)
-        valence = absence_valence(consecutive_misses)
-        return unless valence
+      def partner_absence_exceeds_pattern?(identity:, state:)
+        return state[:exceeds] if state[:checked_at] && Time.now.utc - state[:checked_at] < ABSENCE_PATTERN_CACHE_TTL
 
-        @last_valences ||= []
-        @last_valences.push(valence)
-        log.debug("[gaia] partner absence misses=#{consecutive_misses} " \
-                  "importance=#{valence[:importance].round(2)}")
-      end
-
-      def absence_valence(consecutive_misses)
-        importance = if defined?(Legion::Extensions::Agentic::Affect::Emotion::Helpers::Valence)
-                       Legion::Extensions::Agentic::Affect::Emotion::Helpers::Valence
-                         .absence_importance(consecutive_misses)
-                     else
-                       [0.4 + (0.1 * Math.log(consecutive_misses + 1)), 0.7].min
-                     end
-
-        { urgency: 0.2, importance: importance, novelty: 0.1, familiarity: 0.8 }
-      end
-
-      def queue_absence_signal_if_needed(consecutive_misses, phase_handlers)
-        return unless @sensory_buffer
-        return unless phase_handlers.key?(:action_selection)
-        return if consecutive_misses < ABSENCE_SIGNAL_THRESHOLD
-        return if recent_absence_signal?
-        return unless partner_absence_exceeds_pattern?
-
-        @sensory_buffer.push(
-          value: ABSENCE_SIGNAL_TEXT,
-          source_type: :partner_absence,
-          salience: ABSENCE_SIGNAL_SALIENCE,
-          trigger: :proactive_check_in
-        )
-        @last_absence_signal_at = Time.now.utc
-        log.info("[gaia] queued absence signal misses=#{consecutive_misses} " \
-                 "salience=#{ABSENCE_SIGNAL_SALIENCE}")
-      end
-
-      def recent_absence_signal?
-        return false unless @last_absence_signal_at
-
-        (Time.now.utc - @last_absence_signal_at) < ABSENCE_SIGNAL_COOLDOWN
-      end
-
-      def partner_absence_exceeds_pattern?
-        if @absence_pattern_checked_at &&
-           (Time.now.utc - @absence_pattern_checked_at) < ABSENCE_PATTERN_CACHE_TTL
-          return @absence_pattern_cache == true
+        runner = @registry&.runner_instances_for(identity: identity)&.dig(:Social_Attachment)
+        return false unless runner.respond_to?(:reflect_on_bonds)
+        return false unless runner.method(:reflect_on_bonds).parameters.any? do |kind, name|
+          %i[key keyreq].include?(kind) && name == :identity
         end
 
-        runner = @registry&.runner_instances&.dig(:Social_Attachment)
-        return false unless runner.respond_to?(:reflect_on_bonds)
-
-        result = runner.reflect_on_bonds(tick_results: {}, bond_summary: {})
-        @absence_pattern_cache = result.dig(:partner_bond, :absence_exceeds_pattern) == true
-        @absence_pattern_checked_at = Time.now.utc
-        @absence_pattern_cache
+        result = runner.reflect_on_bonds(identity: identity, tick_results: {},
+                                         bond_summary: BondRegistry.entry(identity: identity))
+        state[:checked_at] = Time.now.utc
+        state[:exceeds] =
+          result.is_a?(Hash) && result[:success] != false && result.dig(:partner_bond, :absence_exceeds_pattern) == true
       rescue StandardError => e
         handle_exception(e, level: :debug, operation: 'gaia.partner_absence_exceeds_pattern')
         false
@@ -1122,10 +1166,11 @@ module Legion
       end
 
       def maybe_flush_trackers
-        return unless TrackerPersistence.should_flush?
-
         store = apollo_local_store
-        TrackerPersistence.flush_dirty(store: store) if store
+        hydrate_from_apollo_local if store && TrackerPersistence.hydration_due?
+        return unless @persistence_ready && TrackerPersistence.should_flush?
+
+        TrackerPersistence.flush_dirty(store: store)
       rescue StandardError => e
         handle_exception(e, level: :debug, operation: 'gaia.maybe_flush_trackers')
       end
@@ -1147,14 +1192,16 @@ module Legion
 
       def hydrate_from_apollo_local
         store = apollo_local_store
-        return unless store
+        @persistence_ready = TrackerPersistence.hydrate_all(store: store)
+        return false unless @persistence_ready
 
-        TrackerPersistence.hydrate_all(store: store)
-        BondRegistry.hydrate_from_apollo(store: store)
-        BehavioralSynapse.from_apollo(store: store)
-        log.info('Legion::Gaia hydrated trackers and bond registry from Apollo Local')
+        BondRegistry.all_bonds.each { |entry| calibration_runner_for(identity: entry[:identity]) }
+        DeathProtocol.resume_pending(store: store)
+        log.info('Legion::Gaia restored live private state and lifecycle barriers')
+        true
       rescue StandardError => e
         handle_exception(e, level: :warn, operation: 'gaia.hydrate_from_apollo_local')
+        @persistence_ready = false
       end
 
       def process_dream_proactive(dream_results)
@@ -1399,13 +1446,15 @@ module Legion
         "#{compact[0, limit]}..."
       end
 
-      # Stores a growth frame string for delivery on the next response turn.
-      def enqueue_growth_frame(message)
-        return if message.to_s.empty?
+      # Acknowledgments belong only to the human and conversation that earned them.
+      def enqueue_growth_frame(message:, identity:, conversation_id:)
+        return if message.to_s.empty? || identity.to_s.empty?
 
-        @pending_growth_frames ||= []
-        @pending_growth_frames << message
-        log.info("[gaia] growth frame queued: #{message.inspect}")
+        observation_mutex.synchronize do
+          @pending_growth_frames ||= {}
+          key = [identity.to_s, conversation_id&.to_s]
+          (@pending_growth_frames[key] ||= []) << message
+        end
       end
     end
   end

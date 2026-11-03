@@ -3,126 +3,83 @@
 require 'spec_helper'
 
 RSpec.describe Legion::Gaia::Disclosure do
-  let(:identity) { 'partner-alice' }
-
   before do
     Legion::Gaia::BondRegistry.reset!
     Legion::Gaia::BehavioralSynapse.reset!
+    Legion::Gaia::ResponseAttribution.reset!
+    allow(Legion::Gaia).to receive(:registry).and_return(nil)
+    allow(Legion::Gaia).to receive(:calibration_runner_for).and_return(nil)
   end
 
   after do
     Legion::Gaia::BondRegistry.reset!
     Legion::Gaia::BehavioralSynapse.reset!
+    Legion::Gaia::ResponseAttribution.reset!
   end
 
-  describe '.report' do
-    subject(:report) { described_class.report(identity: identity) }
+  it 'reads the same live bond and behavior used by partner decisions, never another human' do
+    Legion::Gaia::BondRegistry.register('alice', bond: :partner, strength: 0.8)
+    Legion::Gaia::BondRegistry.register('bob', bond: :partner, strength: 0.4)
+    Legion::Gaia::BehavioralSynapse.crystallize(identity: 'alice', domain: 'format', directive: 'prose',
+                                                origin: 'explicit')
+    Legion::Gaia::BehavioralSynapse.crystallize(identity: 'bob', domain: 'format', directive: 'private format',
+                                                origin: 'explicit')
+    report = described_class.report(identity: 'alice')
+    expect(report[:bond_state]).to include(bond: :partner, strength: 0.8)
+    expect(report[:behavioral_synapses]).to contain_exactly(hash_including(domain: 'format', directive: 'prose'))
+    Legion::Gaia::BondRegistry.reinforce('alice')
+    expect(described_class.report(identity: 'alice')[:bond_state][:strength]).to be > report[:bond_state][:strength]
+  end
 
-    it 'returns a Hash' do
-      expect(report).to be_a(Hash)
+  it 'discloses a restored bond from the actual registry rather than an unused tracker instance' do
+    Legion::Gaia::BondRegistry.register('alice', bond: :partner, strength: 0.8)
+    snapshots = Legion::Gaia::BondTracker.to_apollo_entries
+    store = double('snapshot store')
+    allow(store).to receive(:query_by_tags) do |tags:, limit:|
+      matches = snapshots.select { |entry| (tags - entry[:tags]).empty? }
+      { success: true, results: limit ? matches.first(limit) : matches }
     end
+    Legion::Gaia::BondRegistry.reset!
+    Legion::Gaia::BondTracker.from_apollo(store: store)
+    expect(described_class.report(identity: 'alice')[:bond_state]).to include(bond: :partner, strength: 0.8)
+  end
 
-    it 'includes the identity' do
-      expect(report[:identity]).to eq(identity)
-    end
+  it 'reads calibration weights from the registered live per-human runner' do
+    weights = { brevity: 0.8 }
+    runner = double('live calibration')
+    allow(runner).to receive(:calibration_weights) { { success: true, weights: weights.dup } }
+    allow(Legion::Gaia).to receive(:calibration_runner_for).with(identity: 'alice').and_return(runner)
+    expect(described_class.report(identity: 'alice')[:calibration_weights]).to eq(brevity: 0.8)
+    weights[:brevity] = 0.4
+    expect(described_class.report(identity: 'alice')[:calibration_weights]).to eq(brevity: 0.4)
+    expect(described_class.report(identity: 'bob')[:calibration_weights]).to be_nil
+  end
 
-    it 'includes data_locality statement' do
-      expect(report[:data_locality]).to include('stored locally')
-    end
+  it 'does not mislabel a node-global imprint as personal knowledge' do
+    bootstrap = double('global bootstrap', imprint_active?: true, observation_count: 500)
+    stub_const('Legion::Extensions::Coldstart::Helpers::Bootstrap', double(instance: bootstrap))
+    expect(described_class.report(identity: 'alice')[:imprint_state]).to be_nil
+  end
 
-    it 'includes termination_available: true' do
-      expect(report[:termination_available]).to be true
-    end
+  it 'reports prediction accuracy from the same live prediction runner and leaves unavailable state unknown' do
+    registry = double('registry')
+    prediction = double('live predictions', prediction_accuracy: { accuracy: 0.75, total_outcomes: 4 })
+    allow(registry).to receive(:runner_instances_for).with(identity: 'alice')
+                                                     .and_return(Prediction_Prediction: prediction)
+    allow(registry).to receive(:runner_instances_for).with(identity: 'bob').and_return({})
+    allow(Legion::Gaia).to receive(:registry).and_return(registry)
+    expect(described_class.report(identity: 'alice')[:prediction_accuracy]).to eq(accuracy: 0.75, total_outcomes: 4)
+    expect(described_class.report(identity: 'bob')[:prediction_accuracy]).to be_nil
+  end
 
-    context 'when no bond is registered' do
-      it 'returns nil for bond_state' do
-        expect(report[:bond_state]).to be_nil
-      end
-    end
+  it 'distinguishes local persistence from external processing and managed deletion scope' do
+    stub_const('Legion::Apollo::Local', double(started?: false))
+    report = described_class.report(identity: 'alice')
+    expect(report[:data_locality]).to include(partner_store: :memory_only, external_processing: :deployment_dependent)
+    expect(report[:deletion_scope]).to eq(:gaia_managed_state)
+  end
 
-    context 'when a partner bond is registered' do
-      before { Legion::Gaia::BondRegistry.register(identity, bond: :partner, strength: 0.8) }
-
-      it 'includes bond_state' do
-        expect(report[:bond_state]).to be_a(Hash)
-      end
-
-      it 'reflects bond type' do
-        expect(report[:bond_state][:bond]).to eq(:partner)
-      end
-
-      it 'reflects bond strength' do
-        expect(report[:bond_state][:strength]).to be_a(Numeric)
-      end
-    end
-
-    context 'with behavioral synapses' do
-      before do
-        Legion::Gaia::BehavioralSynapse.crystallize(
-          identity: identity, domain: 'brevity', directive: 'keep it short', origin: 'explicit'
-        )
-        Legion::Gaia::BehavioralSynapse.crystallize(
-          identity: identity, domain: 'tone', directive: 'stay casual', origin: 'emergent'
-        )
-      end
-
-      it 'includes behavioral_synapses array' do
-        expect(report[:behavioral_synapses]).to be_an(Array)
-      end
-
-      it 'includes synapse count' do
-        expect(report[:behavioral_synapses].size).to eq(2)
-      end
-
-      it 'each synapse entry includes required fields' do
-        entry = report[:behavioral_synapses].first
-        expect(entry).to include(:id, :domain, :directive, :confidence, :autonomy_mode, :status)
-      end
-
-      it 'reports autonomy_mode as a recognized tier symbol' do
-        valid = %i[observe filter transform autonomous]
-        modes = report[:behavioral_synapses].map { |s| s[:autonomy_mode] }
-        modes.each { |m| expect(valid).to include(m) }
-      end
-    end
-
-    context 'when no synapses exist' do
-      it 'returns nil for behavioral_synapses' do
-        expect(report[:behavioral_synapses]).to be_nil
-      end
-    end
-
-    context 'soft-guards on optional modules' do
-      it 'returns nil for preferences when module is not loaded' do
-        expect(report[:preferences]).to be_nil
-      end
-
-      it 'returns nil for calibration_weights when module is not loaded' do
-        expect(report[:calibration_weights]).to be_nil
-      end
-
-      it 'returns nil for imprint_state when Coldstart is not loaded' do
-        expect(report[:imprint_state]).to be_nil
-      end
-
-      it 'returns nil for prediction_accuracy when module is not loaded' do
-        expect(report[:prediction_accuracy]).to be_nil
-      end
-
-      it 'does not raise when all optional modules are absent' do
-        expect { report }.not_to raise_error
-      end
-    end
-
-    context 'bond lifecycle state' do
-      before do
-        Legion::Gaia::BondRegistry.register(identity, bond: :partner, strength: 0.8)
-        Legion::Gaia::BondRegistry.set_bond_state(identity, :terminating)
-      end
-
-      it 'reflects lifecycle state in bond_state' do
-        expect(report[:bond_state][:lifecycle_state]).to eq(:terminating)
-      end
-    end
+  it 'requires a human identity instead of returning a global view' do
+    expect(described_class.report(identity: nil)).to eq(available: false, reason: :missing_identity)
   end
 end

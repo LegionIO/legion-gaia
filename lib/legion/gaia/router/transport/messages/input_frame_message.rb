@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require 'time'
+
 module Legion
   module Gaia
     module Router
@@ -29,7 +31,7 @@ module Legion
                 session_continuity_id: frame.session_continuity_id,
                 auth_context: frame.auth_context,
                 metadata: frame.metadata,
-                received_at: frame.received_at.to_s,
+                received_at: frame.received_at.iso8601(9),
                 principal_id: frame.principal_id
               }
             end

@@ -1,96 +1,77 @@
 # frozen_string_literal: true
 
+require 'time'
 require 'legion/json'
 require 'legion/logging/helper'
-require 'concurrent/hash'
+require_relative 'tracker_persistence'
+require_relative 'bond_persistence'
 
 module Legion
   module Gaia
-    module BondRegistry # rubocop:disable Metrics/ModuleLength
+    module BondRegistry
       extend Legion::Logging::Helper
+      extend BondPersistence
 
       TO_APOLLO_TAGS = %w[self-knowledge bond].freeze
+      LIFECYCLE_TAGS = %w[gaia_lifecycle].freeze
+      BLOCKED_STATES = %i[terminating terminated revoked].freeze
 
-      @bonds        = Concurrent::Hash.new
-      @bond_states  = Concurrent::Hash.new
-      @dirty        = false
-      @mutex        = Mutex.new
+      @bonds = {}
+      @bond_states = {}
+      @revision = 0
+      @clean_revision = 0
+      @lifecycle_ready = true
+      @mutex = Mutex.new
 
       module_function
 
-      # Register identity in the bond catalog.
-      # Origin defaults to :provisional for partner bonds, nil for others.
-      # rubocop:disable Metrics/ParameterLists
-      def register(identity, bond: nil, role: nil, priority: :normal, channel_identity: nil,
-                   preferred_channel: nil, last_channel: nil, origin: nil, strength: nil,
-                   reinforcement_count: nil, last_reinforced: nil)
-        # rubocop:enable Metrics/ParameterLists
+      def register(identity, bond: nil, role: nil, **attributes)
+        identity = identity.to_s
+        raise ArgumentError, 'identity is required' if identity.empty?
+
+        attributes = registration_attributes(**attributes)
         effective_bond = (bond || role || :unknown).to_sym
-        origin         ||= effective_bond == :partner ? :provisional : nil
-        strength       ||= 0.0
         @mutex.synchronize do
-          @bonds[identity.to_s] = build_entry(
-            identity,
-            bond: effective_bond,
-            priority: priority,
-            channel_identity: channel_identity,
-            preferred_channel: preferred_channel,
-            last_channel: last_channel,
-            origin: origin,
-            strength: strength,
-            reinforcement_count: reinforcement_count || 0,
-            last_reinforced: last_reinforced
-          )
-          @dirty = true
+          return nil if blocked?(identity: identity)
+
+          if (existing = @bonds[identity])
+            update_registration(existing: existing, bond: effective_bond, attributes: attributes)
+          else
+            attributes[:origin] ||= :provisional if effective_bond == :partner
+            @bonds[identity] = attributes.merge(identity: identity, bond: effective_bond, role: effective_bond,
+                                                since: Time.now.utc)
+          end
+          @revision += 1
+          snapshot(@bonds[identity])
         end
-        log.info(
-          "BondRegistry registered identity=#{identity} bond=#{effective_bond} " \
-          "origin=#{origin} strength=#{strength}"
-        )
       end
 
-      def build_entry(identity, bond:, priority:, channel_identity:, preferred_channel:,
-                      last_channel:, origin: nil, strength: 0.0, reinforcement_count: 0,
-                      last_reinforced: nil)
-        {
-          identity: identity.to_s,
-          bond: bond,
-          role: bond,
-          priority: priority.to_sym,
-          since: Time.now.utc,
-          channel_identity: channel_identity&.to_s,
-          preferred_channel: preferred_channel&.to_sym,
-          last_channel: last_channel&.to_sym,
-          origin: origin,
-          strength: strength,
-          reinforcement_count: reinforcement_count,
-          last_reinforced: last_reinforced
-        }
+      def entry(identity:)
+        @mutex.synchronize { snapshot(@bonds[identity.to_s]) }
       end
 
       def bond(identity)
-        entry = @bonds[identity.to_s]
-        entry ? entry[:bond] : :unknown
+        return :unknown if blocked?(identity: identity)
+
+        entry(identity: identity)&.dig(:bond) || :unknown
       end
 
       def role(identity)
         bond(identity)
       end
 
-      # Returns the channel-native identity for the given principal identity.
       def channel_identity(identity)
-        entry = @bonds[identity.to_s]
-        return nil unless entry
+        return nil if blocked?(identity: identity)
 
-        entry[:channel_identity] || entry[:identity]
+        value = entry(identity: identity)
+        value && (value[:channel_identity] || value[:identity])
       end
 
-      # Partner check: must be :partner bond AND strength >= partner_threshold.
       def partner?(identity)
-        entry = @bonds[identity.to_s]
-        return false unless entry
+        return false if blocked?(identity: identity)
 
-        entry[:bond] == :partner && (entry[:strength] || 0) >= partner_threshold
+        value = entry(identity: identity)
+        (value && value[:bond] == :partner && value[:strength].to_f >= partner_threshold) || false
       end
 
       def partner_threshold
@@ -99,176 +80,116 @@ module Legion
 
       def gaia_settings
         Legion::Gaia.settings
-      rescue StandardError
-        nil
       end
 
       def all_bonds
-        @bonds.values
+        @mutex.synchronize { @bonds.values.map { |value| snapshot(value) } }
       end
 
       def record_channel(identity, channel_id:, channel_identity: nil)
         @mutex.synchronize do
-          entry = @bonds[identity.to_s]
-          return nil unless entry
+          return nil if blocked?(identity: identity)
 
-          channel = channel_id&.to_sym
-          updated = entry.merge(
-            last_channel: channel || entry[:last_channel],
-            preferred_channel: entry[:preferred_channel] || channel,
-            channel_identity: entry[:channel_identity] || channel_identity&.to_s
-          )
-          @bonds[identity.to_s] = updated
-          @dirty = true
-          updated
+          value = @bonds[identity.to_s]
+          return nil unless value
+
+          value[:last_channel] = channel_id.to_sym if channel_id
+          value[:preferred_channel] ||= channel_id&.to_sym
+          value[:channel_identity] ||= channel_identity&.to_s
+          @revision += 1
+          snapshot(value)
         end
       end
 
-      # Returns the single best partner bond entry.
-      # Sorted by highest strength first, then channel_identity, priority, earliest.
       def partner_entry
-        partners = @bonds.values.select do |b|
-          b[:bond] == :partner && (b[:strength] || 0) >= partner_threshold
-        end
-        return nil if partners.empty?
+        partners = all_bonds.select do |value|
+          next false if blocked?(identity: value[:identity])
 
-        sorted = partners.sort_by { |b| [-b[:strength], b[:since], b[:identity]] }
-        sorted.find { |b| b[:channel_identity] } ||
-          sorted.find { |b| b[:priority] == :primary } ||
-          sorted.first
+          value[:bond] == :partner && value[:strength].to_f >= partner_threshold
+        end
+        partners.sort_by! { |value| [-value[:strength], value[:since], value[:identity]] }
+        partners.find { |value| value[:channel_identity] } || partners.find do |value|
+          value[:priority] == :primary
+        end || partners.first
       end
 
-      # §12.3 reinforcement formula with diminishing returns.
       def reinforce(identity, direct_address: false, new_channel: false, multiplier: 1.0)
-        identity = identity.to_s
         @mutex.synchronize do
-          entry = @bonds[identity]
-          return entry unless entry
+          return nil if blocked?(identity: identity)
 
-          r              = gaia_settings&.dig(:partner, :r_amount) || 0.1
-          weight         = 1.0
-          weight        *= gaia_settings&.dig(:partner, :direct_address_weight) || 1.5 if direct_address
-          weight        *= gaia_settings&.dig(:partner, :corroboration_weight) || 1.3 if new_channel
+          value = @bonds[identity.to_s]
+          return nil unless value
 
-          delta          = r * (1 - (entry[:strength] || 0)) * weight * multiplier
-          new_strength   = [(entry[:strength] || 0) + delta, 1.0].min
-
-          entry[:strength]            = new_strength
-          entry[:reinforcement_count] = (entry[:reinforcement_count] || 0) + 1
-          entry[:last_reinforced]     = Time.now.utc
-          @dirty                      = true
-
-          # Provisional -> earned on threshold crossing
-          if entry[:origin] == :provisional && new_strength >= partner_threshold
-            entry[:origin] = :earned
-            log.info(
-              "[gaia] bond promoted identity=#{identity} strength=#{new_strength.round(3)} " \
-              'origin=:earned'
-            )
-          end
-
-          entry
+          weight = 1.0
+          weight *= gaia_settings&.dig(:partner, :direct_address_weight) || 1.5 if direct_address
+          weight *= gaia_settings&.dig(:partner, :corroboration_weight) || 1.3 if new_channel
+          rate = gaia_settings&.dig(:partner, :r_amount) || 0.1
+          value[:strength] = (value[:strength] + (rate * (1 - value[:strength]) * weight * multiplier)).clamp(0.0, 1.0)
+          value[:reinforcement_count] += 1
+          value[:last_reinforced] = Time.now.utc
+          value[:origin] = :earned if value[:origin] == :provisional && value[:strength] >= partner_threshold
+          @revision += 1
+          snapshot(value)
         end
       end
 
-      # Apply decay to all bond strengths (spec §12.3, IDENTITY class rate).
       def apply_decay
         rate = gaia_settings&.dig(:partner, :identity_decay_rate) || 0.002
         @mutex.synchronize do
-          @bonds.each_value do |entry|
-            next unless entry.key?(:strength) && entry[:strength] > 0.0
+          @bonds.each_value do |value|
+            next if blocked?(identity: value[:identity])
 
-            entry[:strength] = (entry[:strength] * (1 - rate)).max(0.0)
+            value[:strength] = (value[:strength] * (1 - rate)).clamp(0.0, 1.0)
           end
-          @dirty = true
+          @revision += 1 unless @bonds.empty?
         end
-      rescue StandardError => e
-        handle_exception(e, level: :warn, operation: 'gaia.bond_registry.apply_decay')
       end
-
-      # ---- Persistence (TrackerPattern) ----
 
       def dirty?
-        @dirty == true
+        @mutex.synchronize { @revision != @clean_revision }
       end
 
-      def mark_clean!
-        @dirty = false
+      def dirty_revision
+        @mutex.synchronize { @revision }
       end
 
-      # Apollo-upsert shape for TrackerPersistence.
-      def to_apollo_entries
-        @bonds.values.map do |entry|
-          {
-            content: Legion::JSON.dump(entry),
-            tags: TO_APOLLO_TAGS,
-            confidence: entry[:strength] || 0.0,
-            access_scope: 'local'
-          }
-        end
+      def mark_clean!(revision: dirty_revision)
+        @mutex.synchronize { @clean_revision = revision if @revision == revision }
       end
 
-      def from_apollo(store: nil)
-        return unless store
-
-        result = store.query(text: 'bond', tags: TO_APOLLO_TAGS)
-        return unless result.is_a?(Hash) && result[:success]
-
-        result[:results]&.each do |entry|
-          parsed = Legion::JSON.load(entry[:content])
-          next unless parsed[:identity]
-
-          register(
-            parsed[:identity],
-            bond: parsed[:bond],
-            priority: parsed[:priority] || :normal,
-            channel_identity: parsed[:channel_identity],
-            preferred_channel: parsed[:preferred_channel],
-            last_channel: parsed[:last_channel],
-            origin: :hydrated,
-            strength: parsed[:strength] || 0.0,
-            reinforcement_count: parsed[:reinforcement_count] || 0,
-            last_reinforced: parsed[:last_reinforced]
-          )
-        rescue StandardError => e
-          log.debug("[gaia] BondRegistry skipped unparseable Apollo entry: #{e.message}")
-        end
-        log.info("[gaia] BondRegistry hydrated from Apollo count=#{result[:results]&.size || 0}")
-      rescue StandardError => e
-        handle_exception(e, level: :warn, operation: 'gaia.bond_registry.from_apollo')
-      end
-
-      # Hydrate from Apollo — structured JSON first, legacy markdown fallback.
-      def hydrate_from_apollo(store: nil)
-        return unless store
-
-        json_hydrated = try_json_hydration(store)
-        return if json_hydrated
-
-        try_legacy_hydration(store)
-      rescue StandardError => e
-        handle_exception(e, level: :warn, operation: 'gaia.bond_registry.hydrate_from_apollo')
+      def lifecycle_identities
+        @mutex.synchronize { @bond_states.keys.dup }
       end
 
       def erase_partner!(identity:)
-        erased = false
         @mutex.synchronize do
-          erased = @bonds.delete(identity.to_s)
-          @dirty = true if erased
+          removed = @bonds.delete(identity.to_s)
+          @revision += 1 if removed
+          { erased: true, count: removed ? 1 : 0, durable: false }
         end
-        log.info("[gaia] bond erased identity=#{identity}") if erased
-        if defined?(Legion::Events) && Legion::Events.respond_to?(:emit)
-          Legion::Events.emit('gaia.bond.erased', identity: identity)
-        end
-        { erased: !erased.nil?, identity: identity }
       end
 
+      # In-memory barrier only. Privacy operations must call persist_lifecycle.
       def set_bond_state(identity, state)
-        @bond_states[identity.to_s] = state.to_sym
+        raise ArgumentError, 'invalid lifecycle barrier' unless BLOCKED_STATES.include?(state.to_sym)
+
+        @mutex.synchronize { @bond_states[identity.to_s] = state.to_sym }
       end
 
       def bond_state(identity)
         @bond_states[identity.to_s]
+      end
+
+      def blocked?(identity:)
+        !@lifecycle_ready || BLOCKED_STATES.include?(@bond_states[identity.to_s])
+      end
+
+      def lifecycle_ready?
+        @lifecycle_ready == true
+      end
+
+      def mark_lifecycle_unavailable!
+        @mutex.synchronize { @lifecycle_ready = false }
       end
 
       def terminating?(identity)
@@ -281,102 +202,40 @@ module Legion
 
       def reset!
         @mutex.synchronize do
-          @bonds = Concurrent::Hash.new
-          @bond_states = Concurrent::Hash.new
-          @dirty = false
-        end
-        log.debug('BondRegistry reset')
-      end
-
-      # ---- Private helpers ----
-
-      def try_json_hydration(store) # rubocop:disable Naming/PredicateMethod
-        result = store.query(text: 'bond', tags: TO_APOLLO_TAGS)
-        return false unless result.is_a?(Hash) && result[:success]
-        return false unless result[:results]&.any?
-
-        count = 0
-        result[:results].each { |e| count += 1 if hydrate_json_entry(e) }
-        return false unless count.positive?
-
-        log.info("[gaia] BondRegistry hydrated #{count} JSON entries")
-        true
-      end
-
-      def hydrate_json_entry(entry)
-        return unless entry[:content].to_s.start_with?('{')
-
-        parsed = Legion::JSON.load(entry[:content])
-        return unless parsed[:identity]
-
-        register(
-          parsed[:identity],
-          bond: parsed[:bond],
-          priority: parsed[:priority] || :normal,
-          channel_identity: parsed[:channel_identity],
-          preferred_channel: parsed[:preferred_channel],
-          last_channel: parsed[:last_channel],
-          origin: :hydrated,
-          strength: parsed[:strength] || 0.0,
-          reinforcement_count: parsed[:reinforcement_count] || 0,
-          last_reinforced: parsed[:last_reinforced]
-        )
-      rescue StandardError => e
-        log.debug("[gaia] BondRegistry skipped unparseable entry: #{e.message}")
-      end
-
-      def try_legacy_hydration(store)
-        result = store.query(text: 'partner', tags: %w[self-knowledge])
-        return unless result.is_a?(Hash) && result[:success] && result[:results]&.any?
-
-        result[:results].each { |e| hydrate_legacy_entry(e) }
-        log.info("[gaia] BondRegistry hydrated #{result[:results].size} legacy entries")
-      end
-
-      def hydrate_legacy_entry(entry)
-        content = entry[:content].to_s
-        return unless content.match?(/partner/i)
-
-        identities = extract_identity_keys(content)
-        return if identities.empty?
-
-        priority = content.match?(/primary/i) ? :primary : :normal
-        cid      = extract_channel_identity(content)
-        pref     = extract_channel(content, 'preferred')
-        last_c   = extract_channel(content, 'last')
-
-        identities.each do |id|
-          register(id, bond: :partner, priority: priority, channel_identity: cid,
-                       preferred_channel: pref, last_channel: last_c)
+          @bonds = {}
+          @bond_states = {}
+          @revision = 0
+          @clean_revision = 0
+          @lifecycle_ready = true
         end
       end
 
-      def extract_identity_keys(content)
-        match = content.match(/identity\s*keys?[:\s]+([^\n]+)/i)
-        return [] unless match
-
-        match[1].split(/[,\s]+/).map(&:strip).reject(&:empty?)
+      def registration_attributes(priority: :normal, channel_identity: nil, preferred_channel: nil, last_channel: nil,
+                                  origin: nil, strength: nil, reinforcement_count: nil, last_reinforced: nil)
+        { priority: priority.to_sym, channel_identity: channel_identity&.to_s,
+          preferred_channel: preferred_channel&.to_sym, last_channel: last_channel&.to_sym,
+          origin: origin, strength: strength || 0.0, reinforcement_count: reinforcement_count || 0,
+          last_reinforced: last_reinforced }
       end
+      private_class_method :registration_attributes
 
-      def extract_channel_identity(content)
-        match = content.match(/channel[_\s-]*identity[:\s]+([^\n]+)/i)
-        first_match_value(match)
+      def update_registration(existing:, bond:, attributes:)
+        existing[:channel_identity] ||= attributes[:channel_identity]
+        existing[:preferred_channel] ||= attributes[:preferred_channel]
+        existing[:last_channel] = attributes[:last_channel] if attributes[:last_channel]
+        return unless existing[:bond] == :unknown && bond != :unknown
+
+        existing[:bond] = bond
+        existing[:role] = bond
+        existing[:origin] = attributes[:origin] || (bond == :partner ? :provisional : nil)
+        existing[:strength] = [existing[:strength], attributes[:strength]].max
       end
+      private_class_method :update_registration
 
-      def extract_channel(content, kind)
-        match = content.match(/#{kind}[_\s-]*channel[:\s]+([^\n]+)/i)
-        first_match_value(match)
+      def snapshot(value)
+        value&.transform_values { |item| item.is_a?(String) || item.is_a?(Time) ? item.dup : item }
       end
-
-      def first_match_value(match)
-        return nil unless match
-
-        match[1].split(/[,\s]+/).first&.strip
-      end
-
-      private_class_method :build_entry, :extract_identity_keys, :extract_channel_identity,
-                           :extract_channel, :first_match_value, :try_json_hydration,
-                           :hydrate_json_entry, :try_legacy_hydration, :hydrate_legacy_entry
+      private_class_method :snapshot
     end
   end
 end

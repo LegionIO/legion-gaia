@@ -5,8 +5,6 @@ require 'securerandom'
 module Legion
   module Gaia
     class SessionStore
-      UUID_PATTERN = /\A[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\z/i
-
       Session = ::Data.define(:id, :identity, :channel_history, :created_at, :last_active_at) do
         def initialize(identity:, id: SecureRandom.uuid, channel_history: [],
                        created_at: Time.now.utc, last_active_at: Time.now.utc)
@@ -17,16 +15,21 @@ module Legion
       def initialize(ttl: 86_400)
         @sessions = {}
         @identity_index = {}
-        @canonical_to_uuid = {}
-        @session_identity_index = {}
         @ttl = ttl
         @mutex = Mutex.new
       end
 
-      def find_or_create(identity:, canonical_name: nil)
+      def find_or_create(identity:, session_continuity_id: nil, **)
         @mutex.synchronize do
           normalized = normalize_identity(identity)
-          session_id = resolve_session_id(normalized, canonical_name: canonical_name)
+          raise ArgumentError, 'identity is required' if normalized.empty?
+
+          continuity = @sessions[session_continuity_id]
+          session_id = if continuity && continuity.identity == normalized
+                         continuity.id
+                       else
+                         @identity_index[normalized]
+                       end
 
           if session_id && @sessions[session_id]
             session = @sessions[session_id]
@@ -38,8 +41,6 @@ module Legion
           session = Session.new(identity: normalized)
           @sessions[session.id] = session
           @identity_index[normalized] = session.id
-          @session_identity_index[session.id] = [normalized]
-          @canonical_to_uuid[canonical_name.to_s.downcase] = normalized if canonical_name && uuid?(normalized)
           session
         end
       end
@@ -86,40 +87,15 @@ module Legion
         @mutex.synchronize do
           normalized = normalize_identity(identity)
           session_id = @identity_index[normalized]
-          remove_unlocked(session_id) if session_id
+          removed = remove_unlocked(session_id) if session_id
+          { erased: true, count: removed ? 1 : 0, durable: false }
         end
       end
 
       private
 
-      def uuid?(identity)
-        UUID_PATTERN.match?(identity.to_s)
-      end
-
       def normalize_identity(identity)
-        str = identity.to_s
-        uuid?(str) ? str : str.downcase
-      end
-
-      def resolve_session_id(normalized_identity, canonical_name:)
-        existing = @identity_index[normalized_identity]
-        return existing if existing
-
-        return nil unless canonical_name && uuid?(normalized_identity)
-
-        canonical_key = canonical_name.to_s.downcase
-        # Check if there is an existing string-keyed session for this canonical_name
-        old_session_id = @identity_index[canonical_key]
-        return nil unless old_session_id && @sessions[old_session_id]
-
-        # Migrate string-keyed session to UUID key.
-        # Keep the canonical string key in @identity_index so callers still
-        # using the old string identity continue to resolve the same session
-        # during the migration window.
-        @identity_index[normalized_identity] = old_session_id
-        @canonical_to_uuid[canonical_key] = normalized_identity
-        (@session_identity_index[old_session_id] ||= []).push(canonical_key, normalized_identity).uniq!
-        old_session_id
+        identity.to_s
       end
 
       def expired?(session)
@@ -128,12 +104,7 @@ module Legion
 
       def remove_unlocked(session_id)
         session = @sessions.delete(session_id)
-        if session
-          removed_keys = @session_identity_index.delete(session_id) || []
-          removed_keys.each { |k| @identity_index.delete(k) }
-          uuid_set = removed_keys.to_set
-          @canonical_to_uuid.delete_if { |_, v| uuid_set.include?(v) }
-        end
+        @identity_index.delete(session.identity) if session && @identity_index[session.identity] == session_id
         session
       end
     end

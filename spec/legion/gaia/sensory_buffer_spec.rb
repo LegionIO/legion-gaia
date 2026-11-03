@@ -52,4 +52,24 @@ RSpec.describe Legion::Gaia::SensoryBuffer do
       expect(buffer.empty?).to be false
     end
   end
+
+  describe '#drain_scope' do
+    it 'drains one human conversation while retaining other humans and conversations' do
+      buffer.push(identity: 'A', conversation_id: 'one', value: 'a1')
+      buffer.push(identity: 'B', conversation_id: 'one', value: 'b1')
+      buffer.push(identity: 'A', conversation_id: 'two', value: 'a2')
+      buffer.push(identity: 'A', conversation_id: 'one', value: 'a3')
+      expect(buffer.drain_scope.map { |signal| signal[:value] }).to eq(%w[a1 a3])
+      expect(buffer.drain_scope.map { |signal| signal[:value] }).to eq(['b1'])
+      expect(buffer.drain_scope.map { |signal| signal[:value] }).to eq(['a2'])
+      expect(buffer.drain_scope).to eq([])
+    end
+
+    it 'erases only the terminated identity before its queued work can run' do
+      buffer.push(identity: 'A', conversation_id: 'one', value: 'private')
+      buffer.push(identity: 'B', conversation_id: 'one', value: 'retained')
+      buffer.erase_identity(identity: 'A')
+      expect(buffer.drain_scope.map { |signal| signal[:value] }).to eq(['retained'])
+    end
+  end
 end

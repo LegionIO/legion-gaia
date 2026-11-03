@@ -29,6 +29,9 @@ module Legion
       end
 
       def evaluate(frame)
+        identity = frame.metadata[:identity]
+        return :discard if identity && Legion::Gaia::BondRegistry.blocked?(identity: identity)
+
         return :deliver unless @enabled
         return :deliver if priority_overrides?(frame)
         return :delay if @schedule_evaluator.quiet?
@@ -53,6 +56,10 @@ module Legion
         @delay_queue.enqueue(frame)
       end
 
+      def erase_identity(identity:)
+        @delay_queue.erase_identity(identity: identity)
+      end
+
       def process_delayed
         candidates = @delay_queue.drain_expired
 
@@ -64,9 +71,10 @@ module Legion
         deliverable = []
         candidates.each do |entry|
           frame = entry[:frame]
-          if evaluate(frame) == :deliver
+          case evaluate(frame)
+          when :deliver
             deliverable << frame
-          else
+          when :delay
             @delay_queue.requeue(entry)
           end
         end

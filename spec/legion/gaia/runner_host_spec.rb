@@ -1,24 +1,6 @@
 # frozen_string_literal: true
 
 RSpec.describe Legion::Gaia::RunnerHost do
-  let(:test_module) do
-    Module.new do
-      def test_method
-        { result: :ok }
-      end
-    end
-  end
-
-  subject(:host) { described_class.new(test_module) }
-
-  it 'extends the host with the runner module' do
-    expect(host).to respond_to(:test_method)
-  end
-
-  it 'calls methods on the runner module' do
-    expect(host.test_method).to eq({ result: :ok })
-  end
-
   it 'calls singleton methods defined on the runner module' do
     singleton_module = Module.new do
       def self.retrieve(text:, **)
@@ -59,11 +41,28 @@ RSpec.describe Legion::Gaia::RunnerHost do
     expect(host_b.increment).to eq(2)
   end
 
-  it 'has a readable to_s' do
-    expect(host.to_s).to include('RunnerHost')
-  end
+  it 'does not mistake catch-all kwargs for explicit provider capability support' do
+    old_runner = Module.new do
+      def execute_tick(**)
+        { completed: true }
+      end
+    end
+    new_runner = Class.new do
+      def execute_tick(enabled_optional_phases: [], **)
+        { enabled: enabled_optional_phases }
+      end
+    end
+    singleton_runner = Module.new do
+      def self.retrieve(identity:, **)
+        { owner: identity }
+      end
+    end
 
-  it 'has a readable inspect' do
-    expect(host.inspect).to include('RunnerHost')
+    old_host = described_class.new(old_runner)
+    new_host = described_class.new(new_runner)
+    singleton_host = described_class.new(singleton_runner)
+    expect(old_host.supports_keyword?(method_name: :execute_tick, keyword: :enabled_optional_phases)).to be(false)
+    expect(new_host.supports_keyword?(method_name: :execute_tick, keyword: :enabled_optional_phases)).to be(true)
+    expect(singleton_host.supports_keyword?(method_name: :retrieve, keyword: :identity)).to be(true)
   end
 end

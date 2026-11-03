@@ -47,6 +47,10 @@ module Legion
           return { delivered: false, reason: :adapter_stopped, channel_id: output_frame.channel_id }
         end
 
+        if output_frame.metadata[:proactive] && adapter.respond_to?(:deliver_proactive)
+          return normalize_delivery_result(adapter.deliver_proactive(output_frame), channel_id: output_frame.channel_id)
+        end
+
         rendered = adapter.translate_outbound(output_frame)
         normalize_delivery_result(deliver_to_adapter(adapter, rendered, output_frame),
                                   channel_id: output_frame.channel_id)
@@ -64,6 +68,14 @@ module Legion
 
       def deliver_to_adapter(adapter, rendered, output_frame)
         conversation_id = output_frame.metadata[:conversation_id]
+        if output_frame.channel_id.to_s == 'teams'
+          tenant_id = output_frame.metadata[:tenant_id]
+          return { error: :no_target_conversation } if conversation_id.to_s.empty?
+          return { error: :no_target_tenant } if tenant_id.to_s.empty?
+
+          return adapter.deliver(rendered, conversation_id: conversation_id, tenant_id: tenant_id)
+        end
+
         if conversation_id && deliver_accepts_conversation_id?(adapter)
           adapter.deliver(rendered, conversation_id: conversation_id)
         else

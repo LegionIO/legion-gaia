@@ -9,7 +9,44 @@
 
 module Legion
   module Gaia
+    module RouteInput
+      def authenticated_identity(env:)
+        claims = env['legion.auth']
+        return nil unless claims.is_a?(Hash)
+
+        identity = claims[:principal_id] || claims[:identity] || claims[:sub] || claims[:owner_msid]
+        identity unless identity.to_s.strip.empty?
+      end
+
+      def ingest_metadata(body:, identity:)
+        supplied = body[:metadata].is_a?(Hash) ? body[:metadata] : {}
+        metadata = {
+          source_type: :human_direct, salience: 0.8,
+          conversation_id: body[:conversation_id] || supplied[:conversation_id],
+          exchange_id: body[:exchange_id] || supplied[:exchange_id]
+        }
+        return metadata unless identity
+
+        %i[advisory_id in_reply_to response_exchange_id corrected_constraint domain].each do |key|
+          metadata[key] = body.fetch(key) { supplied[key] } if body.key?(key) || supplied.key?(key)
+        end
+        prediction = body[:prediction_request] || supplied[:prediction_request]
+        if prediction.is_a?(Hash)
+          metadata[:prediction_request] = prediction.slice(:domain, :description, :expected_outcome)
+        end
+        outcome = body[:cognitive_outcome] || supplied[:cognitive_outcome]
+        if outcome.is_a?(Hash)
+          metadata[:cognitive_outcome] = outcome.slice(:prediction_id, :intention_id, :source_exchange_id,
+                                                       :outcome, :actual, :confirmation)
+        end
+        metadata
+      end
+    end
+    private_constant :RouteInput
+
     module Routes
+      extend RouteInput
+
       def self.registered(app) # rubocop:disable Metrics/AbcSize
         app.helpers do # rubocop:disable Metrics/BlockLength
           unless method_defined?(:gaia_available?)
@@ -69,7 +106,8 @@ module Legion
       def self.register_status_route(app)
         app.get '/api/gaia/status' do
           if gaia_available?
-            json_response(Legion::Gaia.status)
+            identity = Routes.authenticated_identity(env: request.env)
+            json_response(Legion::Gaia.status(identity: identity))
           else
             json_response({ started: false }, status_code: 503)
           end
@@ -79,6 +117,8 @@ module Legion
       def self.register_ticks_route(app)
         app.get '/api/gaia/ticks' do
           halt 503, json_error('gaia_unavailable', 'gaia is not started') unless gaia_available?
+          identity = Routes.authenticated_identity(env: request.env)
+          halt 401, json_error('authentication_required', 'authenticated owner is required') unless identity
 
           max_limit =
             if defined?(Legion::Gaia::TickHistory) && Legion::Gaia::TickHistory.const_defined?(:MAX_ENTRIES)
@@ -88,7 +128,8 @@ module Legion
             end
 
           limit = (params[:limit] || 50).to_i.clamp(1, max_limit)
-          events = Legion::Gaia.tick_history&.recent(limit: limit) || []
+          events = Legion::Gaia.tick_history&.recent(limit: limit, identity: identity,
+                                                     conversation_id: params[:conversation_id]) || []
           json_response({ events: events })
         end
       end
@@ -176,7 +217,7 @@ module Legion
 
           body = Legion::JSON.load(request.body.read)
           content  = body[:content] || body['content']
-          identity = body[:identity] || body['identity'] || 'unknown'
+          identity = Routes.authenticated_identity(env: request.env)
           channel  = (body[:channel_id] || body['channel_id'] || 'cli').to_sym
 
           halt 400, json_error('missing_content', 'content is required') if content.to_s.empty?
@@ -186,12 +227,15 @@ module Legion
             channel_id: channel,
             content_type: :text,
             auth_context: { identity: identity },
-            metadata: { source_type: :human_direct, salience: 0.8 }
+            principal_id: request.env['legion.auth']&.dig(:principal_id),
+            session_continuity_id: body[:session_continuity_id],
+            metadata: Routes.ingest_metadata(body: body, identity: identity)
           )
 
-          Legion::Gaia.ingest(frame)
-          Legion::Logging.info "API: gaia ingest frame_id=#{frame.id} identity=#{identity}"
-          json_response({ status: 'accepted', frame_id: frame.id })
+          result = Legion::Gaia.ingest(frame)
+          Legion::Logging.info "API: gaia ingest frame_id=#{frame.id} ingested=#{result[:ingested]}"
+          status = result[:ingested] ? 'accepted' : 'rejected'
+          json_response(result.merge(status: status, frame_id: frame.id), status_code: result[:ingested] ? 200 : 409)
         end
       end
 
@@ -199,6 +243,9 @@ module Legion
         app.delete '/api/gaia/bond/:identity' do
           identity = params[:identity]
           halt 400, json_error('missing_identity', 'identity is required') if identity.to_s.empty?
+          unless Routes.authenticated_identity(env: request.env).to_s == identity.to_s
+            halt 403, json_error('identity_mismatch', 'authenticated owner is required')
+          end
 
           result = Legion::Gaia::DeathProtocol.terminate_bond(identity: identity, confirm: true)
           json_response(result)
@@ -209,6 +256,9 @@ module Legion
         app.get '/api/gaia/partner/:identity/report' do
           identity = params[:identity]
           halt 400, json_error('missing_identity', 'identity is required') if identity.to_s.empty?
+          unless Routes.authenticated_identity(env: request.env).to_s == identity.to_s
+            halt 403, json_error('identity_mismatch', 'authenticated owner is required')
+          end
 
           result = Legion::Gaia::Disclosure.report(identity: identity)
           json_response(result)

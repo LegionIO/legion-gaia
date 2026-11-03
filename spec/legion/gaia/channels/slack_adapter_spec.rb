@@ -42,13 +42,27 @@ RSpec.describe Legion::Gaia::Channels::SlackAdapter do
       frame = adapter.translate_inbound(slack_event)
       expect(frame.auth_context[:user_id]).to eq('U12345')
       expect(frame.auth_context[:team_id]).to eq('T11111')
-      expect(frame.auth_context[:identity]).to eq('U12345')
+      expect(frame.authenticated_identity).to eq('slack:T11111:U12345')
     end
 
     it 'extracts Slack metadata' do
       frame = adapter.translate_inbound(slack_event)
       expect(frame.metadata[:slack_channel]).to eq('C67890')
       expect(frame.metadata[:slack_ts]).to eq('1234567890.123456')
+    end
+
+    it 'preserves the thread and exchange without sharing identities across teams' do
+      frame = adapter.translate_inbound(slack_event.merge('thread_ts' => 'thread-1'))
+      other = adapter.translate_inbound(slack_event.merge('team' => 'T22222'))
+      expect(frame.to_signal).to include(conversation_id: 'thread-1', exchange_id: '1234567890.123456')
+      expect(other.authenticated_identity).not_to eq(frame.authenticated_identity)
+      mapped = adapter.translate_inbound(slack_event, auth_context: { principal_id: 'principal-a' })
+      expect(mapped.authenticated_identity).to eq('principal-a')
+    end
+
+    it 'retains the team scope from a verified Events API envelope' do
+      envelope = { 'team_id' => 'T22222', 'event' => slack_event.except('team') }
+      expect(adapter.translate_inbound(envelope).authenticated_identity).to eq('slack:T22222:U12345')
     end
 
     it 'strips bot mentions' do
@@ -88,6 +102,10 @@ RSpec.describe Legion::Gaia::Channels::SlackAdapter do
       expect(result[:error]).to eq(:slack_runner_not_available)
     end
 
+    it 'never replaces an explicit channel destination with the default webhook' do
+      expect(adapter.deliver({ text: 'private', channel: 'C67890' })).to eq({ error: :no_bot_token })
+    end
+
     context 'with bot_token and no webhook (Fix 3: deliver_via_api)' do
       subject(:adapter) { described_class.new(bot_token: 'xoxb-test') }
 
@@ -103,7 +121,7 @@ RSpec.describe Legion::Gaia::Channels::SlackAdapter do
       it 'posts to Slack API and returns delivered with ts on success' do
         allow(mock_response).to receive(:body)
           .and_return(::JSON.generate({ 'ok' => true, 'ts' => '1234567890.000001' })) # rubocop:disable Style/RedundantConstantBase
-        result = adapter.deliver({ text: 'hello' })
+        result = adapter.deliver({ text: 'hello', channel: 'C67890' })
         expect(result[:delivered]).to be true
         expect(result[:ts]).to eq('1234567890.000001')
       end
@@ -111,15 +129,29 @@ RSpec.describe Legion::Gaia::Channels::SlackAdapter do
       it 'returns error key from API on failure' do
         allow(mock_response).to receive(:body)
           .and_return(::JSON.generate({ 'ok' => false, 'error' => 'channel_not_found' })) # rubocop:disable Style/RedundantConstantBase
-        result = adapter.deliver({ text: 'hello' })
+        result = adapter.deliver({ text: 'hello', channel: 'C67890' })
         expect(result[:error]).to eq('channel_not_found')
       end
 
       it 'returns network_error on exception' do
         allow(mock_http).to receive(:request).and_raise(StandardError, 'connection refused')
-        result = adapter.deliver({ text: 'hello' })
+        result = adapter.deliver({ text: 'hello', channel: 'C67890' })
         expect(result[:error]).to eq(:network_error)
         expect(result[:message]).to include('connection refused')
+      end
+
+      it 'does not guess a channel when a destination is missing' do
+        expect(mock_http).not_to receive(:request)
+        expect(adapter.deliver({ text: 'private' })).to eq({ error: :no_target_channel })
+      end
+
+      it 'sends the exact destination and thread to the provider boundary' do
+        allow(mock_response).to receive(:body).and_return(JSON.generate(ok: true, ts: 'receipt'))
+        expect(mock_http).to receive(:request) do |request|
+          expect(JSON.parse(request.body)).to eq('channel' => 'C67890', 'text' => 'reply', 'thread_ts' => 'thread-1')
+          mock_response
+        end
+        expect(adapter.deliver({ text: 'reply', channel: 'C67890', thread_ts: 'thread-1' })[:delivered]).to be true
       end
     end
   end

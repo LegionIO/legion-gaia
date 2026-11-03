@@ -3,8 +3,10 @@
 require 'json'
 
 RSpec.describe Legion::Gaia::Channels::Teams::WebhookHandler do
-  let(:adapter) { Legion::Gaia::Channels::TeamsAdapter.new }
+  let(:adapter) { Legion::Gaia::Channels::TeamsAdapter.new(app_id: 'test-app-id') }
   subject(:handler) { described_class.new(adapter) }
+
+  before { allow(adapter).to receive(:validate_inbound).with('verified-token').and_return({ valid: true }) }
 
   let(:message_activity) do
     {
@@ -23,7 +25,7 @@ RSpec.describe Legion::Gaia::Channels::Teams::WebhookHandler do
   describe '#handle' do
     context 'with message activity' do
       it 'translates and returns success' do
-        result = handler.handle(request_body: message_activity)
+        result = handler.handle(request_body: message_activity, auth_header: 'Bearer verified-token')
         expect(result[:status]).to eq(200)
         expect(result[:type]).to eq(:message_ingested)
         expect(result[:frame_id]).to be_a(String)
@@ -31,7 +33,7 @@ RSpec.describe Legion::Gaia::Channels::Teams::WebhookHandler do
 
       it 'parses JSON string body' do
         json_body = JSON.dump(message_activity)
-        result = handler.handle(request_body: json_body)
+        result = handler.handle(request_body: json_body, auth_header: 'Bearer verified-token')
         expect(result[:status]).to eq(200)
         expect(result[:type]).to eq(:message_ingested)
       end
@@ -47,7 +49,7 @@ RSpec.describe Legion::Gaia::Channels::Teams::WebhookHandler do
       end
 
       it 'returns conversation update response' do
-        result = handler.handle(request_body: update_activity)
+        result = handler.handle(request_body: update_activity, auth_header: 'Bearer verified-token')
         expect(result[:status]).to eq(200)
         expect(result[:type]).to eq(:conversation_update)
         expect(result[:members_added]).to eq(1)
@@ -55,7 +57,7 @@ RSpec.describe Legion::Gaia::Channels::Teams::WebhookHandler do
       end
 
       it 'stores conversation reference' do
-        handler.handle(request_body: update_activity)
+        handler.handle(request_body: update_activity, auth_header: 'Bearer verified-token')
         ref = adapter.conversation_store.lookup('conv-1')
         expect(ref).not_to be_nil
       end
@@ -67,7 +69,7 @@ RSpec.describe Legion::Gaia::Channels::Teams::WebhookHandler do
       end
 
       it 'returns invoke response' do
-        result = handler.handle(request_body: invoke_activity)
+        result = handler.handle(request_body: invoke_activity, auth_header: 'Bearer verified-token')
         expect(result[:status]).to eq(200)
         expect(result[:type]).to eq(:invoke)
         expect(result[:activity_type]).to eq('adaptiveCard/action')
@@ -78,7 +80,7 @@ RSpec.describe Legion::Gaia::Channels::Teams::WebhookHandler do
       let(:unknown_activity) { message_activity.merge('type' => 'typing') }
 
       it 'returns ignored response' do
-        result = handler.handle(request_body: unknown_activity)
+        result = handler.handle(request_body: unknown_activity, auth_header: 'Bearer verified-token')
         expect(result[:status]).to eq(200)
         expect(result[:type]).to eq(:ignored)
       end
@@ -95,14 +97,14 @@ RSpec.describe Legion::Gaia::Channels::Teams::WebhookHandler do
     context 'when translation fails' do
       it 'returns bad request instead of auth failure' do
         allow(adapter).to receive(:translate_inbound).and_return(nil)
-        result = handler.handle(request_body: message_activity)
+        result = handler.handle(request_body: message_activity, auth_header: 'Bearer verified-token')
         expect(result[:status]).to eq(400)
         expect(result[:type]).to eq(:translate_failed)
       end
     end
 
     context 'with auth validation' do
-      let(:adapter) { Legion::Gaia::Channels::TeamsAdapter.new(app_id: 'test-app-id') }
+      before { allow(adapter).to receive(:validate_inbound).and_call_original }
 
       it 'rejects missing auth when an app_id is configured' do
         result = handler.handle(request_body: message_activity)
@@ -114,6 +116,13 @@ RSpec.describe Legion::Gaia::Channels::Teams::WebhookHandler do
         result = handler.handle(request_body: message_activity, auth_header: 'Bearer invalid-token')
         expect(result[:status]).to eq(401)
         expect(result[:type]).to eq(:auth_failed)
+      end
+
+      it 'cannot bypass authentication by omitting app configuration' do
+        unauthenticated = described_class.new(Legion::Gaia::Channels::TeamsAdapter.new)
+        expect(Legion::Gaia).not_to receive(:ingest)
+        result = unauthenticated.handle(request_body: message_activity)
+        expect(result).to include(status: 401, type: :auth_failed, detail: :no_app_id)
       end
     end
   end

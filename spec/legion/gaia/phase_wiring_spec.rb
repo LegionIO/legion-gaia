@@ -1,689 +1,310 @@
 # frozen_string_literal: true
 
 RSpec.describe Legion::Gaia::PhaseWiring do
-  describe 'PHASE_MAP' do
-    it 'is a frozen hash' do
-      expect(described_class::PHASE_MAP).to be_frozen
-    end
-
-    it 'contains all 16 active tick phases' do
-      active_phases = %i[sensory_processing emotional_evaluation memory_retrieval
-                         knowledge_retrieval identity_entropy_check working_memory_integration
-                         procedural_check prediction_engine mesh_interface
-                         social_cognition theory_of_mind gut_instinct
-                         action_selection memory_consolidation homeostasis_regulation
-                         post_tick_reflection]
-      active_phases.each do |phase|
-        expect(described_class::PHASE_MAP).to have_key(phase)
-      end
-    end
-
-    it 'contains all 9 dream cycle phases' do
-      dream_phases = %i[memory_audit association_walk contradiction_resolution
-                        agenda_formation consolidation_commit knowledge_promotion
-                        dream_reflection partner_reflection dream_narration]
-      dream_phases.each do |phase|
-        expect(described_class::PHASE_MAP).to have_key(phase)
-      end
-    end
-
-    it 'has 37 total phases' do
-      expect(described_class::PHASE_MAP.size).to eq(37)
-    end
-
-    it 'each mapping has ext, runner, and fn keys' do
-      described_class::PHASE_MAP.each_value do |value|
-        described_class.mappings_for(value).each do |mapping|
-          expect(mapping).to have_key(:ext)
-          expect(mapping).to have_key(:runner)
-          expect(mapping).to have_key(:fn)
-        end
-      end
-    end
-
-    it 'wires synapse gaia_summary into working_memory_integration' do
-      value = described_class::PHASE_MAP[:working_memory_integration]
-      maps = described_class.mappings_for(value)
-      synapse_entry = maps.find { |m| m[:ext] == :Synapse && m[:runner] == :GaiaReport }
-      expect(synapse_entry).not_to be_nil
-      expect(synapse_entry[:fn]).to eq(:gaia_summary)
-    end
-
-    it 'wires synapse gaia_reflection into post_tick_reflection' do
-      value = described_class::PHASE_MAP[:post_tick_reflection]
-      maps = described_class.mappings_for(value)
-      synapse_entry = maps.find { |m| m[:ext] == :Synapse && m[:runner] == :GaiaReport }
-      expect(synapse_entry).not_to be_nil
-      expect(synapse_entry[:fn]).to eq(:gaia_reflection)
-    end
-
-    it 'preserves primary handler in working_memory_integration' do
-      value = described_class::PHASE_MAP[:working_memory_integration]
-      maps = described_class.mappings_for(value)
-      primary = maps.find { |m| m[:ext] == :Curiosity }
-      expect(primary).not_to be_nil
-      expect(primary[:fn]).to eq(:detect_gaps)
-    end
-
-    it 'preserves primary handler in post_tick_reflection' do
-      value = described_class::PHASE_MAP[:post_tick_reflection]
-      maps = described_class.mappings_for(value)
-      primary = maps.find { |m| m[:ext] == :Reflection }
-      expect(primary).not_to be_nil
-      expect(primary[:fn]).to eq(:reflect)
-    end
+  def phase_call(handlers, phase, signals: [], prior_results: {}, **context)
+    handlers.fetch(phase).call(state: {}, signals: signals, prior_results: prior_results, **context)
   end
 
-  describe 'PHASE_ARGS' do
-    it 'is a frozen hash' do
-      expect(described_class::PHASE_ARGS).to be_frozen
-    end
+  def trace(id:, tags:, content: 'deploy database', strength: 0.5)
+    { trace_id: id, domain_tags: tags, content_payload: content, strength: strength, associated_traces: [] }
+  end
 
-    it 'has an entry for every phase in PHASE_MAP' do
-      described_class::PHASE_MAP.each_key do |phase|
-        expect(described_class::PHASE_ARGS).to have_key(phase),
-                                               "Missing PHASE_ARGS entry for #{phase}"
+  def memory_provider(traces:)
+    Class.new do
+      attr_reader :ranked_ids
+
+      def initialize(traces:)
+        @traces = traces
       end
-    end
 
-    it 'each entry is callable' do
-      described_class::PHASE_ARGS.each_value do |builder|
-        expect(builder).to respond_to(:call)
+      def retrieve_by_domain(domain_tag:, limit:)
+        { traces: @traces.select { |item| item[:domain_tags].include?(domain_tag) }.first(limit) }
       end
+
+      def retrieve_ranked(trace_ids:, **)
+        @ranked_ids = trace_ids
+        { success: true, traces: @traces.select { |item| trace_ids.include?(item[:trace_id]) }
+                                        .map { |item| { trace: item, score: item[:strength] } } }
+      end
+
+      def get_trace(trace_id:)
+        { trace: @traces.find { |item| item[:trace_id] == trace_id } }
+      end
+
+      def hebbian_link(trace_id_a:, trace_id_b:)
+        @coactivations = (@coactivations || 0) + 1
+        if @coactivations >= 2
+          get_trace(trace_id: trace_id_a)[:trace][:associated_traces] << trace_id_b
+          get_trace(trace_id: trace_id_b)[:trace][:associated_traces] << trace_id_a
+        end
+        { linked: true }
+      end
+    end.new(traces: traces)
+  end
+
+  describe 'authorized relevant memory' do
+    it 'ranks only relevant candidates belonging to the current human, without reinforcement' do
+      memory = memory_provider(traces: [
+                                 trace(id: 'alice', tags: %w[deploy owner:alice]),
+                                 trace(id: 'bob', tags: %w[deploy owner:bob], strength: 1.0),
+                                 trace(id: 'other', tags: %w[music owner:alice], content: 'violin', strength: 1.0)
+                               ])
+      handlers = described_class.build_phase_handlers({ Memory_Traces: memory }, identity: 'alice')
+      result = phase_call(handlers, :memory_retrieval, identity: 'alice',
+                                                       signals: [{ value: 'deploy database', tags: ['deploy'] }])
+
+      expect(memory.ranked_ids).to eq(['alice'])
+      expect(result[:traces].map { |entry| entry[:trace][:trace_id] }).to eq(['alice'])
+      expect(result).to include(status: :completed, meaningful: true)
     end
 
-    it 'marks memory_consolidation as deferred maintenance on the heartbeat path' do
-      expect(described_class::PHASE_ARGS[:memory_consolidation].call({})).to eq({ maintenance: false })
+    it 'does not let an anonymous request see private domain candidates' do
+      memory = memory_provider(traces: [trace(id: 'private', tags: %w[deploy owner:alice])])
+      handlers = described_class.build_phase_handlers({ Memory_Traces: memory })
+      result = phase_call(handlers, :memory_audit, signals: [{ value: 'deploy', tags: ['deploy'] }])
+
+      expect(result).to include(status: :skipped, reason: :no_candidates, traces: [])
+      expect(memory.ranked_ids).to be_nil
     end
 
-    it 'skips memory_retrieval when no signals are present' do
-      expect(described_class::PHASE_ARGS[:memory_retrieval].call(signals: [])).to eq(
-        { skip: true, reason: :idle_no_signals }
+    it 'refuses an old global-only memory API rather than borrowing its strongest traces' do
+      runner = Object.new
+      def runner.retrieve_ranked(**)
+        raise 'must not rank without a candidate contract'
+      end
+      handlers = described_class.build_phase_handlers({ Memory_Traces: runner }, identity: 'alice')
+      result = phase_call(handlers, :memory_retrieval, identity: 'alice', signals: [{ value: 'deploy' }])
+      expect(result).to include(status: :unavailable, reason: :authorized_candidate_api_unavailable)
+    end
+
+    it 'unwraps ranked audit entries, but reports a link only after the store actually links them' do
+      memory = memory_provider(traces: [trace(id: 'a', tags: %w[deploy owner:alice]),
+                                        trace(id: 'b', tags: %w[deploy owner:alice])])
+      handlers = described_class.build_phase_handlers({ Memory_Traces: memory, Memory_Consolidation: memory },
+                                                      identity: 'alice')
+      audit = phase_call(handlers, :memory_audit, identity: 'alice', signals: [{ value: 'deploy', tags: ['deploy'] }])
+      first = phase_call(handlers, :association_walk, identity: 'alice', prior_results: { memory_audit: audit })
+      second = phase_call(handlers, :association_walk, identity: 'alice', prior_results: { memory_audit: audit })
+
+      expect(first).to include(coactivated: true, linked: false, trace_id_a: 'a', trace_id_b: 'b')
+      expect(second).to include(linked: true, status: :completed)
+    end
+
+    it 'does not associate unrelated strong traces or cross public/private boundaries' do
+      entries = [trace(id: 'private', tags: %w[deploy owner:alice]), trace(id: 'public', tags: ['deploy']),
+                 trace(id: 'other', tags: %w[music owner:alice])].map { |item| { trace: item, score: 1.0 } }
+      args = described_class.association_args(identity: 'alice', prior_results: { memory_audit: { traces: entries } })
+      expect(args).to include(skip: true, reason: :no_related_candidates)
+    end
+
+    it 'never suppresses knowledge lookup because an unrelated memory happens to be strong' do
+      args = described_class::PHASE_ARGS[:knowledge_retrieval].call(
+        signals: [{ value: 'deploy diagnosis', source_type: :human_direct, principal_id: 7 }],
+        prior_results: { memory_retrieval: { traces: [trace(id: 'music', tags: ['music'], strength: 1.0)] } }
       )
+      expect(args).to include(text: 'deploy diagnosis', requesting_principal_id: 7)
+      expect(args).not_to have_key(:skip)
+    end
+  end
+
+  describe 'truthful phase outcomes' do
+    it 'retains a primary failure when a later handler succeeds' do
+      result = described_class.normalize_phase_result([{ success: false, error: :storage_failed },
+                                                       { success: true, synced: 2 }])
+      expect(result).to include(status: :failed, success: false, error: :storage_failed)
+      expect(result[:handlers].last).to include(synced: 2)
     end
 
-    it 'runs memory_retrieval when signals are present' do
-      result = described_class::PHASE_ARGS[:memory_retrieval].call(signals: [{ value: 'ping' }])
-      expect(result).to include(:limit)
+    it 'does not call partial availability a successful phase' do
+      result = described_class.normalize_phase_result([{ cognitive_health: 0.7 },
+                                                       { status: :unavailable, reason: :missing_handler }])
+      expect(result).to include(status: :partial, success: false)
+      expect(result[:handlers].last).to include(reason: :missing_handler)
     end
 
-    it 'uses signal value for knowledge_retrieval text' do
-      result = described_class::PHASE_ARGS[:knowledge_retrieval].call(
-        signals: [{ value: 'testing', source_type: :human_direct, tags: [:api] }],
-        prior_results: {}
+    it 'retains deferred maintenance instead of counting last maintenance totals as new work' do
+      result = { decayed: 100, deferred: true, reason: :background_decay_actor }
+      expect(described_class.phase_status(result)).to eq(:deferred)
+      expect(described_class.meaningful_result?(result)).to be(false)
+    end
+
+    it 'does not count empty success, missing candidates, or a failed provider as useful work' do
+      expect(described_class.phase_status(success: true)).to eq(:skipped)
+      expect(described_class.phase_status(success: true, traces: [])).to eq(:skipped)
+      expect(described_class.phase_status(success: false)).to eq(:failed)
+    end
+
+    it 'preserves the other provider outcome even when the first handler raises' do
+      failed = Object.new
+      def failed.reflect_on_bonds(identity:, **)
+        raise "storage unavailable for #{identity}"
+      end
+      other = Object.new
+      def other.sync_partner_knowledge(identity:, **)
+        raise "background work must not execute for #{identity}"
+      end
+      handlers = described_class.build_phase_handlers({ Social_Attachment: failed, Social_Calibration: other },
+                                                      identity: 'alice')
+      result = phase_call(handlers, :partner_reflection, identity: 'alice')
+      expect(result).to include(status: :failed)
+      expect(result[:handlers].map { |item| item[:status] }).to eq(%i[failed deferred])
+    end
+  end
+
+  describe 'decision consumers' do
+    it 'uses attended input instead of the last raw signal for knowledge and prediction' do
+      selected = { value: 'urgent deploy', source_type: :human_direct, principal_id: 4 }
+      context = { signals: [selected, { value: 'unrelated background' }],
+                  prior_results: { sensory_processing: { filtered: [selected] } },
+                  identity: 'alice', exchange_id: 'e1' }
+      knowledge = described_class::PHASE_ARGS[:knowledge_retrieval].call(context)
+      prediction = described_class::PHASE_ARGS[:prediction_engine].call(context)
+      expect(knowledge[:text]).to eq('urgent deploy')
+      expect(prediction.dig(:context, :signal)).to eq(selected)
+    end
+
+    it 'does not fall back to dropped signals when attention rejects them all' do
+      args = described_class::PHASE_ARGS[:knowledge_retrieval].call(
+        signals: [{ value: 'background noise' }], prior_results: { sensory_processing: { filtered: [] } }
       )
-
-      expect(result).to include(text: 'testing', tags: [:api])
+      expect(args).to include(skip: true, reason: :no_attended_signal)
     end
 
-    it 'skips prediction_engine when no signals are present' do
-      expect(described_class::PHASE_ARGS[:prediction_engine].call(signals: [])).to eq(
-        { skip: true, reason: :idle_no_signals }
+    it 'turns a relevant correction into corrective decision input without marking a task complete' do
+      memory = { traces: [{ trace: trace(id: 'c', tags: %w[deploy correction owner:alice]), score: 0.9 }] }
+      state = described_class.build_cognitive_state({ memory_retrieval: memory }, identity: 'alice')
+      expect(state[:reflection]).to include(pending_adaptations: 1, recent_severity: :correction)
+      expect(state[:reflection][:health]).to be < 1.0
+    end
+
+    it 'keeps an intention proposal distinct from verified task completion' do
+      volition = Object.new
+      def volition.form_intentions(**)
+        { new_intentions: [{ intention_id: 'i1', goal: 'deploy carefully' }], active_intentions: 1 }
+      end
+      handlers = described_class.build_phase_handlers({ Volition_Volition: volition }, identity: 'alice')
+      result = phase_call(handlers, :action_selection, identity: 'alice')
+      expect(result).to include(status: :completed, outcome: :intention_proposed, task_completed: false)
+    end
+
+    it 'uses measured prediction accuracy only after real outcomes exist' do
+      prediction = Class.new do
+        attr_accessor :outcomes
+
+        def prediction_accuracy(identity:)
+          { accuracy: 0.25, total_outcomes: (@outcomes || {}).fetch(identity, 0) }
+        end
+
+        def predict(identity:, confidence: 0.8, **)
+          { prediction_id: "#{identity}:p1", confidence: confidence, actionable: confidence >= 0.5 }
+        end
+      end.new
+      handlers = described_class.build_phase_handlers({ Prediction_Prediction: prediction }, identity: 'alice')
+      initial = phase_call(handlers, :prediction_engine, identity: 'alice', signals: [{ value: 'deploy' }])
+      prediction.outcomes = { 'alice' => 4 }
+      calibrated = phase_call(handlers, :prediction_engine, identity: 'alice', signals: [{ value: 'deploy' }])
+      expect(initial).to include(confidence: 0.8, actionable: true)
+      expect(calibrated).to include(confidence: 0.25, actionable: false)
+    end
+
+    it 'generates a gradable prediction only from an explicit correlated claim and expected comparison' do
+      prediction = Class.new do
+        attr_reader :claims
+
+        def predict(identity:, description: nil, context: {}, **)
+          @claims ||= Hash.new { |claims, owner| claims[owner] = [] }
+          @claims[identity] << { description: description, context: context }
+          { prediction_id: "p#{@claims[identity].size}", confidence: 0.8 }
+        end
+      end.new
+      handlers = described_class.build_phase_handlers({ Prediction_Prediction: prediction }, identity: 'alice')
+      claim = { domain: 'deploy', description: 'The health check will pass', expected_outcome: false }
+      invalid = phase_call(handlers, :prediction_engine, identity: 'alice', exchange_id: 'e1',
+                                                         signals: [{ value: 'deploy' }],
+                                                         prediction_request: claim.except(:expected_outcome))
+      uncorrelated = phase_call(handlers, :prediction_engine, identity: 'alice', signals: [{ value: 'deploy' }],
+                                                              prediction_request: claim)
+      stated = phase_call(handlers, :prediction_engine, identity: 'alice', exchange_id: 'e1',
+                                                        signals: [{ value: 'deploy' }], prediction_request: claim)
+      heuristic = phase_call(handlers, :prediction_engine, identity: 'alice', exchange_id: 'e2',
+                                                           signals: [{ value: 'deploy' }])
+
+      expect(invalid).to include(status: :unavailable, reason: :invalid_prediction_request)
+      expect(uncorrelated).to include(status: :unavailable, reason: :prediction_correlation_required)
+      expect(stated).to include(prediction_id: 'p1', prediction_kind: :stated_claim, outcome_verifiable: true,
+                                prediction_claim: claim)
+      expect(prediction.claims['alice'].first).to include(description: claim[:description])
+      expect(prediction.claims['alice'].first.dig(:context, :prediction_claim, :expected_outcome)).to be(false)
+      expect(heuristic).to include(prediction_kind: :heuristic, outcome_verifiable: false, prediction_claim: nil)
+    end
+
+    it 'refuses a claim when an old provider silently swallows its description keyword' do
+      prediction = Object.new
+      def prediction.predict(identity:, **)
+        raise "unsupported claim must not be generated for #{identity}"
+      end
+      handlers = described_class.build_phase_handlers({ Prediction_Prediction: prediction }, identity: 'alice')
+      claim = { domain: 'deploy', description: 'The deployment will finish', expected_outcome: 'finished' }
+      result = phase_call(handlers, :prediction_engine, identity: 'alice', exchange_id: 'e1',
+                                                        signals: [{ value: 'deploy' }], prediction_request: claim)
+      expect(result).to include(status: :unavailable, reason: :stated_prediction_unsupported)
+    end
+
+    it 'submits to and competes on the same live workspace, and feeds its winner to action selection' do
+      workspace = Class.new do
+        def submit_for_broadcast(content:, salience:, **)
+          @candidates ||= []
+          @candidates << [content, salience]
+          { success: true }
+        end
+
+        def run_competition
+          content, = @candidates.max_by(&:last)
+          { success: true, broadcast: { content: content } }
+        end
+      end.new
+      handlers = described_class.build_phase_handlers({ GlobalWorkspace_GlobalWorkspace: workspace }, identity: 'alice')
+      attended = [{ value: 'low', attention_score: 0.2 }, { value: 'priority', attention_score: 0.95 }]
+      result = phase_call(handlers, :global_workspace, identity: 'alice', conversation_id: 'c1', exchange_id: 'e1',
+                                                       prior_results: { sensory_processing: { filtered: attended } })
+      state = described_class.build_cognitive_state({ global_workspace: result }, identity: 'alice', signals: attended)
+      expect(state.dig(:curiosity, :top_question)).to eq('priority')
+      expect(state.dig(:emotion, :arousal)).to eq(0.95)
+    end
+
+    it 'does not call an empty workspace competition meaningful' do
+      workspace = Object.new
+      def workspace.submit_for_broadcast(**)
+        raise 'no candidates'
+      end
+
+      def workspace.run_competition
+        raise 'no candidates'
+      end
+      handlers = described_class.build_phase_handlers({ GlobalWorkspace_GlobalWorkspace: workspace })
+      expect(phase_call(handlers, :global_workspace)).to include(status: :skipped, reason: :no_candidates)
+    end
+
+    it 'keeps reflection influence scoped to its human and conversation' do
+      described_class.capture_tick_results(
+        { post_tick_reflection: { cognitive_health: 0.2, reflections_generated: 3 } },
+        identity: 'alice', conversation_id: 'c1'
       )
+      expect(described_class.extract_reflection_state(identity: 'alice', conversation_id: 'c1')).to include(health: 0.2)
+      expect(described_class.extract_reflection_state(identity: 'bob', conversation_id: 'c1')).to eq({})
+      expect(described_class.extract_reflection_state(identity: 'alice', conversation_id: 'c2')).to eq({})
+    ensure
+      described_class.forget_identity(identity: 'alice')
     end
 
-    it 'runs prediction_engine when signals are present' do
-      result = described_class::PHASE_ARGS[:prediction_engine].call(
-        signals: [{ value: 'testing' }],
-        prior_results: { emotional_evaluation: { arousal: 0.2 } }
-      )
-
-      expect(result).to eq(
-        mode: :functional_mapping,
-        context: { emotional_evaluation: { arousal: 0.2 } }
-      )
-    end
-  end
-
-  describe '.resolve_runner_class' do
-    it 'returns nil for missing extensions' do
-      expect(described_class.resolve_runner_class(:Nonexistent, :Foo)).to be_nil
-    end
-
-    context 'when core library module exists at Legion:: namespace' do
-      before do
-        stub_const('Legion::Apollo', Module.new)
-        stub_const('Legion::Apollo::Runners', Module.new)
-        stub_const('Legion::Apollo::Runners::Request', Class.new)
+    it 'refuses a human scope on the anonymous shared handler set' do
+      provider = Object.new
+      def provider.filter_signals(**)
+        raise 'anonymous host must not receive human state'
       end
-
-      it 'resolves from core namespace first' do
-        result = described_class.resolve_runner_class(:Apollo, :Request)
-        expect(result).to eq(Legion::Apollo::Runners::Request)
-      end
-    end
-
-    context 'when core library exists but requested runner does not' do
-      before do
-        stub_const('Legion::Apollo', Module.new)
-        stub_const('Legion::Apollo::Runners', Module.new)
-      end
-
-      it 'falls through to extensions namespace' do
-        result = described_class.resolve_runner_class(:Apollo, :Nonexistent)
-        expect(result).to be_nil
-      end
-    end
-  end
-
-  describe '.discover_available_extensions' do
-    it 'returns a hash of extension availability' do
-      discovery = described_class.discover_available_extensions
-      expect(discovery).to be_a(Hash)
-      expect(discovery.values.first).to have_key(:loaded)
-    end
-  end
-
-  describe '.mappings_for' do
-    it 'wraps a single hash in an array' do
-      mapping = { ext: :Foo, runner: :Bar, fn: :baz }
-      expect(described_class.mappings_for(mapping)).to eq([mapping])
-    end
-
-    it 'returns an array unchanged' do
-      mappings = [{ ext: :Foo, runner: :Bar, fn: :baz }, { ext: :Qux, runner: :Qux, fn: :qux }]
-      expect(described_class.mappings_for(mappings)).to eq(mappings)
-    end
-  end
-
-  describe '.build_phase_handlers' do
-    it 'returns empty hash when no runner instances match' do
-      handlers = described_class.build_phase_handlers({})
-      expect(handlers).to eq({})
-    end
-
-    it 'builds handler for matching runner instance' do
-      test_module = Module.new do
-        def filter_signals(**)
-          { filtered: true }
-        end
-      end
-      host = Legion::Gaia::RunnerHost.new(test_module)
-      instances = { Attention_Attention: host }
-
-      handlers = described_class.build_phase_handlers(instances)
-      expect(handlers).to have_key(:sensory_processing)
-      expect(handlers[:sensory_processing]).to respond_to(:call)
-    end
-
-    it 'returns single result directly when only one handler matches' do
-      test_module = Module.new do
-        def filter_signals(**)
-          { filtered: true }
-        end
-      end
-      host = Legion::Gaia::RunnerHost.new(test_module)
-      instances = { Attention_Attention: host }
-
-      handlers = described_class.build_phase_handlers(instances)
-      result = handlers[:sensory_processing].call(state: {}, signals: [], prior_results: {})
-      expect(result).to include(filtered: true, status: :completed)
-      expect(result[:elapsed_ms]).to be_a(Float)
-    end
-
-    it 'coalesces multi-handler hash results into a single hash for a phase' do
-      mod_a = Module.new do
-        def detect_gaps(**)
-          { curiosity_intensity: 0.7 }
-        end
-      end
-      mod_b = Module.new do
-        def gaia_summary(**)
-          { health_score: 1.0 }
-        end
-      end
-      host_a = Legion::Gaia::RunnerHost.new(mod_a)
-      host_b = Legion::Gaia::RunnerHost.new(mod_b)
-      instances = { Curiosity_Curiosity: host_a, Synapse_GaiaReport: host_b }
-
-      handlers = described_class.build_phase_handlers(instances)
-      expect(handlers).to have_key(:working_memory_integration)
-      result = handlers[:working_memory_integration].call(state: {}, signals: [], prior_results: {})
-      expect(result).to include(curiosity_intensity: 0.7, health_score: 1.0, status: :completed)
-      expect(result[:elapsed_ms]).to be_a(Float)
-    end
-
-    it 'wires a phase when only the synapse handler is present' do
-      test_module = Module.new do
-        def gaia_summary(**)
-          { health_score: 0.9 }
-        end
-      end
-      host = Legion::Gaia::RunnerHost.new(test_module)
-      instances = { Synapse_GaiaReport: host }
-
-      handlers = described_class.build_phase_handlers(instances)
-      expect(handlers).to have_key(:working_memory_integration)
-    end
-
-    it 'treats skip args as phase control flow and does not invoke the runner' do
-      test_module = Module.new do
-        def retrieve(**)
-          raise 'runner should not be called'
-        end
-      end
-      host = Legion::Gaia::RunnerHost.new(test_module)
-      instances = { Apollo_Request: host }
-
-      handlers = described_class.build_phase_handlers(instances)
-      result = handlers[:knowledge_retrieval].call(state: {}, signals: [], prior_results: {})
-
-      expect(result).to include(status: :skipped, reason: :phase_wiring_skip)
-      expect(result[:elapsed_ms]).to be_a(Float)
-    end
-
-    it 'passes normalized prior results to downstream single-handler phases' do
-      test_module = Module.new do
-        def form_intentions(tick_results:, **)
-          tick_results[:working_memory_integration]
-        end
-      end
-      host = Legion::Gaia::RunnerHost.new(test_module)
-      instances = { Volition_Volition: host }
-
-      handlers = described_class.build_phase_handlers(instances)
-      prior_results = {
-        working_memory_integration: [
-          { curiosity_intensity: 0.8 },
-          { health_score: 0.95 }
-        ]
-      }
-      result = handlers[:action_selection].call(state: {}, signals: [], prior_results: prior_results)
-
-      expect(result).to include(curiosity_intensity: 0.8, health_score: 0.95, status: :completed)
-      expect(result[:elapsed_ms]).to be_a(Float)
-    end
-
-    it 'returns failed phase status when a handler raises' do
-      test_module = Module.new do
-        def filter_signals(**)
-          raise 'phase failure'
-        end
-      end
-      host = Legion::Gaia::RunnerHost.new(test_module)
-      instances = { Attention_Attention: host }
-
-      handlers = described_class.build_phase_handlers(instances)
-      result = handlers[:sensory_processing].call(state: {}, signals: [], prior_results: {})
-
-      expect(result).to include(status: :failed, error: 'RuntimeError', message: 'phase failure')
-      expect(result[:elapsed_ms]).to be_a(Float)
-    end
-
-    it 'uses top-level Process for phase timing when Legion::Process exists' do
-      stub_const('Legion::Process', Module.new)
-      test_module = Module.new do
-        def filter_signals(**)
-          { filtered: true }
-        end
-      end
-      host = Legion::Gaia::RunnerHost.new(test_module)
-      instances = { Attention_Attention: host }
-
-      handlers = described_class.build_phase_handlers(instances)
-      result = handlers[:sensory_processing].call(state: {}, signals: [], prior_results: {})
-
-      expect(result).to include(filtered: true, status: :completed)
-      expect(result[:elapsed_ms]).to be_a(Float)
-    end
-  end
-
-  describe '.collect_valences' do
-    it 'returns empty array for nil' do
-      expect(described_class.collect_valences(nil)).to eq([])
-    end
-
-    it 'returns empty array when no emotional_evaluation' do
-      expect(described_class.collect_valences({})).to eq([])
-    end
-
-    it 'extracts valence from emotional_evaluation result' do
-      valence = { urgency: 0.5, importance: 0.3, novelty: 0.2, familiarity: 0.8 }
-      results = { emotional_evaluation: { valence: valence } }
-      expect(described_class.collect_valences(results)).to eq([valence])
-    end
-  end
-
-  describe '.build_promotion_content' do
-    it 'returns nil when no dream phases produced results' do
-      expect(described_class.build_promotion_content({})).to be_nil
-    end
-
-    it 'extracts association walk results' do
-      results = { association_walk: { linked: true, trace_id_a: 'a1', trace_id_b: 'b2' } }
-      content = described_class.build_promotion_content(results)
-      expect(content).to include('Association: linked trace a1 to b2')
-    end
-
-    it 'extracts contradiction resolution counts' do
-      results = { contradiction_resolution: { resolved: 3 } }
-      content = described_class.build_promotion_content(results)
-      expect(content).to include('Resolved 3 contradiction(s)')
-    end
-
-    it 'does not promote consolidation migration counts by themselves' do
-      results = { consolidation_commit: { migrated: 5 } }
-      expect(described_class.build_promotion_content(results)).to be_nil
-    end
-
-    it 'extracts dream reflection insights' do
-      results = { dream_reflection: { insight: 'Pattern detected in deployment failures' } }
-      content = described_class.build_promotion_content(results)
-      expect(content).to include('Insight: Pattern detected in deployment failures')
-    end
-
-    it 'extracts agenda formation items' do
-      results = { agenda_formation: { agenda: [{ question: 'Why did deploy fail?' }, { topic: 'scaling' }] } }
-      content = described_class.build_promotion_content(results)
-      expect(content).to include('Agenda: Why did deploy fail?; scaling')
-    end
-
-    it 'combines multiple dream phase results' do
-      results = {
-        association_walk: { linked: true, trace_id_a: 'x', trace_id_b: 'y' },
-        contradiction_resolution: { resolved: 1 },
-        dream_reflection: { insight: 'Systems are correlated' }
-      }
-      content = described_class.build_promotion_content(results)
-      expect(content).to start_with('Dream cycle synthesis:')
-      expect(content).to include('Association:')
-      expect(content).to include('Resolved 1')
-      expect(content).to include('Insight:')
-    end
-
-    it 'skips phases with zero or missing counts' do
-      results = { contradiction_resolution: { resolved: 0 }, consolidation_commit: {} }
-      expect(described_class.build_promotion_content(results)).to be_nil
-    end
-  end
-
-  describe 'PHASE_ARGS human_observations' do
-    it 'prefers top-level partner_observations from tick execution context' do
-      args_lambda = described_class::PHASE_ARGS[:social_cognition]
-      ctx = {
-        prior_results: { memory: :data },
-        partner_observations: [{ identity: 'top-level' }],
-        state: Object.new,
-        signals: [],
-        current_signal: nil,
-        valences: {}
-      }
-      result = args_lambda.call(ctx)
-      expect(result[:human_observations]).to eq([{ identity: 'top-level' }])
-    end
-
-    it 'passes human_observations to social_cognition' do
-      args_lambda = described_class::PHASE_ARGS[:social_cognition]
-      ctx = { prior_results: { memory: :data }, state: { partner_observations: [{ identity: 'esity' }] },
-              signals: [], current_signal: nil, valences: {} }
-      result = args_lambda.call(ctx)
-      expect(result[:human_observations]).to eq([{ identity: 'esity' }])
-      expect(result[:tick_results]).to eq({ memory: :data })
-    end
-
-    it 'passes human_observations to theory_of_mind' do
-      args_lambda = described_class::PHASE_ARGS[:theory_of_mind]
-      ctx = { prior_results: {}, state: { partner_observations: [{ identity: 'esity' }] },
-              signals: [], current_signal: nil, valences: {} }
-      result = args_lambda.call(ctx)
-      expect(result[:human_observations]).to eq([{ identity: 'esity' }])
-    end
-
-    it 'passes human_observations to emotional_evaluation' do
-      args_lambda = described_class::PHASE_ARGS[:emotional_evaluation]
-      ctx = { prior_results: {}, state: { partner_observations: [{ identity: 'esity' }] },
-              signals: [], current_signal: nil, valences: {} }
-      result = args_lambda.call(ctx)
-      expect(result[:human_observations]).to eq([{ identity: 'esity' }])
-    end
-
-    it 'skips social_cognition when idle with no observations' do
-      args_lambda = described_class::PHASE_ARGS[:social_cognition]
-      ctx = { prior_results: {}, state: {}, signals: [], current_signal: nil, valences: {} }
-      result = args_lambda.call(ctx)
-      expect(result[:skip]).to eq(true)
-      expect(result[:reason]).to eq(:idle_no_signals)
-    end
-  end
-
-  describe 'PHASE_ARGS observer cursor' do
-    it 'prefers top-level last_observer_tick from tick execution context' do
-      args_lambda = described_class::PHASE_ARGS[:post_tick_reflection]
-      ctx = {
-        prior_results: {},
-        last_observer_tick: 42,
-        state: Object.new
-      }
-      result = args_lambda.call(ctx)
-      expect(result[:since]).to eq(42)
-    end
-  end
-
-  describe 'PHASE_ARGS[:knowledge_retrieval] requesting_principal_id' do
-    let(:arg_builder) { described_class::PHASE_ARGS[:knowledge_retrieval] }
-
-    let(:base_ctx) do
-      { signals: [{ value: 'what is ruby?', tags: [], principal_id: nil }],
-        prior_results: {} }
-    end
-
-    it 'includes requesting_principal_id from the signal when present' do
-      ctx = base_ctx.merge(
-        signals: [{ value: 'what is ruby?', source_type: :human_direct, tags: [], principal_id: 42 }]
-      )
-      args = arg_builder.call(ctx)
-      expect(args[:requesting_principal_id]).to eq(42)
-    end
-
-    it 'passes requesting_principal_id as nil when signal has no principal_id' do
-      ctx = base_ctx.merge(
-        signals: [{ value: 'test', source_type: :human_direct, tags: [] }]
-      )
-      args = arg_builder.call(ctx)
-      expect(args[:requesting_principal_id]).to be_nil
-    end
-
-    it 'returns skip hash (not raise) when signals is empty' do
-      args = arg_builder.call(base_ctx.merge(signals: []))
-      expect(args).to be_a(Hash)
-    end
-
-    it 'reads principal_id from the last human_direct signal, not the last signal overall' do
-      ctx = base_ctx.merge(
-        signals: [
-          { value: 'human query', tags: [], source_type: :human_direct, principal_id: 42 },
-          { value: 'system update', tags: [], source_type: :ambient, principal_id: nil }
-        ]
-      )
-      args = arg_builder.call(ctx)
-      expect(args[:requesting_principal_id]).to eq(42)
-    end
-  end
-
-  describe 'PHASE_ARGS knowledge_promotion' do
-    let(:builder) { described_class::PHASE_ARGS[:knowledge_promotion] }
-
-    it 'returns skip when no dream insights exist' do
-      ctx = { prior_results: {} }
-      result = builder.call(ctx)
-      expect(result).to eq({ skip: true })
-    end
-
-    it 'builds content from prior dream results' do
-      ctx = { prior_results: { dream_reflection: { insight: 'test insight' } } }
-      result = builder.call(ctx)
-      expect(result[:content]).to include('test insight')
-      expect(result[:content_type]).to eq(:observation)
-      expect(result[:tags]).to include('dream_cycle')
-      expect(result[:source_agent]).to eq('gaia')
-    end
-
-    it 'skips promotion when the only dream result is consolidation bookkeeping' do
-      ctx = { prior_results: { consolidation_commit: { migrated: 64 } } }
-      expect(builder.call(ctx)).to eq({ skip: true })
-    end
-  end
-
-  describe '.build_cognitive_state' do
-    it 'extracts curiosity from working_memory_integration' do
-      prior = { working_memory_integration: { curiosity_intensity: 0.7, active_count: 3 } }
-      state = described_class.build_cognitive_state(prior)
-      expect(state[:curiosity][:intensity]).to eq(0.7)
-      expect(state[:curiosity][:active_count]).to eq(3)
-    end
-
-    it 'extracts mesh from mesh_interface online count' do
-      prior = { mesh_interface: { total: 5, online: 3, message_count: 10 } }
-      state = described_class.build_cognitive_state(prior)
-      expect(state[:mesh][:peer_count]).to eq(3)
-    end
-
-    it 'extracts trust from social_cognition reputation_updates' do
-      prior = { social_cognition: { reputation_updates: [{ composite: 0.8 }, { composite: 0.6 }] } }
-      state = described_class.build_cognitive_state(prior)
-      expect(state[:trust][:avg_composite]).to eq(0.7)
-    end
-
-    it 'extracts emotion arousal from gut_instinct' do
-      prior = { gut_instinct: { signal: :attend, arousal: 0.4 } }
-      state = described_class.build_cognitive_state(prior)
-      expect(state[:emotion][:arousal]).to eq(0.4)
-    end
-
-    it 'extracts prediction from prediction_engine' do
-      prior = { prediction_engine: { confidence: 0.6, mode: :functional_mapping } }
-      state = described_class.build_cognitive_state(prior)
-      expect(state[:prediction][:confidence]).to eq(0.6)
-    end
-
-    it 'passes gut_instinct through directly' do
-      gut = { signal: :heightened, confidence: 0.8 }
-      prior = { gut_instinct: gut }
-      state = described_class.build_cognitive_state(prior)
-      expect(state[:gut]).to eq(gut)
-    end
-
-    it 'returns safe defaults for empty prior_results' do
-      state = described_class.build_cognitive_state({})
-      expect(state[:curiosity][:intensity]).to eq(0.0)
-      expect(state[:mesh]).to eq({})
-      expect(state[:trust]).to eq({})
-      expect(state[:prediction]).to eq({})
-      expect(state[:emotion][:arousal]).to eq(0.0)
-      expect(state[:gut]).to be_nil
-    end
-  end
-
-  describe '.capture_tick_results' do
-    after { described_class.instance_variable_set(:@previous_reflection, {}) }
-
-    it 'stores post_tick_reflection for next tick' do
-      results = { post_tick_reflection: { cognitive_health: 0.85, reflections_generated: 2 } }
-      described_class.capture_tick_results(results)
-      expect(described_class.previous_reflection).to eq(results[:post_tick_reflection])
-    end
-
-    it 'skips storage for skipped reflections' do
-      described_class.capture_tick_results({ post_tick_reflection: { cognitive_health: 0.9 } })
-      described_class.capture_tick_results({ post_tick_reflection: { status: :skipped } })
-      expect(described_class.previous_reflection[:cognitive_health]).to eq(0.9)
-    end
-
-    it 'ignores non-hash results' do
-      described_class.capture_tick_results(nil)
-      expect(described_class.previous_reflection).to eq({})
-    end
-  end
-
-  describe '.extract_reflection_state' do
-    after { described_class.instance_variable_set(:@previous_reflection, {}) }
-
-    it 'returns previous tick reflection data mapped to drive keys' do
-      described_class.capture_tick_results({
-                                             post_tick_reflection: {
-                                               cognitive_health: 0.7,
-                                               reflections_generated: 3,
-                                               new_reflections: [{ severity: :warning }, { severity: :critical }]
-                                             }
-                                           })
-      state = described_class.extract_reflection_state
-      expect(state[:health]).to eq(0.7)
-      expect(state[:pending_adaptations]).to eq(3)
-      expect(state[:recent_severity]).to eq(:critical)
-    end
-
-    it 'returns empty hash when no previous reflection exists' do
-      expect(described_class.extract_reflection_state).to eq({})
-    end
-  end
-
-  describe 'action_selection PHASE_ARGS includes bond_state' do
-    it 'passes bond_state from partner_reflection' do
-      ctx = { prior_results: { partner_reflection: { partner_bond: { stage: :established } } } }
-      args = described_class::PHASE_ARGS[:action_selection].call(ctx)
-      expect(args).to have_key(:bond_state)
-      expect(args[:bond_state][:partner_bond][:stage]).to eq(:established)
-    end
-
-    it 'defaults bond_state to empty hash' do
-      ctx = { prior_results: {} }
-      args = described_class::PHASE_ARGS[:action_selection].call(ctx)
-      expect(args[:bond_state]).to eq({})
-    end
-
-    it 'extracts first hash from partner_reflection array when multi-handler result' do
-      bond_result = { partner_bond: { stage: :established } }
-      ctx = { prior_results: { partner_reflection: [bond_result, { synced: true }] } }
-      args = described_class::PHASE_ARGS[:action_selection].call(ctx)
-      expect(args[:bond_state]).to eq(bond_result)
-    end
-
-    it 'falls back to live attachment reflection when prior partner_reflection is absent' do
-      runner = instance_double('AttachmentRunner')
-      registry = instance_double('Legion::Gaia::Registry', runner_instances: { Social_Attachment: runner })
-      allow(Legion::Gaia).to receive(:registry).and_return(registry)
-      allow(runner).to receive(:reflect_on_bonds)
-        .with(tick_results: { prediction_engine: { confidence: 0.7 } }, bond_summary: {})
-        .and_return({ partner_bond: { absence_exceeds_pattern: true } })
-
-      ctx = { prior_results: { prediction_engine: { confidence: 0.7 } } }
-      args = described_class::PHASE_ARGS[:action_selection].call(ctx)
-
-      expect(args[:bond_state]).to eq({ partner_bond: { absence_exceeds_pattern: true } })
-    end
-  end
-
-  describe 'partner_reflection phase' do
-    it 'exists in PHASE_MAP' do
-      expect(described_class::PHASE_MAP).to have_key(:partner_reflection)
-    end
-
-    it 'targets Social Attachment runner' do
-      entry = described_class::PHASE_MAP[:partner_reflection]
-      bond_handler = entry.is_a?(Array) ? entry.find { |h| h[:fn] == :reflect_on_bonds } : entry
-      expect(bond_handler[:ext]).to eq(:Social)
-      expect(bond_handler[:runner]).to eq(:Attachment)
-      expect(bond_handler[:fn]).to eq(:reflect_on_bonds)
-    end
-
-    it 'has PHASE_ARGS lambda' do
-      expect(described_class::PHASE_ARGS).to have_key(:partner_reflection)
-      expect(described_class::PHASE_ARGS[:partner_reflection]).to respond_to(:call)
-    end
-
-    it 'PHASE_ARGS returns tick_results and bond_summary' do
-      ctx = { prior_results: { dream_reflection: { insight: 'test' } } }
-      args = described_class::PHASE_ARGS[:partner_reflection].call(ctx)
-      expect(args).to have_key(:tick_results)
-      expect(args).to have_key(:bond_summary)
-      expect(args[:bond_summary]).to eq({ insight: 'test' })
-    end
-
-    it 'PHASE_ARGS handles nil prior_results' do
-      ctx = { prior_results: nil }
-      args = described_class::PHASE_ARGS[:partner_reflection].call(ctx)
-      expect(args[:tick_results]).to eq({})
-      expect(args[:bond_summary]).to eq({})
+      handlers = described_class.build_phase_handlers({ Attention_Attention: provider })
+      result = phase_call(handlers, :sensory_processing, identity: 'alice', signals: [{ value: 'private' }])
+      expect(result).to include(status: :unavailable, reason: :identity_mismatch)
     end
   end
 end

@@ -59,24 +59,30 @@ RSpec.describe Legion::Gaia::Channels::Teams::ConversationStore do
   end
 
   describe '#conversations_for_user' do
-    it 'returns conversations matching the user tenant' do
-      store.store_user_profile(user_id: 'u-1', service_url: 'https://smba.net/', tenant_id: 'tid-1')
-      store.store(conversation_id: 'conv-1', service_url: 'https://smba.net/', tenant_id: 'tid-1')
-      store.store(conversation_id: 'conv-2', service_url: 'https://smba.net/', tenant_id: 'tid-2')
-
-      results = store.conversations_for_user('u-1')
-      expect(results.map(&:conversation_id)).to contain_exactly('conv-1')
+    it 'returns only the exact user personal conversation, not a tenant peer or shared channel' do
+      store.store(conversation_id: 'alice-dm', service_url: 'https://smba.net/', tenant_id: 'tenant',
+                  user_id: 'alice', conversation_type: 'personal')
+      store.store(conversation_id: 'bob-dm', service_url: 'https://smba.net/', tenant_id: 'tenant',
+                  user_id: 'bob', conversation_type: 'personal')
+      store.store(conversation_id: 'shared', service_url: 'https://smba.net/', tenant_id: 'tenant',
+                  user_id: 'alice', conversation_type: 'channel')
+      expect(store.conversations_for_user('alice').map(&:conversation_id)).to eq(['alice-dm'])
+      expect(store.conversations_for_user('bob').map(&:conversation_id)).to eq(['bob-dm'])
+      expect(store.conversations_for_user('unknown')).to be_empty
     end
 
-    it 'returns empty array when user has no profile' do
-      store.store(conversation_id: 'conv-1', service_url: 'https://smba.net/', tenant_id: 'tid-1')
-      expect(store.conversations_for_user('unknown-user')).to be_empty
-    end
-
-    it 'returns empty array when no conversations match tenant' do
-      store.store_user_profile(user_id: 'u-1', service_url: 'https://smba.net/', tenant_id: 'tid-99')
-      store.store(conversation_id: 'conv-1', service_url: 'https://smba.net/', tenant_id: 'tid-1')
-      expect(store.conversations_for_user('u-1')).to be_empty
+    it 'requires a tenant when native user or conversation IDs overlap' do
+      %w[tenant-a tenant-b].each do |tenant|
+        store.store(conversation_id: 'dm', service_url: "https://#{tenant}.example/", tenant_id: tenant,
+                    user_id: 'alice', conversation_type: 'personal')
+        store.store_user_profile(user_id: 'alice', service_url: "https://#{tenant}.example/", tenant_id: tenant)
+      end
+      expect(store.conversations_for_user('alice')).to be_empty
+      expect(store.lookup('dm')).to be_nil
+      expect(store.lookup_user_profile('alice')).to be_nil
+      expect(store.conversations_for_user('alice', tenant_id: 'tenant-b').map(&:tenant_id)).to eq(['tenant-b'])
+      expect(store.lookup('dm', tenant_id: 'tenant-a').service_url).to eq('https://tenant-a.example/')
+      expect(store.lookup_user_profile('alice', tenant_id: 'tenant-b').service_url).to eq('https://tenant-b.example/')
     end
   end
 

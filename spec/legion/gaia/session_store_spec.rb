@@ -37,52 +37,44 @@ RSpec.describe Legion::Gaia::SessionStore do
       end
     end
 
-    context 'string identity normalization' do
-      it 'downcases string identities' do
-        session = store.find_or_create(identity: 'Alice')
-        expect(session.identity).to eq('alice')
-      end
-
-      it 'looks up case-insensitively by canonical name' do
-        first = store.find_or_create(identity: 'Alice')
-        second = store.find_or_create(identity: 'alice')
-        expect(second.id).to eq(first.id)
-      end
+    it 'keeps opaque identities case-sensitive' do
+      first = store.find_or_create(identity: 'Alice')
+      second = store.find_or_create(identity: 'alice')
+      expect(second.id).not_to eq(first.id)
     end
 
-    context 'UUID migration with canonical_name' do
-      let(:uuid) { 'a1b2c3d4-0000-0000-0000-000000000001' }
+    it 'does not merge principals that share a display name' do
+      first = store.find_or_create(identity: 'esity')
+      second = store.find_or_create(identity: 'a1b2c3d4-0000-0000-0000-000000000001',
+                                    canonical_name: 'esity')
+      expect(second.id).not_to eq(first.id)
+      expect(store.find_or_create(identity: 'esity').id).to eq(first.id)
+    end
 
-      it 'migrates a string-keyed session to UUID key' do
-        string_session = store.find_or_create(identity: 'esity')
-        uuid_session = store.find_or_create(identity: uuid, canonical_name: 'esity')
-        expect(uuid_session.id).to eq(string_session.id)
-      end
+    it 'resumes a session only for its authenticated owner' do
+      first = store.find_or_create(identity: 'alice')
+      store.touch(first.id, channel_id: :cli)
+      resumed = store.find_or_create(identity: 'alice', session_continuity_id: first.id)
+      intruder = store.find_or_create(identity: 'bob', session_continuity_id: first.id)
+      expect(resumed.id).to eq(first.id)
+      expect(resumed.channel_history).to eq([:cli])
+      expect(intruder.id).not_to eq(first.id)
+      expect(intruder.identity).to eq('bob')
+      expect(intruder.channel_history).to be_empty
+    end
 
-      it 'stores the UUID under identity index after migration' do
-        store.find_or_create(identity: 'esity')
-        store.find_or_create(identity: uuid, canonical_name: 'esity')
-        # subsequent UUID lookup returns migrated session
-        third = store.find_or_create(identity: uuid)
-        expect(third).not_to be_nil
-      end
+    it 'cannot authenticate an anonymous caller with a session identifier' do
+      session = store.find_or_create(identity: 'alice')
+      expect { store.find_or_create(identity: nil, session_continuity_id: session.id) }
+        .to raise_error(ArgumentError, 'identity is required')
+    end
 
-      it 'cleans the canonical key after a migrated session expires' do
-        expiring_store = described_class.new(ttl: 0)
-        string_session = expiring_store.find_or_create(identity: 'esity')
-        expiring_store.find_or_create(identity: uuid, canonical_name: 'esity')
-        sleep(0.01)
-
-        expiring_store.prune_expired
-        fresh = expiring_store.find_or_create(identity: 'esity')
-
-        expect(fresh.id).not_to eq(string_session.id)
-      end
-
-      it 'creates new session if no string session exists to migrate' do
-        session = store.find_or_create(identity: uuid, canonical_name: 'esity')
-        expect(session.identity).to eq(uuid)
-      end
+    it 'does not resume expired continuity even for its owner' do
+      first = store.find_or_create(identity: 'alice')
+      allow(Time).to receive(:now).and_return(first.last_active_at + 3601)
+      resumed = store.find_or_create(identity: 'alice', session_continuity_id: first.id)
+      expect(resumed.id).not_to eq(first.id)
+      expect(store.get(first.id)).to be_nil
     end
   end
 
@@ -123,14 +115,10 @@ RSpec.describe Legion::Gaia::SessionStore do
       expect(store.size).to eq(0)
     end
 
-    it 'cleans up canonical_to_uuid reverse index on remove' do
-      uuid = 'b0b0b0b0-0000-0000-0000-000000000001'
-      string_session = store.find_or_create(identity: 'esity')
-      store.find_or_create(identity: uuid, canonical_name: 'esity')
-      store.remove(string_session.id)
-      # After remove, a fresh lookup should create a new session
-      fresh = store.find_or_create(identity: uuid)
-      expect(fresh.id).not_to eq(string_session.id)
+    it 'removes the owner lookup along with its session' do
+      session = store.find_or_create(identity: 'alice')
+      store.remove(session.id)
+      expect(store.find_or_create(identity: 'alice').id).not_to eq(session.id)
     end
   end
 
@@ -191,14 +179,12 @@ RSpec.describe Legion::Gaia::SessionStore do
       expect(store.size).to eq(1)
     end
 
-    it 'cleans canonical_to_uuid index when erasing a migrated session' do
-      uuid = 'dddddddd-0000-0000-0000-000000000001'
-      store.find_or_create(identity: 'esity')
-      store.find_or_create(identity: uuid, canonical_name: 'esity')
-      store.erase_partner!(identity: uuid)
-      fresh = store.find_or_create(identity: uuid)
-      expect(fresh).not_to be_nil
-      expect(store.size).to eq(1)
+    it 'does not erase a different principal with the same display name' do
+      first = store.find_or_create(identity: 'esity')
+      second = store.find_or_create(identity: 'principal-2', canonical_name: 'esity')
+      store.erase_partner!(identity: 'principal-2')
+      expect(store.get(second.id)).to be_nil
+      expect(store.get(first.id)).to eq(first)
     end
   end
 end

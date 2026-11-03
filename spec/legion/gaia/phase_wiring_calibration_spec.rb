@@ -1,37 +1,30 @@
 # frozen_string_literal: true
 
 RSpec.describe Legion::Gaia::PhaseWiring do
-  describe 'PHASE_MAP[:partner_reflection]' do
-    it 'is a multi-handler array' do
-      entry = described_class::PHASE_MAP[:partner_reflection]
-      expect(entry).to be_an(Array)
-      expect(entry.size).to eq(2)
+  it 'does not fall back to unscoped attachment or preference extraction for a human tick' do
+    attachment = Object.new
+    def attachment.reflect_on_bonds(**)
+      raise 'global partner state must not be read'
     end
+    calibration = Object.new
+    def calibration.sync_partner_knowledge(**)
+      raise 'global interaction traces must not be read'
+    end
+    handlers = described_class.build_phase_handlers(
+      { Social_Attachment: attachment, Social_Calibration: calibration }, identity: 'alice'
+    )
+    result = handlers[:partner_reflection].call(state: {}, signals: [], prior_results: {}, identity: 'alice')
 
-    it 'includes reflect_on_bonds handler' do
-      entry = described_class::PHASE_MAP[:partner_reflection]
-      bond_handler = entry.find { |h| h[:fn] == :reflect_on_bonds }
-      expect(bond_handler).not_to be_nil
-      expect(bond_handler[:ext]).to eq(:Social)
-      expect(bond_handler[:runner]).to eq(:Attachment)
-    end
-
-    it 'includes sync_partner_knowledge handler' do
-      entry = described_class::PHASE_MAP[:partner_reflection]
-      sync_handler = entry.find { |h| h[:fn] == :sync_partner_knowledge }
-      expect(sync_handler).not_to be_nil
-      expect(sync_handler[:ext]).to eq(:Social)
-      expect(sync_handler[:runner]).to eq(:Calibration)
-    end
+    expect(result).to include(status: :unavailable, meaningful: false)
+    expect(result[:handlers].map do |member|
+      member[:reason]
+    end).to eq(%i[identity_scope_unsupported identity_scope_unsupported])
   end
 
-  describe 'PHASE_ARGS[:partner_reflection]' do
-    it 'passes tick_results and bond_summary' do
-      args_lambda = described_class::PHASE_ARGS[:partner_reflection]
-      ctx = { prior_results: { dream_reflection: { insight: 'test' } } }
-      args = args_lambda.call(ctx)
-      expect(args).to have_key(:tick_results)
-      expect(args).to have_key(:bond_summary)
-    end
+  it 'does not borrow another human observation when preparing social inputs' do
+    observations = [{ identity: 'alice', content_length: 10 }, { identity: 'bob', content_length: 100 }]
+    args = described_class::PHASE_ARGS[:social_cognition].call(identity: 'alice', partner_observations: observations,
+                                                               signals: [], prior_results: {})
+    expect(args[:human_observations]).to eq([observations.first])
   end
 end

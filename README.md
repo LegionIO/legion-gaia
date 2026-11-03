@@ -25,8 +25,8 @@ job engine runs without it, and none of its cognitive mechanics activate unless 
 ├──────────────────────┤     ├────────────────────────────┤     ├──────────────────────┤
 │ CLI                  │     │ SensoryBuffer              │     │ ChannelAwareRenderer │
 │ Microsoft Teams      │ ──▶ │ Heartbeat → lex-tick       │ ──▶ │ NotificationGate     │
-│ Slack                │     │ 37 cognitive phases        │     │ OutputRouter         │
-│ HTTP /api/gaia/ingest│     │ (16 active · 21 dream)     │     │ ChannelAdapter#deliver│
+│ Slack                │     │ Scoped phase handlers      │     │ OutputRouter         │
+│ HTTP /api/gaia/ingest│     │ Explicit optional groups   │     │ ChannelAdapter#deliver│
 └──────────────────────┘     └────────────────────────────┘     └──────────────────────┘
    translate inbound  ───▶   ingest · tick · think · decide   ───▶   gate · render · deliver
 ```
@@ -37,12 +37,12 @@ job engine runs without it, and none of its cognitive mechanics activate unless 
 
 ### Highlights
 
-- 🧠 **Continuous cognition.** A 1-second heartbeat drains the sensory buffer and runs a full tick through `lex-tick`, so the agent is always thinking — not just request/response.
-- 🔌 **Channel abstraction.** CLI, Microsoft Teams, and Slack share one `ChannelAdapter` contract; the cognitive core never knows which interface it is talking to.
-- 🌙 **Active *and* dream cycles.** 16 active-tick phases (sensory → emotion → memory → action) plus 21 dream-cycle phases (memory audit, association walk, creativity, metacognition, global workspace) run through one weighted pipeline.
-- 🛡️ **Notification gating.** Outbound frames pass schedule (quiet hours) → presence (Teams status) → behavioral (arousal/idle) evaluators before delivery; urgent priority bypasses the gate.
-- 🛰️ **Hub-and-spoke router mode.** Keep channel-facing ingress on a public router while private agents do the cognitive work, relayed over Legion transport with worker allowlists.
-- 🕊️ **Graceful quiescence.** Shutdown blocks new heartbeats, drains in-flight work, and skips phase handlers cleanly so late tick work never writes into closed services.
+- **Bounded cognition.** A heartbeat drains one identity/conversation at a time under the existing tick budget.
+- **Channel abstraction.** CLI, Microsoft Teams, and Slack share a channel contract while retaining exact authenticated owners and destinations.
+- **Explicit activation.** Default active/dream schedules remain unchanged; workspace and metacognition require opt-in and supporting providers.
+- **Notification gating.** Quiet hours, presence, and behavioral gates precede delivery. Priority never bypasses a consent or termination barrier.
+- **Hub-and-spoke router mode.** Public ingress can relay to private agents through existing Legion transport and worker allowlists.
+- **Graceful quiescence.** New work stops before teardown; an over-time heartbeat defers finalization instead of losing its live state.
 
 ## What GAIA Does
 
@@ -78,7 +78,7 @@ Channel input
 The registry resolves runners from the loaded LegionIO extension set and builds phase handlers. Each
 phase handler annotates its result with:
 
-- `status`: `completed`, `skipped`, or `failed`
+- `status`: truthful `completed`, `skipped`, `failed`, `partial`, `deferred`, or `unavailable`; history also exposes missing handlers and budget skips
 - `elapsed_ms`: monotonic elapsed time in milliseconds
 
 Those fields feed `/api/gaia/ticks` for operator-facing tick-stream observability — every event
@@ -86,9 +86,9 @@ should have a non-null `status` and `elapsed_ms`.
 
 ## The Mechanics, From Source
 
-GAIA itself does not implement learning — it schedules and wires the extensions that do. The
-formulas below live in the sibling gems GAIA coordinates, and are cited here so the claims can be
-checked against source rather than taken on faith.
+GAIA coordinates extension learning and owns scoped relationship/response attribution. The
+formulas below describe specific mechanisms, not evidence that a proposed action succeeded.
+Confidence and bond strength never grant permission.
 
 **Connection reinforcement — [`lex-synapse`](https://github.com/LegionIO/lex-synapse):**
 
@@ -118,10 +118,11 @@ have different confidence constants. Do not conflate them.
 
 **Tick scheduling — `lex-tick` constants:**
 
-- 16 full-active phases, 10 dream phases.
-- 4 modes with fixed time budgets: `dormant` 0.2s, `sentinel` 0.5s, `full` and `dream` 5.0s each.
-- Tick history is an **in-memory, 200-entry ring buffer** recording `{ timestamp, phase, duration_ms,
-  status }` per phase. This is not database-persisted — restart the process and it is gone.
+- Default schedules: 16 full-active phases and 10 dream phases (identity entropy is shared).
+- Four modes and existing budgets: `dormant` 0.2s, `sentinel` 0.5s, `full_active` and `dormant_active` 5.0s.
+- The budget is checked between handlers; a blocking handler is not preempted. Optional work receives no extra budget.
+- Tick history is an in-memory, 200-entry ring buffer with identity/conversation/exchange ownership.
+  It records scheduled, missing, deferred, failed, and budget-skipped work; it does not survive restart.
 
 ## Measured, From the Maintainer's Development Instance
 
@@ -176,6 +177,24 @@ domain gems and operational extensions such as `lex-mesh`, `lex-synapse`, `lex-d
 `lex-coldstart`. Channel-specific delivery depends on the matching extension (for example
 `lex-microsoft_teams` or `lex-slack`).
 
+### Provider compatibility and activation
+
+| Provider | Supported behavior |
+|----------|--------------------|
+| `legion-apollo >= 0.5.13` | Required. Earlier changed-content FTS updates can break durable GAIA snapshots. |
+| `lex-agentic-memory 0.1.41` | Verified existing audit, association, episodic correction, and Gut consumption APIs; no new memory release is required for these handoffs. |
+| `lex-tick 0.1.17` | Default schedules remain usable; optional groups report unsupported. |
+| `lex-tick >= 0.1.18` | Explicit `global_workspace` / `metacognition` scheduling. Capability detection requires the actual keyword contract, not a catch-all `**kwargs`. |
+| `lex-agentic-social 0.1.21` | Explicit corrections remain effective; scoped calibration is unavailable and never falls back to shared/latest-response state. |
+| `lex-agentic-social >= 0.2.0` | Scoped calibration receipts, weights, and restoration when the explicit identity APIs are available. |
+| `lex-agentic-inference 0.1.11` | Existing identity-aware generation/resolution APIs support verifiable predictions; no newer inference release is required. Providers missing those contracts remain unavailable. |
+
+New tick/social versions are optional capability prerequisites, not permission to deploy unpublished
+branches. Leave their capabilities unavailable until their independent releases are installed.
+Published-provider and candidate-package combinations are exercised separately.
+Existing LLM callers that do not return applied source IDs remain ungraded; GAIA does not fabricate
+delivery acknowledgments or require a coordinated LLM upgrade.
+
 ## Basic Usage
 
 ```ruby
@@ -201,13 +220,17 @@ Legion::Gaia.shutdown
 | Method | Description |
 |--------|-------------|
 | `Legion::Gaia.boot(mode: nil)` | Boot the runtime. `mode: :router` boots channels only (hub-and-spoke router). |
-| `Legion::Gaia.ingest(input_frame)` | Push an `InputFrame` into the sensory buffer. Returns `{ ingested:, buffer_depth:, session_id: }`. |
-| `Legion::Gaia.heartbeat` | Drain the buffer and execute one cognitive tick. Returns the tick result hash. |
-| `Legion::Gaia.respond(content:, channel_id:, ...)` | Build an `OutputFrame` and route it through the output pipeline. |
-| `Legion::Gaia.status` | Runtime + UI state for status/observability tooling. |
-| `Legion::Gaia.tick_history` | Ring buffer of recent phase events. |
-| `Legion::Gaia.shutdown` | Quiesce and tear down the runtime. |
+| `Legion::Gaia.ingest(input_frame)` | Accept trusted input; return `{ ingested:, buffer_depth:, session_id:, exchange_id: }` and any explicit `cognitive_outcome`. Rejections include a reason. |
+| `Legion::Gaia.heartbeat` | Drain one scoped batch and execute one budgeted tick. Includes `phases_scheduled`, results, and correlation. |
+| `Legion::Gaia.respond(content:, channel_id:, ...)` | Preserve the original input owner/destination when replying; apply lifecycle and delivery gates. |
+| `Legion::Gaia.status(identity: nil)` | Runtime state, persistence readiness, and scoped demonstrated capabilities. |
+| `Legion::Gaia.tick_history.recent(identity:, conversation_id:, limit:)` | Read owner-scoped phase history. Unscoped internal access is administrative, not a human endpoint. |
+| `Legion::Gaia.shutdown` | Quiesce; return `{ stopped: false, quiescing: true }` if an active heartbeat must finish before finalization. |
 | `Legion::Gaia.started?` / `shutting_down?` | Lifecycle predicates. |
+| `Legion::Gaia::Advisory.advise(caller:, conversation_id:, exchange_id:)` | Return proposed adjustments with an advisory ID and selected-source provenance, without claiming application. |
+| `Legion::Gaia.record_response_applied(advisory_id:, identity:, applied:)` | Persist a returned/sent/acknowledged receipt for explicitly selected source IDs. |
+| `Legion::Gaia::Disclosure.report(identity:)` | Describe the same live/restored state used by behavior and the actual privacy/deletion boundaries. |
+| `Legion::Gaia::DeathProtocol.terminate_bond(identity:, confirm: true)` | Persist the barrier before erasure and return per-store acknowledgments; partial failure remains blocked and retryable. |
 
 ## Configuration
 
@@ -222,6 +245,8 @@ gaia:
   shutdown:
     heartbeat_wait_timeout: 30.0
     heartbeat_wait_log_interval: 5.0
+  tick:
+    enabled_optional_phases: []  # opt in one verified group at a time
   channels:
     cli:
       enabled: true
@@ -258,7 +283,6 @@ gaia:
     retrieval_min_confidence: 0.3
     memory_retrieval_limit: 10
     memory_audit_limit: 20
-    memory_skip_threshold: 0.8
 ```
 
 `connected` is managed by GAIA at boot and shutdown. Set `router.mode` to `true` on private agent
@@ -267,23 +291,89 @@ processes that should publish through a central router; boot the public router w
 
 ## Cognitive Phases
 
-GAIA wires two phase groups through `PhaseWiring::PHASE_MAP` — 37 phases in total (16 active-tick,
-21 dream-cycle). Each entry maps a phase name to an extension runner and method; phases whose runner
-extension is not loaded are skipped, and the rest are wired into the tick pipeline.
+The default full-active schedule has 16 phases; the dream schedule has 10, including the shared
+identity-entropy phase. Discovery does not activate extra work. Missing handlers remain visible.
 
-**Active tick (16):** sensory processing, emotional evaluation, memory retrieval, knowledge
-retrieval, identity entropy check, working memory integration, procedural check, prediction engine,
-mesh interface, social cognition, theory of mind, gut instinct, action selection, memory
-consolidation, homeostasis regulation, and post-tick reflection.
+**Full active:** sensory processing, emotional evaluation, memory retrieval, knowledge retrieval,
+identity entropy, working memory integration, procedural check, prediction, mesh interface, social
+cognition, theory of mind, gut instinct, action selection, memory consolidation, homeostasis,
+and post-tick reflection.
 
-**Dream cycle (21):** memory audit, association walk, contradiction resolution, agenda formation,
-curiosity execution, consolidation commit, knowledge promotion, dream reflection, partner
-reflection, dream narration, dream cycle, creativity tick, lucid dream, epistemic vigilance,
-predictive processing, free energy, metacognition, default mode network, prospective memory, inner
-speech, and global workspace.
+**Dream:** memory audit, association walk, contradiction resolution, identity entropy, agenda
+formation, consolidation commit, knowledge promotion, dream reflection, partner reflection,
+and dream narration.
 
-Phase handlers may skip expensive work when idle or while GAIA is shutting down. Skipped phases still
-produce `status` and timing metadata so the tick stream stays complete.
+**Optional full-active groups:**
+
+| Group | Placement and prerequisite | Observable consumer |
+|-------|----------------------------|---------------------|
+| `global_workspace` | After gut instinct; requires meaningful sensory processing and correlated candidates | The selected signal/memory changes executive drives and intention formation. |
+| `metacognition` | After meaningful post-tick reflection | Current demonstrated assessments update scoped capability readiness/history; loaded constants are only inventory. |
+
+Opt in with `gaia.tick.enabled_optional_phases: [global_workspace]` or `[metacognition]`.
+Both default to off. Failed prerequisites defer the group; unavailable providers do not produce
+success-shaped placeholders. `status(identity:)[:capabilities]` reports readiness, ownership,
+the latest observed status/reason, and the last meaningful outcome/time. A later budget skip
+does not erase earlier evidence or continue claiming current readiness.
+
+Other former extra mappings retain their actual owners:
+
+| Work | Owner |
+|------|-------|
+| Curiosity execution, dream-cycle orchestration, creativity tick, default-mode thought | Existing background actors |
+| Lucid dream, epistemic vigilance, inner speech | Explicit requests with real content and consumers |
+| Predictive processing, free energy, prospective memory | Existing events with real observations, beliefs, or intentions |
+
+Memory decay and tier migration remain background-owned; their heartbeat placeholders report
+`deferred` and do not duplicate maintenance. Prediction/intention creation is a proposal, not
+task completion. Technical task completion and human sentiment are not objective outcome evidence.
+
+### Explicit outcome reports
+
+A trusted human `InputFrame` may carry `metadata[:prediction_request]` with a nonblank `domain`,
+`description`, and scalar `expected_outcome`. Later authenticated input can report:
+
+```ruby
+cognitive_outcome: {
+  prediction_id: prediction_id,       # or intention_id, never both
+  source_exchange_id: original_exchange_id,
+  outcome: :incorrect,               # prediction: correct/incorrect/partial; intention: completed
+  actual: false,
+  confirmation: 'human_observed'
+}
+```
+
+GAIA derives the owner from the authenticated frame, checks the generated ID and original exchange,
+and labels the evidence `human_confirmation`. A contradictory classification is rejected.
+Heuristic predictions, missing IDs, mismatched people/exchanges, and duplicate reports cannot
+resolve or reinforce another prediction/intention. No machine execution proof is invented.
+
+## Identity, Feedback, and Recovery
+
+- Trusted principal IDs take precedence. Native Teams IDs include tenant ownership; Slack IDs
+  include workspace ownership. Display names and continuity tokens are not identity evidence.
+- Input ingestion owns the human observation. Pipeline notifications do not reinforce it again.
+- Advice is only a proposal. A delivery receipt must name selected behavioral/trace/adjustment
+  IDs and a `returned`, `sent`, or `acknowledged` delivery outcome before feedback can grade it.
+- Feedback must agree with all supplied identity, conversation, response-exchange, advisory, and
+  reply references. There is no global/latest-response fallback.
+- Explicit corrected constraints outrank inferred preferences in the matching scope. Generic
+  rejection vetoes the rejected sources; it neither invents a preference nor crystallizes the
+  rejected directive.
+- Private snapshots use exact identity tags and are stored through Apollo Local. Lifecycle barriers
+  and response claims/acknowledgments are synchronous. Ordinary bond/behavior changes can lose up
+  to the existing 300-second flush interval on abrupt process loss; graceful shutdown flushes them.
+- A persisted but interrupted feedback claim remains uncertain and is not automatically replayed.
+  Durable explicit correction evidence still constrains future behavior.
+- Missing/unreadable lifecycle storage fails closed for private identities. Anonymous/core operation
+  stays available. Recovery retries are bounded; no shared-store fallback is used.
+- Termination removes acknowledged owned snapshots, FTS/source links, live memories where supported,
+  sessions, pending outputs, and attribution. Its minimal barrier survives restart; partial erasure
+  is retried. Disclosure distinguishes local storage from deployment-dependent external processing.
+
+Before adoption, quiesce writers and retain the previous resolved configuration. Older GAIA
+versions do not honor these lifecycle barriers: rollback to them is unsafe. Disable affected optional
+capabilities and forward-fix; never restore a stale snapshot over a correction or revocation.
 
 ## HTTP API
 
@@ -293,13 +383,15 @@ GAIA registers routes with [`Legion::API`](https://github.com/LegionIO/LegionIO)
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET`  | `/api/gaia/status` | Runtime + UI state (mode, buffer depth, channels, sessions, tick count, notification gate). |
-| `GET`  | `/api/gaia/ticks?limit=50` | Recent phase events; `limit` is clamped to the tick-history ring-buffer size. |
+| `GET`  | `/api/gaia/status` | Runtime/persistence state and the authenticated owner's demonstrated capabilities. |
+| `GET`  | `/api/gaia/ticks?limit=50` | Requires authentication; returns only that owner's phase history. |
 | `GET`  | `/api/gaia/channels` | Active channel adapters and their capabilities. |
 | `GET`  | `/api/gaia/buffer` | Sensory buffer depth, emptiness, and max size. |
 | `GET`  | `/api/gaia/sessions` | Active session count. |
-| `POST` | `/api/gaia/ingest` | Push a normalized content payload into the sensory buffer without a channel adapter. |
-| `POST` | `/api/channels/teams/webhook` | Microsoft Teams Bot Framework activity intake (auth-gated when `app_id` is set). |
+| `POST` | `/api/gaia/ingest` | Normalize input using trusted request auth, not a body-supplied identity; rejected input returns `409`. |
+| `POST` | `/api/channels/teams/webhook` | Requires configured application authentication and a verified Bot Framework bearer token. |
+| `GET` | `/api/gaia/partner/:identity/report` | Authenticated-owner disclosure only. |
+| `DELETE` | `/api/gaia/bond/:identity` | Authenticated-owner termination with explicit confirmation. |
 
 ### `GET /api/gaia/status`
 
@@ -327,9 +419,9 @@ delivery-likelihood score.
 
 Accepts Microsoft Teams Bot Framework activities. The route delegates to
 `Legion::Gaia::Channels::Teams::WebhookHandler`, then ingests translated message activities through
-`Legion::Gaia.ingest`. When a Teams `app_id` is configured, requests must carry a bearer token; GAIA
+`Legion::Gaia.ingest`. A configured Teams `app_id` and bearer token are required; GAIA
 validates JWT claims and verifies the signature against Bot Framework signing keys before translating
-or ingesting. Missing or invalid authorization returns `401`.
+or ingesting. Missing configuration or invalid authorization returns `401`.
 
 Non-message activities are intentionally acknowledged without entering cognition:
 
@@ -345,11 +437,13 @@ Non-message activities are intentionally acknowledged without entering cognition
 | Adapter | Purpose | Notes |
 |---------|---------|-------|
 | CLI | Local text interaction | Built in, enabled by default. |
-| Teams | Bot Framework activity ingestion and proactive delivery | Validates bearer tokens when `app_id` is set. |
+| Teams | Bot Framework activity ingestion and proactive delivery | Requires application authentication; preserves exact tenant/user/conversation ownership. |
 | Slack | Slack-style rich text and threaded delivery | HMAC-SHA256 signing verification. |
 
-Adapters translate format and delivery semantics only. Cognitive interpretation happens downstream in
-the tick pipeline, so adapters stay thin, stateless, and recreatable without loss.
+Adapters translate format and delivery semantics. Teams delivery requires the intended tenant and
+conversation; proactive lookup matches the target user instead of borrowing another conversation in
+the tenant. An explicit Slack destination cannot fall back to a default webhook. Received timestamps,
+owners, destinations, and correlation survive router serialization.
 
 ## Notification Gate
 
@@ -359,8 +453,9 @@ The notification gate evaluates outbound frames before delivery, in order:
 2. `PresenceEvaluator` — maps Teams presence to a minimum delivery priority.
 3. `BehavioralEvaluator` — scores arousal and idle signals into a delivery-likelihood value.
 
-Urgent or critical frames bypass quiet-hour delays through `priority_override`. Delayed frames are
-stored in a bounded `DelayQueue` and re-evaluated each heartbeat.
+Urgent or critical frames bypass quiet-hour delays through `priority_override`, but never bypass
+revocation/termination. Delayed frames remain scoped and bounded; lifecycle is checked again at
+final delivery and terminated identities' queued frames are removed.
 
 ## Router Mode
 
@@ -395,10 +490,11 @@ Channel client -> GAIA router -> Legion transport -> GAIA agent
 4. Trackers and channel/router bridges are flushed or stopped.
 5. Runtime references are cleared.
 
-`shutdown.heartbeat_wait_timeout` bounds how long shutdown waits for in-flight heartbeat work before
-logging a warning and continuing; `shutdown.heartbeat_wait_log_interval` controls wait-progress logs.
-This keeps routine shutdown from producing late writes to closed data/logging resources while
-avoiding an indefinite hang if a heartbeat blocks inside extension work.
+`shutdown.heartbeat_wait_timeout` bounds the caller's wait. If a heartbeat is still running, shutdown
+returns `quiescing: true`, leaves its resources intact, and rejects reboot/new work. The last active
+heartbeat performs final teardown after leaving the shared write lock.
+`shutdown.heartbeat_wait_log_interval` controls wait-progress logs. Operators must not close shared
+data/logging services while GAIA still reports quiescing.
 
 ## Integration with LegionIO
 
@@ -417,9 +513,15 @@ Sibling gems referenced above:
 
 ```bash
 bundle install
-bundle exec rspec    # 0 failures required before commit
-bundle exec rubocop  # 0 offenses required
+bundle exec rubocop -A
+bundle exec rspec --format json --out tmp/rspec_results.json --format progress --out tmp/rspec_progress.txt
 ```
+
+Require a clean whole-repo lint pass and full-suite exit status after the last Ruby edit. Keep RSpec
+stdout quiet; inspect only extracted failed examples when it fails. Package acceptance must use
+installed gem artifacts, not sibling path overrides. Release scenarios cover real memory/association,
+correction-to-next-context, two-human/conversation isolation, interrupted feedback claims, SQLite/FTS
+termination, and independently opted-in workspace/metacognition with supporting provider artifacts.
 
 The build artifact (`*.gem`) is not the source of truth; release tooling builds it from the version
 in `lib/legion/gaia/version.rb`.

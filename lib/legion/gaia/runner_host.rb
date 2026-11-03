@@ -9,8 +9,11 @@ module Legion
 
       attr_accessor :last_tick_result
 
-      def initialize(runner_module)
+      attr_reader :runner_module, :identity
+
+      def initialize(runner_module, identity: nil)
         @runner_module = runner_module
+        @identity = identity
         extend runner_module if runner_module.is_a?(Module) && !runner_module.is_a?(Class)
         log.debug("RunnerHost initialized runner_module=#{runner_module}")
       end
@@ -29,6 +32,24 @@ module Legion
         return true if @runner_module.is_a?(Class) && @runner_module.method_defined?(method_name)
 
         super
+      end
+
+      # Method#parameters on method_missing only exposes a rest argument. Inspect
+      # the actual provider so an old **context cannot pretend to support a gate.
+      def runner_method_parameters(method_name:)
+        if @runner_module.is_a?(Module) && @runner_module.method_defined?(method_name)
+          @runner_module.instance_method(method_name).parameters
+        elsif @runner_module.respond_to?(method_name)
+          @runner_module.method(method_name).parameters
+        else
+          []
+        end
+      end
+
+      def supports_keyword?(method_name:, keyword:)
+        runner_method_parameters(method_name: method_name).any? do |kind, name|
+          %i[key keyreq].include?(kind) && name == keyword
+        end
       end
 
       def to_s

@@ -39,6 +39,16 @@ module Legion
           @mutex.synchronize { @entries.dup }
         end
 
+        def erase_identity(identity:)
+          return 0 if identity.to_s.empty?
+
+          @mutex.synchronize do
+            previous_size = @entries.size
+            @entries.reject! { |entry| entry[:frame].metadata[:identity].to_s == identity.to_s }
+            previous_size - @entries.size
+          end
+        end
+
         def drain_expired
           @mutex.synchronize do
             cutoff = Time.now.utc - @max_delay

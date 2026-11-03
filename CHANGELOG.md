@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.10.0] - 2026-10-30
+
+### Added
+- Identity/conversation-scoped cognitive hosts, tick history, advisory provenance, delivered-response receipts, and explicit human-observed prediction/intention outcomes.
+- Durable response claims, correction evidence, consent barriers, and resumable termination through Apollo Local. Interrupted feedback remains uncertain rather than being graded twice.
+- Explicit `gaia.tick.enabled_optional_phases` opt-ins for `global_workspace` and `metacognition` with supporting `lex-tick`; both remain disabled by default.
+- Per-capability demonstrated readiness and last meaningful outcomes, including measured cognitive health and introspection assessments.
+
+### Fixed
+- Select bounded, relevant, authorized dream memories; unwrap ranked traces correctly and verify actual Hebbian associations.
+- Store supported episodic corrections and preserve their constraints/source references. Explicit corrections affect PartnerModel and Gut even when scoped calibration is unavailable.
+- Keep trusted principal IDs, native channel ownership, session continuity, feedback, growth, and delayed delivery isolated across humans and conversations.
+- Persist the actual live bond, behavioral, and scoped calibration stores; acknowledge dirty revisions only after successful writes.
+- Complete scoped session/attribution erasure against the real runtime, preserve lifecycle barriers across restart, and remove owned local snapshots and FTS/source-link rows.
+- Preserve failure, partial, deferred, missing-handler, and budget-skipped phase meaning. A loaded extension, empty competition, or proposed intention is not completed work.
+- Consume attended inputs and workspace-selected memories in prediction/executive decisions; resolve only explicitly correlated human-observed outcomes.
+- Defer shutdown finalization when a heartbeat exceeds its wait timeout instead of deadlocking or clearing state underneath active work.
+
+### Changed
+- Require published `legion-apollo >= 0.5.13` for correct changed-content FTS snapshot updates.
+- Pipeline notifications no longer count as a second human observation. Uncorrelated or unapplied response suggestions remain ungraded.
+- Human history/disclosure/termination routes require the authenticated owner; Teams webhooks reject missing application authentication.
+- Remove disconnected BondStore state and obsolete nil-ID phase mappings. Background maintenance and request/event-owned work are not implicitly scheduled.
+- Existing pre-0.10 readers do not enforce the new privacy barriers: quiesce and forward-fix rather than rolling back to an unsafe reader.
+
 ## [0.9.67] - 2026-07-24
 ### Added
 - H5: `Legion::Gaia::Gut.check(identity:, draft_stats:)` — fast per-response conflict detection (v1: correction veto only). Compares draft stats against high-strength correction traces and transform-tier behavioral synapses. No LLM calls. Completes within 50ms latency budget (scalar setting); degrades to no-op if exceeded. Soft-guarded on lex-agentic-memory. The gut itself is a behavioral synapse (`domain: 'gut'`); new partners start in observe mode (emergent confidence 0.3 → observe tier).

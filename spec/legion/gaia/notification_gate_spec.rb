@@ -130,6 +130,33 @@ RSpec.describe Legion::Gaia::NotificationGate do
     end
   end
 
+  describe 'identity-scoped lifecycle barriers' do
+    subject(:gate) { described_class.new(settings: { notifications: { enabled: false } }) }
+
+    before { Legion::Gaia::BondRegistry.reset! }
+    after { Legion::Gaia::BondRegistry.reset! }
+
+    it 'erases only the requested owner while preserving other pending work' do
+      alice = frame_normal.with(metadata: { identity: 'Alice' })
+      bob = frame_normal.with(metadata: { identity: 'alice' })
+      gate.enqueue(alice)
+      gate.enqueue(bob)
+      gate.enqueue(frame_normal)
+      expect(gate.erase_identity(identity: 'Alice')).to eq(1)
+      expect(gate.flush).to contain_exactly(bob, frame_normal)
+    end
+
+    it 'does not let priority or disabled notifications bypass a terminated owner' do
+      Legion::Gaia::BondRegistry.set_bond_state('alice', :terminated)
+      blocked = frame_critical.with(metadata: { identity: 'alice', priority: :critical })
+      gate.enqueue(blocked)
+      allow(gate.schedule_evaluator).to receive(:quiet?).and_return(false)
+      expect(gate.evaluate(blocked)).to eq(:discard)
+      expect(gate.process_delayed).to be_empty
+      expect(gate.pending_count).to eq(0)
+    end
+  end
+
   describe '#status' do
     subject(:gate) { described_class.new }
 
